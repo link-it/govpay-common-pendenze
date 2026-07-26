@@ -29,6 +29,16 @@ La pipeline e' allineata a quella del progetto
    - Verifica delle vulnerabilita' note (NVD + OSS Index)
    - Report di sicurezza in formato HTML e XML
 
+   > **Bootstrap del DB NVD.** Il BOM tiene `owasp.autoUpdate=false` (workaround per il
+   > bug di parsing dei timestamp NVD): il database non viene mai scaricato durante il
+   > build, ma solo dal workflow `Refresh OWASP Dependency-Check DB`, che ne mantiene la
+   > cache su `main`. Se la cache non esiste ancora, lo step `Check OWASP DB availability`
+   > disattiva Dependency-Check per quel run (`-Dowasp.phase=none`) ed emette un warning,
+   > invece di far fallire il build con `NoDataException`. Per attivare il check:
+   > lancia una volta il workflow di refresh su `main` (Actions -> Refresh OWASP
+   > Dependency-Check DB -> Run workflow). Nel frattempo la scansione delle
+   > vulnerabilita' resta coperta dal job `osv-scan`.
+
 3. **Build e test**
    - `mvn clean install`
    - Test unitari
@@ -111,24 +121,27 @@ Mantiene caldo il database NVD in modo che il job `build` non debba scaricarlo.
 
 ## Configurazione richiesta
 
-### Variables (Settings -> Secrets and variables -> Actions -> Variables)
+Variables e secrets sono definiti a livello di **organizzazione** `link-it` e sono
+quindi gia' disponibili a questo repository: non serve ridefinirli qui.
 
-| Variable | Descrizione | Obbligatoria |
-|----------|-------------|--------------|
-| `CENTRAL_USERNAME` | Username del Central Portal Sonatype | Si (per publish) |
-| `OSS_INDEX_USER` | Utenza OSS Index per l'analyzer OWASP | Consigliata |
+### Variables
 
-### Secrets (Settings -> Secrets and variables -> Actions -> Secrets)
+| Variable | Descrizione | Origine |
+|----------|-------------|---------|
+| `CENTRAL_USERNAME` | Username del Central Portal Sonatype | org `link-it` |
+| `OSS_INDEX_USER` | Utenza OSS Index per l'analyzer OWASP | org `link-it` |
 
-| Secret | Descrizione | Obbligatorio |
-|--------|-------------|--------------|
-| `CENTRAL_TOKEN` | Token del Central Portal Sonatype | Si (per publish) |
-| `GPG_PRIVATE_KEY` | Chiave privata GPG per la firma degli artifact | Si (per release) |
-| `GPG_PASSPHRASE` | Passphrase della chiave GPG | Si (per release) |
-| `SONAR_TOKEN` | Token SonarCloud | Si |
-| `NVD_API_KEY` | API key NVD (alza il rate limit di Dependency-Check) | Consigliato |
-| `OSS_INDEX_PASSWORD` | Password/token OSS Index | Consigliato |
-| `GH_TOKEN` | PAT per la creazione della GitHub Release | Si (per release) |
+### Secrets
+
+| Secret | Descrizione | Origine |
+|--------|-------------|---------|
+| `CENTRAL_TOKEN` | Token del Central Portal Sonatype | org `link-it` |
+| `GPG_PRIVATE_KEY` | Chiave privata GPG per la firma degli artifact | org `link-it` |
+| `GPG_PASSPHRASE` | Passphrase della chiave GPG | org `link-it` |
+| `SONAR_TOKEN` | Token SonarCloud | org `link-it` |
+| `NVD_API_KEY` | API key NVD (alza il rate limit di Dependency-Check) | org `link-it` |
+| `OSS_INDEX_PASSWORD` | Password/token OSS Index | org `link-it` |
+| `GH_TOKEN` | PAT per la creazione della GitHub Release. Opzionale: se non definito, `softprops/action-gh-release` usa il `GITHUB_TOKEN` del workflow (che ha `contents: write`) | opzionale |
 
 ### Come ottenere i secrets
 
@@ -283,6 +296,12 @@ EPL-1.0/2.0, EDL-1.0, LGPL 2.1/3.0, MPL-2.0, GPL con eccezioni
 3. **Dipendenza senza licenza**: contatta il maintainer o evita la dipendenza
 
 ## Troubleshooting
+
+### `NoDataException: Autoupdate is disabled and the database does not exist`
+La cache del DB NVD non e' ancora stata creata su questo repository. Lancia il workflow
+`Refresh OWASP Dependency-Check DB` su `main` (Run workflow). Dal run successivo il
+check viene eseguito; nel frattempo lo step `Check OWASP DB availability` lo salta con
+un warning invece di far fallire il build.
 
 ### Il build fallisce per timeout OWASP
 - Verifica che `NVD_API_KEY` sia configurato (alza il rate limit)

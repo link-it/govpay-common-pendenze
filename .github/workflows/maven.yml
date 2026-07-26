@@ -59,11 +59,28 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-owasp-v${{ steps.owasp.outputs.version }}-
 
+    # Il DB NVD viene popolato dal workflow "Refresh OWASP Dependency-Check DB".
+    # Il BOM tiene autoUpdate=false (workaround per il bug NVD di parsing timestamp),
+    # quindi senza DB in cache il goal aggregate fallirebbe con NoDataException:
+    # in quel caso il check viene saltato e viene emesso un warning.
+    - name: Check OWASP DB availability
+      id: owaspdb
+      run: |
+        if compgen -G ".dependency-check/data/*.db" > /dev/null; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          ls -lh .dependency-check/data/
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::DB OWASP assente in cache: Dependency-Check saltato in questo run. Lancia il workflow 'Refresh OWASP Dependency-Check DB' su main per popolare la cache."
+        fi
+
     - name: Build with Maven
       env:
         NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         OSS_INDEX_USER: ${{ vars.OSS_INDEX_USER }}
         OSS_INDEX_PASSWORD: ${{ secrets.OSS_INDEX_PASSWORD }}
+        # Senza DB in cache OWASP viene disattivato per questo run
+        OWASP_FLAG: ${{ steps.owaspdb.outputs.available == 'true' && '' || '-Dowasp.phase=none' }}
         # Se la cache e' esatta (stessa giornata) skippa l'update NVD
         NOUPDATE_FLAG: ${{ steps.owasp-cache.outputs.cache-hit == 'true' && '-DautoUpdate=false' || '' }}
       run: |
@@ -76,7 +93,7 @@ jobs:
           -DdataDirectory=.dependency-check/data \
           -Dowasp.format=ALL \
           -Dowasp.output.dir=./dependency-check-report \
-          $NOUPDATE_FLAG
+          $OWASP_FLAG $NOUPDATE_FLAG
 
     - name: Show JaCoCo report location and Zip JaCoCo HTML report
       run: |
