@@ -1,0 +1,417 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - "[0-9]*" # tag che iniziano con un numero (validiamo X.Y.Z nel job release)
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+  id-token: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+
+  # ── Build, Test, Quality ─────────────────────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Set timezone to Europe/Rome
+      run: sudo timedatectl set-timezone Europe/Rome
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Get date for cache key
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+    - name: Read OWASP plugin version from pom.xml
+      id: owasp
+      run: |
+        VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=owasp.plugin.version)"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "OWASP Dependency-Check version: $VERSION"
+
+    - name: Cache OWASP Dependency-Check DB
+      id: owasp-cache
+      uses: actions/cache@v5
+      with:
+        path: .dependency-check/data
+        # Chiave: versione plugin (bump -> cache invalidata per schema diverso)
+        # + data (allineamento con il refresh giornaliero del DB NVD).
+        key: ${{ runner.os }}-owasp-v${{ steps.owasp.outputs.version }}-${{ steps.date.outputs.date }}
+        restore-keys: |
+          ${{ runner.os }}-owasp-v${{ steps.owasp.outputs.version }}-
+
+    # Il DB NVD viene popolato dal workflow "Refresh OWASP Dependency-Check DB".
+    # Il BOM tiene autoUpdate=false (workaround per il bug NVD di parsing timestamp),
+    # quindi senza DB in cache il goal aggregate fallirebbe con NoDataException:
+    # in quel caso il check viene saltato e viene emesso un warning.
+    - name: Check OWASP DB availability
+      id: owaspdb
+      run: |
+        if compgen -G ".dependency-check/data/*.db" > /dev/null; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          ls -lh .dependency-check/data/
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::DB OWASP assente in cache: Dependency-Check saltato in questo run. Lancia il workflow 'Refresh OWASP Dependency-Check DB' su main per popolare la cache."
+        fi
+
+    - name: Build with Maven
+      env:
+        NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        OSS_INDEX_USER: ${{ vars.OSS_INDEX_USER }}
+        OSS_INDEX_PASSWORD: ${{ secrets.OSS_INDEX_PASSWORD }}
+        # Senza DB in cache OWASP viene disattivato per questo run
+        OWASP_FLAG: ${{ steps.owaspdb.outputs.available == 'true' && '' || '-Dowasp.phase=none' }}
+        # Se la cache e' esatta (stessa giornata) skippa l'update NVD
+        NOUPDATE_FLAG: ${{ steps.owasp-cache.outputs.cache-hit == 'true' && '-DautoUpdate=false' || '' }}
+      run: |
+        mvn clean install \
+          -Dspring.profiles.active=test \
+          -Duser.timezone=Europe/Rome \
+          -DnvdApiKey=$NVD_API_KEY \
+          -DossIndexUsername=$OSS_INDEX_USER \
+          -DossIndexPassword=$OSS_INDEX_PASSWORD \
+          -DdataDirectory=.dependency-check/data \
+          -Dowasp.format=ALL \
+          -Dowasp.output.dir=./dependency-check-report \
+          $OWASP_FLAG $NOUPDATE_FLAG
+
+    - name: Show JaCoCo report location and Zip JaCoCo HTML report
+      run: |
+        ls -lh target/site/jacoco/
+        file target/site/jacoco/jacoco.xml || echo "Report non trovato"
+        cd target/site
+        zip -r ../jacoco-html-report.zip jacoco
+        cd ../../
+        ls -lh target/
+
+    - name: Copy dependencies
+      run: |
+        mkdir -p target/dependency
+        mvn dependency:copy-dependencies -DoutputDirectory=target/dependency
+
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarqube-scan-action@v5
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: https://sonarcloud.io
+      with:
+        args: >
+          -Dsonar.projectKey=link-it_govpay-common-pendenze
+          -Dsonar.organization=link-it
+          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+          -Dsonar.sources=src/main/java
+          -Dsonar.tests=src/test/java
+          -Dsonar.java.binaries=target/classes
+          -Dsonar.coverage.exclusions=**/test/**,**/*Test*.java
+          -Dsonar.java.source=21
+          -Dsonar.java.libraries=target/dependency
+
+    - name: License Analysis
+      run: |
+        set -euo pipefail
+        echo "Downloading license information..."
+        mvn org.codehaus.mojo:license-maven-plugin:2.4.0:aggregate-download-licenses -DexcludeScopes=test,provided,system -DincludeTransitiveDependencies=true
+        echo "Analyzing licenses..."
+        python3 .github/workflows/scripts/analyze_licenses.py --exceptions .github/workflows/scripts/license-exceptions.json
+
+    - name: Archive licenses analysis results
+      uses: actions/upload-artifact@v7
+      with:
+        name: third-party-licenses
+        path: third-party-licenses
+
+    - name: Upload artifact to GitHub
+      uses: actions/upload-artifact@v7
+      with:
+        name: govpay-common-pendenze
+        path: |
+          target/govpay-common-pendenze-*.jar
+          target/site/jacoco/jacoco.xml
+          target/jacoco-html-report.zip
+          target/dependency-check-report.html
+          target/dependency-check-report.xml
+
+  # ── OSV Scan (parallelo al build, non blocca) ────────────────────────
+  osv-scan:
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.5"
+    with:
+      matrix-property: ''
+      fail-on-vuln: ${{ github.ref_name == 'main' || github.ref_type == 'tag' }}
+      results-file-name: osv-report.sarif
+      scan-args: |-
+        -r
+        .
+        --lockfile
+        ./pom.xml
+        --allow-no-lockfiles
+
+  # ── SBOM CycloneDX ───────────────────────────────────────────────────
+  sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SBOM_CYCLONEDX_PLUGIN_VERSION: '2.9.1'
+      SBOM_CYCLONEDX_SCHEMA_VERSION: '1.6'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Generate SBOM (CycloneDX json + xml)
+        run: |
+          mkdir -p sbom/cyclonedx
+          echo "Generazione SBOM CycloneDX (json + xml) ..."
+          mvn org.cyclonedx:cyclonedx-maven-plugin:${SBOM_CYCLONEDX_PLUGIN_VERSION}:makeAggregateBom \
+            -DoutputDirectory=sbom/cyclonedx \
+            -DoutputName=bom.cdx \
+            -DoutputFormat=all \
+            -DschemaVersion=${SBOM_CYCLONEDX_SCHEMA_VERSION} \
+            -DskipNotDeployed=false \
+            -DincludeTestScope=false
+          ls -la sbom/cyclonedx/
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-report
+          path: sbom/
+          retention-days: 30
+
+  # ── Deploy SNAPSHOT su Maven Central (solo push su main) ─────────────
+  snapshot-on-main:
+    needs: [ build, osv-scan, sbom ]
+    if: startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Java + Maven settings
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          server-id: central-snapshots
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_TOKEN
+
+      - name: Verify required secrets
+        env:
+          CENTRAL_USERNAME: ${{ vars.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+        run: |
+          MISSING=()
+          [ -z "$CENTRAL_USERNAME" ] && MISSING+=("CENTRAL_USERNAME")
+          [ -z "$CENTRAL_TOKEN" ] && MISSING+=("CENTRAL_TOKEN")
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Missing secrets: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "All required secrets are set."
+
+      - name: Read project version
+        id: version
+        run: |
+          VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Project version: $VERSION"
+
+      - name: Deploy SNAPSHOT to Sonatype snapshots
+        if: endsWith(steps.version.outputs.version, '-SNAPSHOT')
+        env:
+          CENTRAL_USERNAME: ${{ vars.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+        run: mvn -B -DskipTests deploy -Dowasp.phase=none
+
+      - name: Skip (not a SNAPSHOT)
+        if: ${{ !endsWith(steps.version.outputs.version, '-SNAPSHOT') }}
+        run: echo "Version is stable -> no publish on main."
+
+  # ── GitHub Release (solo tag) ────────────────────────────────────────
+  github-release:
+    needs: [ build, osv-scan, sbom ]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    # JAR — asset diretto nella release
+    - name: Download govpay-common-pendenze artifact
+      uses: actions/download-artifact@v7
+      with:
+        name: govpay-common-pendenze
+        path: jar/
+
+    # Tutti i report scaricati in reports/
+    - name: Download third-party-licenses
+      uses: actions/download-artifact@v7
+      with:
+        name: third-party-licenses
+        path: reports/third-party-licenses/
+
+    - name: Download OSV Scanner SARIF
+      uses: actions/download-artifact@v7
+      with:
+        name: OSV Scanner SARIF file
+        path: reports/osv/
+
+    - name: Download SBOM
+      uses: actions/download-artifact@v7
+      with:
+        name: sbom-report
+        path: reports/sbom/
+
+    - name: Rename JAR with tag version
+      run: |
+        SRC=$(ls jar/govpay-common-pendenze-*.jar)
+        DST="jar/govpay-common-pendenze-${{ github.ref_name }}.jar"
+        if [ "$SRC" != "$DST" ]; then
+          cp "$SRC" "$DST"
+        else
+          echo "JAR already named with tag version: $SRC"
+        fi
+
+    - name: Assemble reports ZIP
+      run: |
+        mkdir -p reports/owasp reports/jacoco reports/osv reports/sbom
+
+        # OWASP e JaCoCo dall'artifact build
+        cp jar/dependency-check-report.html reports/owasp/ 2>/dev/null || true
+        cp jar/dependency-check-report.xml  reports/owasp/ 2>/dev/null || true
+        cp jar/site/jacoco/jacoco.xml       reports/jacoco/ 2>/dev/null || true
+        cp jar/jacoco-html-report.zip       reports/jacoco/ 2>/dev/null || true
+
+        # pipeline info
+        echo "Pipeline Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          > reports/${{ github.ref_name }}_actions_run.txt
+
+        zip -r release-reports-${{ github.ref_name }}.zip reports/
+        ls -lh release-reports-${{ github.ref_name }}.zip
+
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v2.2.1
+      with:
+        files: |
+          jar/govpay-common-pendenze-${{ github.ref_name }}.jar
+          release-reports-${{ github.ref_name }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  # ── Deploy RELEASE su Maven Central (solo tag) ──────────────────────
+  release-on-tag:
+    needs: [ build, osv-scan, sbom ]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate tag format (must be X.Y.Z)
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "Tag: $TAG"
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Not a release tag (expected X.Y.Z). Aborting."
+            exit 1
+          fi
+
+      - name: Set up Java + Maven settings + GPG
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_TOKEN
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Verify required secrets
+        env:
+          CENTRAL_USERNAME: ${{ vars.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          MISSING=()
+          [ -z "$CENTRAL_USERNAME" ] && MISSING+=("CENTRAL_USERNAME")
+          [ -z "$CENTRAL_TOKEN" ] && MISSING+=("CENTRAL_TOKEN")
+          [ -z "$GPG_PRIVATE_KEY" ] && MISSING+=("GPG_PRIVATE_KEY")
+          [ -z "$GPG_PASSPHRASE" ] && MISSING+=("GPG_PASSPHRASE")
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Missing secrets: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "All required secrets are set."
+
+      - name: Read project version
+        id: version
+        run: |
+          VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Project version: $VERSION"
+
+      - name: Fail if POM is SNAPSHOT on a tag
+        if: endsWith(steps.version.outputs.version, '-SNAPSHOT')
+        run: |
+          echo "Refusing to release a -SNAPSHOT version on tag."
+          exit 1
+
+      - name: Ensure tag matches POM version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$TAG" != "$VERSION" ]]; then
+            echo "Tag ($TAG) does not match POM version ($VERSION). Aborting release."
+            exit 1
+          fi
+          echo "OK: tag matches POM version."
+
+      - name: Deploy RELEASE to Maven Central (Central Portal)
+        env:
+          CENTRAL_USERNAME: ${{ vars.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          MAVEN_GPG_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn -B -DskipTests deploy -Prelease -Dowasp.phase=none
