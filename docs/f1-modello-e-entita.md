@@ -21,13 +21,16 @@ e fornire i tipi di dominio (enum, value object, codec) su cui costruiranno F2-F
 
 F1 è chiusa quando:
 
-- [ ] `Versamento` mappa tutte le **65** colonne di `versamenti` (D6)
-- [ ] `SingoloVersamento` mappa tutte le **20** colonne di `singoli_versamenti`
-- [ ] `Documento` mappa tutte le **5** colonne di `documenti`
-- [ ] gli importi sono `BigDecimal` con converter e normalizzazione a 2 decimali (§6.1)
-- [ ] `cod_rata`, `causale_versamento`, `incasso` hanno codec con round-trip testato
-- [ ] `spring.jpa.hibernate.ddl-auto=validate` passa contro il DDL reale (§12.1)
-- [ ] nessuna dipendenza da Spring nei package `model` e `codec`
+- [x] `Versamento` mappa tutte le **65** colonne di `versamenti` (D6) — verificato
+      confrontando le `@Column`/`@JoinColumn` con il DDL: 65 mappate, 0 mancanti, 0 in eccesso
+- [x] `SingoloVersamento` mappa tutte le **20** colonne di `singoli_versamenti`
+- [x] `Documento` mappa tutte le **5** colonne di `documenti`
+- [x] gli importi sono `BigDecimal` con converter e normalizzazione a 2 decimali (§6.1)
+- [x] `cod_rata`, `causale_versamento`, `incasso` hanno codec con round-trip testato
+- [x] `spring.jpa.hibernate.ddl-auto=validate` passa contro il DDL reale (§12.1)
+- [x] nessuna dipendenza da Spring nei package `model` e `codec`
+
+Stato: **implementata**, 67 test verdi. Dettagli e scostamenti in §14.
 
 ## 2. Perimetro
 
@@ -625,3 +628,53 @@ locale se non ancora disponibile.
 | F2 | composizione dei `ProfiloFetch` in entity graph (solo voci e documento: l'anagrafica non è nel grafo); firma dei criteri di ricerca con `idDominio`/`idTipiVersamento` come `Long` |
 | F3 | dove intercettare la regola "voci non rimovibili" prima del flush (§7.3); arrotondamento `HALF_UP` sugli importi in ingresso (§6.1) |
 | F4 | valorizzazione di `src_iuv`/`src_debitore_identificativo` in uppercase (B4); record `ConfigurazioneAvvisatura` in ingresso al comando di caricamento (§3) e calcolo delle date di avvisatura (proposta §4.6) |
+
+## 14. Stato dell'implementazione
+
+67 test verdi, `mvn clean install` verde.
+
+### 14.1 La validazione del mapping funziona davvero
+
+Il valore di F1 sta nel test che valida le entità contro il DDL di produzione, quindi
+quel meccanismo è stato verificato per contrasto: rinominando in `Versamento` la colonna
+`avv_app_io_prom_scad_notificat` nel suo nome "logico" completo
+(`..._notificato`, l'errore più probabile) tutti gli 8 test di
+`VersamentoMappingTest` falliscono in avvio di contesto; ripristinato il nome corretto,
+tornano verdi. Se avessimo usato `ddl-auto=create-drop`, come fa `govpay-console-api`,
+quell'errore non sarebbe emerso.
+
+### 14.2 Scostamenti dal disegno
+
+| # | Scostamento | Motivo |
+|---|---|---|
+| 1 | `CausaleCodec.sintesiDa(String)` invece di `sintesi(String)` | l'overload con `sintesi(Causale)` è ambiguo quando l'argomento è `null`: non compila |
+| 2 | Schema di test caricato con il parametro `INIT=RUNSCRIPT` del driver H2, non con `spring.sql.init` | lo schema deve esistere **prima** che Hibernate esegua la validazione, quindi va creato all'apertura della connessione e non da un inizializzatore applicativo |
+| 3 | Un database H2 per contesto di test (`jdbc:h2:mem:pendenze-${random.uuid}`) | con un database condiviso il secondo contesto rieseguiva lo script di schema e falliva con `Sequence "SEQ_DOCUMENTI" already exists`. L'alternativa (`CREATE ... IF NOT EXISTS`) avrebbe fatto divergere il DDL di test da quello di produzione |
+| 4 | Aggiunta `src/test/java/.../PendenzeTestApplication` con `@SpringBootConfiguration` | gli slice test cercano una configurazione risalendo i package: in una libreria non esiste, va fornita nei test |
+| 5 | `PendenzeAutoConfiguration` realizzata già in F1, non rinviata a F2 | senza il bean `HibernatePropertiesCustomizer` la decisione F1-2 sul fuso orario non sarebbe implementata, solo dichiarata |
+| 6 | Dipendenza di test `spring-boot-data-jpa-test` | in Spring Boot 4 `@DataJpaTest` non arriva più da `spring-boot-starter-test`; porta con sé anche `spring-boot-jpa-test` e `spring-boot-jdbc-test` (`TestEntityManager`, `@AutoConfigureTestDatabase`) |
+| 7 | `HibernatePropertiesCustomizer` importato da `org.springframework.boot.hibernate.autoconfigure` | in Spring Boot 4 il package è cambiato rispetto a quello che avevo indicato nel disegno |
+| 8 | Rimossi Lombok e `spring-boot-starter` dal `pom.xml` | Lombok non è usato (nessun Lombok sulle entità, §11) e `spring-boot-starter` arriva transitivamente da `spring-boot-starter-data-jpa` |
+
+### 14.3 Test scritti
+
+| Classe | Test | Copre |
+|---|---|---|
+| `VersamentoMappingTest` | 8 | tutte le colonne, colonna troncata AppIO, flag tri-stato, soli campi obbligatori, unicità della chiave logica, anno tributario (F1-3), `data_ora_ultimo_aggiornamento`, voci non cancellabili (F1-5) |
+| `IstantiPersistitiTest` | 2 | istante conservato nel giro in banca dati e ora locale del fuso configurato scritta in colonna (F1-2) |
+| `PendenzeAutoConfigurationTest` | 4 | fuso di default, orologio sul fuso configurato, customizer, non-sovrascrittura della configurazione del consumatore |
+| `ImportoConverterTest` | 9 | round-trip, arrotondamento `HALF_UP`, regressione su `new BigDecimal(double)`, somma voci confrontabile col totale |
+| `ConverterCodificatiTest` | 10 | `incasso`, `debitore_tipo`, `tipo_contabilita` (comprese le codifiche non assegnate `3`,`4`,`5`), `tipo_bollo` |
+| `CausaleCodecTest` | 8 | round-trip dei tre formati, sintesi, causale legacy in chiaro, base64 malformato, formato prodotto dalla 3.x |
+| `CodRataCodecTest` | 15 | numero rata, soglie con e senza giorni, valori non conformi, combinazioni vietate dal dominio, lunghezza della colonna |
+| `ProprietaPendenzaCodecTest` | 6 | round-trip, refuso `dataScandenzaAvviso` preservato, JSON della 3.x, campi assenti omessi, JSON illeggibile |
+| `StatoPendenzaApplicativoTest` | 5 | mappature dirette, `SCADUTA`, scadenza al riferimento, scadenza irrilevante se già pagata |
+
+### 14.4 Da tenere presente per F2
+
+- L'autoconfigurazione andrà estesa con `@EntityScan`/`@EnableJpaRepositories` sui package
+  della libreria: oggi le entità vengono trovate perché nei test la configurazione sta in
+  `it.govpay.pendenze`, ma un consumatore con package base diverso non le vedrebbe.
+- `TipoContabilita` è definita qui in attesa di `link-it/govpay-common#9`; quando arriva,
+  va sostituita con quella di `govpay-common` (è la stessa codifica di
+  `tributi.tipo_contabilita`).
