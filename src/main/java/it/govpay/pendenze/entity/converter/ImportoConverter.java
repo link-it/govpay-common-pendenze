@@ -23,9 +23,17 @@ import jakarta.persistence.Converter;
  * {@code new BigDecimal(0.1)} vale {@code 0.1000000000000000055511151231257827…} mentre
  * {@code BigDecimal.valueOf(0.1)} vale {@code 0.1}, perche' passa da
  * {@link Double#toString(double)} che garantisce il round-trip alla rappresentazione
- * decimale piu' corta. In entrambe le direzioni il valore viene normalizzato a due
- * decimali con {@link RoundingMode#HALF_UP}, cosi' il giro attraverso il {@code double}
- * restituisce lo stesso importo su tutti i database.</p>
+ * decimale piu' corta. In lettura il valore viene normalizzato a due decimali con
+ * {@link RoundingMode#HALF_UP}, cosi' il giro attraverso il {@code double} restituisce lo
+ * stesso importo su tutti i database.</p>
+ *
+ * <p><b>In scrittura non si arrotonda.</b> Un importo con piu' di due decimali
+ * significativi (per esempio un totale diviso in tre rate) e' un errore del chiamante:
+ * arrotondarlo qui lo altererebbe in silenzio, lasciando l'entita' in memoria con un
+ * valore diverso da quello scritto in colonna, e l'invariante &laquo;somma delle voci
+ * pari al totale&raquo; potrebbe valere in memoria e non sulle righe persistite. La
+ * conversione lo rifiuta; chi riceve importi dall'esterno li normalizza esplicitamente
+ * con {@link #normalizza(BigDecimal)} prima di assegnarli all'entita'.</p>
  */
 @Converter
 public class ImportoConverter implements AttributeConverter<BigDecimal, Double> {
@@ -38,7 +46,20 @@ public class ImportoConverter implements AttributeConverter<BigDecimal, Double> 
 
     @Override
     public Double convertToDatabaseColumn(BigDecimal importo) {
-        return importo == null ? null : normalizza(importo).doubleValue();
+        if (importo == null) {
+            return null;
+        }
+        try {
+            // UNNECESSARY: accetta gli zeri non significativi (10.200 -> 10.20) e rifiuta
+            // solo gli importi che perderebbero informazione.
+            return importo.setScale(SCALA, RoundingMode.UNNECESSARY).doubleValue();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    "importo con piu' di " + SCALA + " decimali significativi: "
+                            + importo.toPlainString()
+                            + "; normalizzarlo con ImportoConverter.normalizza prima di"
+                            + " assegnarlo all'entita'", e);
+        }
     }
 
     @Override
@@ -47,7 +68,9 @@ public class ImportoConverter implements AttributeConverter<BigDecimal, Double> 
     }
 
     /**
-     * Normalizza un importo a due decimali.
+     * Normalizza un importo a due decimali, arrotondando {@link RoundingMode#HALF_UP}.
+     * E' il punto in cui chi riceve importi dall'esterno rende esplicita la perdita di
+     * precisione, prima di assegnarli all'entita'.
      *
      * @param importo importo da normalizzare, non nullo
      * @return l'importo con scala 2

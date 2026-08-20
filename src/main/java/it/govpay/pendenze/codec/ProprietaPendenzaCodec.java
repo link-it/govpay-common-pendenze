@@ -152,11 +152,29 @@ public final class ProprietaPendenzaCodec {
         }
         List<ProprietaPendenza.VoceDescrizioneImporto> voci = new ArrayList<>();
         for (JsonNode elemento : nodo) {
-            JsonNode importo = elemento.get(IMPORTO);
             voci.add(new ProprietaPendenza.VoceDescrizioneImporto(
-                    testo(elemento, VOCE),
-                    importo == null || importo.isNull() ? null : new BigDecimal(importo.asString())));
+                    testo(elemento, VOCE), importo(elemento)));
         }
         return voci;
+    }
+
+    /**
+     * Legge l'importo di una voce. Un importo non numerico annulla la sola voce e non
+     * l'intera proprieta': la tolleranza e' per campo, come per le date.
+     *
+     * @param elemento elemento dell'array {@code descrizioneImporto}
+     * @return l'importo, {@code null} se assente o non numerico
+     */
+    private static BigDecimal importo(JsonNode elemento) {
+        String valore = testo(elemento, IMPORTO);
+        if (valore == null || valore.isBlank()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(valore);
+        } catch (NumberFormatException e) {
+            log.warn("Proprieta' pendenza: importo [{}] non numerico, ignorato", valore);
+            return null;
+        }
     }
 }

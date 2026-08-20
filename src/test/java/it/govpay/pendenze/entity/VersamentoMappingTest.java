@@ -6,15 +6,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.test.context.ActiveProfiles;
 
+import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.model.StatoPagamento;
 import it.govpay.pendenze.model.StatoSingoloVersamento;
 import it.govpay.pendenze.model.StatoVersamento;
@@ -32,6 +36,7 @@ import it.govpay.pendenze.model.TipologiaTipoVersamento;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@ImportAutoConfiguration(PendenzeAutoConfiguration.class)
 @ActiveProfiles("test")
 class VersamentoMappingTest {
 
@@ -215,19 +220,46 @@ class VersamentoMappingTest {
     }
 
     @Test
-    @DisplayName("data_ora_ultimo_aggiornamento si muove a ogni scrittura")
-    void ultimoAggiornamentoSiMuove() {
+    @DisplayName("data_ora_ultimo_aggiornamento conserva l'istante assegnato dal chiamante")
+    void ultimoAggiornamentoNonVieneGenerato() {
+        // Con @UpdateTimestamp l'istante sarebbe rigenerato al flush, in insert e in
+        // update: un caricamento che deve conservare l'istante originale non potrebbe.
+        OffsetDateTime storico = OffsetDateTime.of(2001, 1, 1, 0, 0, 0, 0, ZoneOffset.ofHours(1));
         Versamento pendenza = pendenzaMinima();
+        pendenza.setDataOraUltimoAggiornamento(storico);
+
         em.persist(pendenza);
         em.flush();
-        OffsetDateTime dopoInsert = pendenza.getDataOraUltimoAggiornamento();
-        assertThat(dopoInsert).isNotNull();
+        em.clear();
 
-        pendenza.setDescrizioneStato("aggiornata");
+        Versamento riletta = em.find(Versamento.class, pendenza.getId());
+        assertThat(riletta.getDataOraUltimoAggiornamento().toInstant())
+                .isEqualTo(storico.toInstant());
+
+        // e non si muove da sola su un update: e' il livello di aggiornamento (F3) che
+        // deve riscriverla con il Clock della libreria.
+        riletta.setDescrizioneStato("aggiornata");
+        em.flush();
+        assertThat(riletta.getDataOraUltimoAggiornamento().toInstant())
+                .isEqualTo(storico.toInstant());
+    }
+
+    @Test
+    @DisplayName("l'hash di un'entita' non cambia quando viene persistita")
+    void hashStabileAllaPersistenza() {
+        Versamento pendenza = pendenzaMinima();
+        SingoloVersamento voce = voce();
+        pendenza.addSingoloVersamento(voce);
+        Set<Object> raccolte = new HashSet<>(Set.of(pendenza, voce));
+
+        em.persist(pendenza);
         em.flush();
 
-        assertThat(pendenza.getDataOraUltimoAggiornamento())
-                .isAfterOrEqualTo(dopoInsert);
+        // Se l'hash dipendesse dall'id, dopo il flush l'istanza finirebbe in un altro
+        // bucket e non sarebbe piu' ritrovabile nella raccolta che la contiene.
+        assertThat(pendenza.getId()).isNotNull();
+        assertThat(voce.getId()).isNotNull();
+        assertThat(raccolte).contains(pendenza, voce);
     }
 
     @Test

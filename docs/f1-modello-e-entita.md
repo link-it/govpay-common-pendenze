@@ -169,7 +169,16 @@ public class ImportoConverter implements AttributeConverter<BigDecimal, Double> 
 
     @Override
     public Double convertToDatabaseColumn(BigDecimal importo) {
-        return importo == null ? null : normalizza(importo).doubleValue();
+        if (importo == null) {
+            return null;
+        }
+        try {
+            // UNNECESSARY: accetta gli zeri non significativi (10.200 -> 10.20) e
+            // rifiuta solo gli importi che perderebbero informazione.
+            return importo.setScale(SCALA, RoundingMode.UNNECESSARY).doubleValue();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("importo con piu' di 2 decimali: " + importo, e);
+        }
     }
 
     @Override
@@ -189,9 +198,15 @@ Regole d'uso nel resto della libreria:
 
 - confronti sempre con `compareTo`, mai `equals` (che confronta anche lo scale);
 - somme e differenze su `BigDecimal` normalizzati, mai su `double`;
-- l'API pubblica accetta ed espone `BigDecimal`; un importo con più di 2 decimali in
-  ingresso viene arrotondato `HALF_UP` (comportamento da documentare in F4, dove
-  arriva l'input esterno).
+- **in lettura si normalizza, in scrittura no.** `convertToEntityAttribute` arrotonda
+  (serve a ripulire il giro attraverso il `double`), `convertToDatabaseColumn` rifiuta
+  gli importi con più di 2 decimali significativi: arrotondarli lì li altererebbe in
+  silenzio, lasciando l'entità in memoria diversa dalla riga scritta e rendendo
+  l'invariante «somma delle voci pari al totale» vera in memoria e falsa in banca dati.
+  Gli zeri non significativi (`10.200`) passano;
+- l'API pubblica accetta ed espone `BigDecimal`; l'arrotondamento `HALF_UP` di un importo
+  esterno è esplicito, con `ImportoConverter.normalizza`, al confine che riceve l'input
+  (F4).
 
 ### 6.2 `IncassoConverter` — `Boolean` ↔ `'t'`/`'f'`
 
@@ -399,15 +414,21 @@ Conseguenze da tenere presenti:
 ## 8. `data_ora_ultimo_aggiornamento` nell'entità
 
 ```java
-@UpdateTimestamp
 @Column(name = "data_ora_ultimo_aggiornamento", nullable = false)
 private OffsetDateTime dataOraUltimoAggiornamento;
 ```
 
-`@UpdateTimestamp` copre ogni flush di entità dirty. Poiché la colonna è `NOT NULL` e
-l'annotazione non interviene alla creazione, l'insert la valorizza esplicitamente
-(`= dataCreazione`). Il resto della regola trasversale (voci, documento, allegati,
-divieto di update bulk, `Clock` iniettato) è in proposta §6.4 e si realizza in F3/F4.
+**Senza `@UpdateTimestamp`**, contrariamente a quanto prevedeva la prima stesura di
+questo disegno. L'annotazione genera l'istante su insert *e* update
+(`INSERT_AND_UPDATE`) e quindi **scarta senza segnalarlo il valore assegnato dal
+chiamante**: un caricamento che deve conservare l'istante originale non potrebbe farlo.
+Inoltre l'istante arriverebbe dall'orologio interno di Hibernate, nel fuso della JVM,
+scavalcando il bean `pendenzeClock` e la regola di §11 sugli istanti.
+
+La colonna è quindi valorizzata dal chiamante a ogni scrittura, sempre dal `Clock`
+iniettato. Il presidio che si muova davvero su ogni percorso di scrittura (voci,
+documento, allegati, divieto di update bulk) è in proposta §6.4 e si realizza in F3/F4:
+in F1 il test verifica solo che l'istante assegnato sopravviva al giro in banca dati.
 
 ## 9. `SingoloVersamento` (20 colonne) e `Documento` (5)
 
@@ -465,6 +486,19 @@ record VoceCausale(String testo, BigDecimal importo) {}
 `"<importo>: <spezzone>"`). Comportamento da preservare dal
 `CausaleVersamentoDecoder` della console: valore non riconosciuto o base64 malformato
 → **restituito verbatim**, mai eccezione (ci sono dati legacy in chiaro).
+
+Perché «verbatim» valga davvero, il riconoscimento dei token deve essere **stretto**:
+`Base64.getDecoder()` non solleva eccezioni su una qualunque sequenza di caratteri
+dell'alfabeto, nemmeno senza riempimento, quindi una causale legacy in chiaro che
+comincia per `01`/`02`/`03` (`"02 rate da pagare"`) verrebbe «decodificata» in caratteri
+illeggibili invece di essere restituita così com'è. Un token è accettato solo se ha
+lunghezza multipla di quattro, se ri-codificato torna identico e se produce UTF-8 valido
+senza caratteri di controllo; altrimenti si ricade sulla causale semplice.
+
+In codifica c'è il controllo di lunghezza contro `causale_versamento VARCHAR(1024)`,
+come su `cod_rata`: il base64 gonfia il testo di 4/3, quindi una causale che in chiaro
+ci starebbe può eccedere la colonna. Meglio un `IllegalArgumentException` dove il valore
+viene prodotto che un troncamento al flush, con la transazione già abortita.
 
 ### 10.2 `RataOSoglia` — `cod_rata` (D8)
 
@@ -536,9 +570,15 @@ F2/F3 al posto della coppia di stringhe sciolte.
 - **Nessun Lombok sulle entità:** getter/setter espliciti come in
   `govpay-console-api`. `@Data` genererebbe `equals`/`hashCode` su tutti i campi, con i
   noti problemi su entità JPA e relazioni LAZY.
-- `equals`/`hashCode` sulle entità: solo su `id`, con `id == null` → identità di
-  istanza. `toString` senza relazioni LAZY (niente `dominio`, `applicazione`,
-  `singoliVersamenti`) per non innescare caricamenti o `LazyInitializationException`.
+- `equals` sulle entità: solo su `id`, con `id == null` → identità di istanza.
+  `hashCode` **costante** (`getClass().hashCode()`) e non derivato dall'`id`: l'`id` è
+  nullo finché l'entità non è persistita e comparirebbe al flush, cambiando l'hash di
+  un'istanza già finita in un `HashSet` o usata come chiave di mappa, che da quel momento
+  non sarebbe più ritrovabile. Un valore costante è coerente con `equals` e stabile nel
+  passaggio da transiente a persistente; il prezzo sono le collisioni in raccolte grandi
+  di entità, che non è un uso previsto. `toString` senza relazioni LAZY (niente
+  `dominio`, `applicazione`, `singoliVersamenti`) per non innescare caricamenti o
+  `LazyInitializationException`.
 - `model` e `codec`: solo `java.*` (record, sealed interface, enum). Nessun import
   Spring, JPA o Jackson **nei record** — la serializzazione sta nei codec.
 - Nessun `@Version`: non introduciamo optimistic locking, che richiederebbe una colonna
@@ -626,12 +666,12 @@ locale se non ancora disponibile.
 | Fase | Da decidere in fase |
 |---|---|
 | F2 | composizione dei `ProfiloFetch` in entity graph (solo voci e documento: l'anagrafica non è nel grafo); firma dei criteri di ricerca con `idDominio`/`idTipiVersamento` come `Long` |
-| F3 | dove intercettare la regola "voci non rimovibili" prima del flush (§7.3); arrotondamento `HALF_UP` sugli importi in ingresso (§6.1) |
+| F3 | dove intercettare la regola "voci non rimovibili" prima del flush (§7.3); dove riscrivere `data_ora_ultimo_aggiornamento` dal `Clock` su ogni percorso di scrittura (§8) |
 | F4 | valorizzazione di `src_iuv`/`src_debitore_identificativo` in uppercase (B4); record `ConfigurazioneAvvisatura` in ingresso al comando di caricamento (§3) e calcolo delle date di avvisatura (proposta §4.6) |
 
 ## 14. Stato dell'implementazione
 
-67 test verdi, `mvn clean install` verde.
+77 test verdi, `mvn clean install` verde.
 
 ### 14.1 La validazione del mapping funziona davvero
 
@@ -655,22 +695,39 @@ quell'errore non sarebbe emerso.
 | 6 | Dipendenza di test `spring-boot-data-jpa-test` | in Spring Boot 4 `@DataJpaTest` non arriva più da `spring-boot-starter-test`; porta con sé anche `spring-boot-jpa-test` e `spring-boot-jdbc-test` (`TestEntityManager`, `@AutoConfigureTestDatabase`) |
 | 7 | `HibernatePropertiesCustomizer` importato da `org.springframework.boot.hibernate.autoconfigure` | in Spring Boot 4 il package è cambiato rispetto a quello che avevo indicato nel disegno |
 | 8 | Rimossi Lombok e `spring-boot-starter` dal `pom.xml` | Lombok non è usato (nessun Lombok sulle entità, §11) e `spring-boot-starter` arriva transitivamente da `spring-boot-starter-data-jpa` |
+| 9 | `IncassoConverterTest` ed `EnumConverterTest` di §12.2 realizzati come un solo `ConverterCodificatiTest` | sono lo stesso caso di test (una codifica di colonna in un enum), separarli avrebbe duplicato l'impianto |
+| 10 | `TipoSoglia.daNome` non realizzato | `CodRataCodec` risolve il tipo con il prefisso del valore, non per nome esatto: il metodo sarebbe rimasto senza chiamanti |
 
 ### 14.3 Test scritti
 
 | Classe | Test | Copre |
 |---|---|---|
-| `VersamentoMappingTest` | 8 | tutte le colonne, colonna troncata AppIO, flag tri-stato, soli campi obbligatori, unicità della chiave logica, anno tributario (F1-3), `data_ora_ultimo_aggiornamento`, voci non cancellabili (F1-5) |
+| `VersamentoMappingTest` | 9 | tutte le colonne, colonna troncata AppIO, flag tri-stato, soli campi obbligatori, unicità della chiave logica, anno tributario (F1-3), `data_ora_ultimo_aggiornamento` conservata (§8), hash stabile alla persistenza (§11), voci non cancellabili (F1-5) |
 | `IstantiPersistitiTest` | 2 | istante conservato nel giro in banca dati e ora locale del fuso configurato scritta in colonna (F1-2) |
 | `PendenzeAutoConfigurationTest` | 4 | fuso di default, orologio sul fuso configurato, customizer, non-sovrascrittura della configurazione del consumatore |
-| `ImportoConverterTest` | 9 | round-trip, arrotondamento `HALF_UP`, regressione su `new BigDecimal(double)`, somma voci confrontabile col totale |
+| `ImportoConverterTest` | 11 | round-trip, rifiuto degli importi fuori scala in scrittura, zeri non significativi accettati, `normalizza` che arrotonda `HALF_UP`, regressione su `new BigDecimal(double)`, somma voci confrontabile col totale |
 | `ConverterCodificatiTest` | 10 | `incasso`, `debitore_tipo`, `tipo_contabilita` (comprese le codifiche non assegnate `3`,`4`,`5`), `tipo_bollo` |
-| `CausaleCodecTest` | 8 | round-trip dei tre formati, sintesi, causale legacy in chiaro, base64 malformato, formato prodotto dalla 3.x |
+| `CausaleCodecTest` | 14 | round-trip dei tre formati, sintesi, causale legacy in chiaro, causali in chiaro che cominciano per `01`/`02`/`03`, base64 malformato, lunghezza della colonna, formato prodotto dalla 3.x |
 | `CodRataCodecTest` | 15 | numero rata, soglie con e senza giorni, valori non conformi, combinazioni vietate dal dominio, lunghezza della colonna |
-| `ProprietaPendenzaCodecTest` | 6 | round-trip, refuso `dataScandenzaAvviso` preservato, JSON della 3.x, campi assenti omessi, JSON illeggibile |
+| `ProprietaPendenzaCodecTest` | 7 | round-trip, refuso `dataScandenzaAvviso` preservato, JSON della 3.x, campi assenti omessi, importo non numerico che non scarta le altre proprietà, JSON illeggibile |
 | `StatoPendenzaApplicativoTest` | 5 | mappature dirette, `SCADUTA`, scadenza al riferimento, scadenza irrilevante se già pagata |
 
-### 14.4 Da tenere presente per F2
+### 14.4 Correzioni dalla revisione della PR
+
+Rilievi della revisione di codice, tutti chiusi; dove toccavano una scelta di disegno, la
+sezione corrispondente di questo documento è stata aggiornata.
+
+| # | Rilievo | Correzione |
+|---|---|---|
+| 1 | `@UpdateTimestamp` scartava l'istante assegnato dal chiamante (genera su insert *e* update) e lo prendeva dall'orologio di Hibernate nel fuso della JVM, contro §11 | annotazione rimossa: la colonna è valorizzata dal `Clock` iniettato (§8) |
+| 2 | Una causale legacy in chiaro che comincia per `01`/`02`/`03` veniva «decodificata» in caratteri illeggibili invece di essere restituita verbatim: `Base64.getDecoder()` accetta qualunque sequenza dell'alfabeto, anche senza riempimento | riconoscimento stretto dei token: lunghezza multipla di 4, ri-codifica identica, UTF-8 valido senza caratteri di controllo (§10.1) |
+| 3 | Nessun controllo di lunghezza contro `causale_versamento VARCHAR(1024)`: 780 caratteri in chiaro diventano 1043 in base64, con troncamento al flush invece di un errore di dominio | `LUNGHEZZA_MASSIMA` e `IllegalArgumentException` in codifica, come su `cod_rata` (§10.1) |
+| 4 | `hashCode` derivato dall'`id` cambiava al flush: un'entità raccolta in un `HashSet` prima del `persist` non era più ritrovabile dopo | `hashCode` costante sulle tre entità (§11) |
+| 5 | Un `importo` non numerico in `descrizioneImporto` faceva scartare **tutte** le proprietà, non la sola voce | tolleranza per campo, come per le date |
+| 6 | `convertToDatabaseColumn` arrotondava in silenzio: `33.333` finiva in colonna come `33.33` mentre l'entità in memoria restava `33.333` | in scrittura gli importi fuori scala sono rifiutati; l'arrotondamento è esplicito al confine, con `normalizza` (§6.1) |
+| 7 | `ObjectProvider.getIfAvailable` fa fallire il contesto se il consumatore ha più `ObjectMapper` senza `@Primary` | `getIfUnique`, che ripiega sul mapper interno della libreria |
+
+### 14.5 Da tenere presente per F2
 
 - L'autoconfigurazione andrà estesa con `@EntityScan`/`@EnableJpaRepositories` sui package
   della libreria: oggi le entità vengono trovate perché nei test la configurazione sta in

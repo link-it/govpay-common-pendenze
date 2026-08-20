@@ -1,6 +1,7 @@
 package it.govpay.pendenze.codec;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -9,6 +10,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import it.govpay.pendenze.model.Causale;
 
@@ -76,6 +79,38 @@ class CausaleCodecTest {
         assertThat(CausaleCodec.decodifica(inChiaro))
                 .contains(new Causale.Semplice(inChiaro));
         assertThat(CausaleCodec.sintesiDa(inChiaro)).isEqualTo(inChiaro);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "02 rate da pagare",
+            "01 GENNAIO",
+            "03 2024 TARI",
+            "01 TARI",
+            "02 come da avviso"})
+    @DisplayName("una causale in chiaro che comincia per 01/02/03 non viene 'decodificata'")
+    void causaleInChiaroCheSembraCodificata(String inChiaro) {
+        // Il decoder base64 di Java accetta qualunque sequenza dell'alfabeto, anche senza
+        // riempimento: senza controlli questi valori diventerebbero caratteri illeggibili.
+        assertThat(CausaleCodec.decodifica(inChiaro))
+                .contains(new Causale.Semplice(inChiaro));
+        assertThat(CausaleCodec.sintesiDa(inChiaro)).isEqualTo(inChiaro);
+    }
+
+    @Test
+    @DisplayName("la codifica rifiuta le causali che eccedono la colonna")
+    void causaleTroppoLunga() {
+        // base64 gonfia di 4/3: 780 caratteri in chiaro non ci stanno piu' in 1024.
+        String lunga = "x".repeat(780);
+
+        assertThatThrownBy(() -> CausaleCodec.codifica(new Causale.Semplice(lunga)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(String.valueOf(CausaleCodec.LUNGHEZZA_MASSIMA));
+
+        // al limite, invece, passa
+        String alLimite = "x".repeat(765);
+        assertThat(CausaleCodec.codifica(new Causale.Semplice(alLimite)))
+                .hasSizeLessThanOrEqualTo(CausaleCodec.LUNGHEZZA_MASSIMA);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package it.govpay.pendenze.entity.converter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 
@@ -34,10 +35,33 @@ class ImportoConverterTest {
     }
 
     @Test
-    @DisplayName("un importo con piu' di due decimali viene arrotondato HALF_UP")
-    void arrotondaAHalfUp() {
-        assertThat(converter.convertToDatabaseColumn(new BigDecimal("9.995"))).isEqualTo(10.00);
-        assertThat(converter.convertToDatabaseColumn(new BigDecimal("9.994"))).isEqualTo(9.99);
+    @DisplayName("in scrittura un importo con piu' di due decimali significativi e' rifiutato")
+    void rifiutaGliImportiFuoriScala() {
+        // Arrotondare qui altererebbe in silenzio il valore del chiamante: l'entita' in
+        // memoria continuerebbe a valere 33.333 mentre in colonna finisce 33.33.
+        assertThatThrownBy(() -> converter.convertToDatabaseColumn(new BigDecimal("33.333")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("33.333");
+    }
+
+    @Test
+    @DisplayName("in scrittura gli zeri non significativi sono accettati")
+    void accettaGliZeriNonSignificativi() {
+        assertThat(converter.convertToDatabaseColumn(new BigDecimal("10.200"))).isEqualTo(10.20);
+        assertThat(converter.convertToDatabaseColumn(new BigDecimal("7"))).isEqualTo(7.00);
+    }
+
+    @Test
+    @DisplayName("normalizza arrotonda HALF_UP: e' il punto in cui la perdita e' esplicita")
+    void normalizzaArrotondaAHalfUp() {
+        assertThat(ImportoConverter.normalizza(new BigDecimal("9.995")))
+                .isEqualByComparingTo(new BigDecimal("10.00"));
+        assertThat(ImportoConverter.normalizza(new BigDecimal("9.994")))
+                .isEqualByComparingTo(new BigDecimal("9.99"));
+
+        // normalizzato, l'importo passa dalla conversione senza errori
+        assertThat(converter.convertToDatabaseColumn(
+                ImportoConverter.normalizza(new BigDecimal("33.333")))).isEqualTo(33.33);
     }
 
     @Test

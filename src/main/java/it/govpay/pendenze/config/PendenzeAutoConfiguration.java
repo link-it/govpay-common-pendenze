@@ -72,13 +72,20 @@ public class PendenzeAutoConfiguration {
      * altrimenti se ne costruisce uno proprio: la libreria non impone al consumatore di
      * configurare Jackson.
      *
-     * @param objectMapper mapper JSON dell'applicazione, se disponibile
+     * <p>Si usa {@code getIfUnique} e non {@code getIfAvailable}: se il consumatore
+     * dichiara piu' di un {@code ObjectMapper} senza {@code @Primary}, quest'ultimo
+     * solleverebbe {@code NoUniqueBeanDefinitionException} facendo fallire l'avvio dentro
+     * l'autoconfigurazione della libreria. Il codec lavora sui soli nodi dell'albero
+     * JSON, quindi quale mapper sia non cambia il risultato: meglio ripiegare su un
+     * mapper interno che rompere il contesto.</p>
+     *
+     * @param objectMapper mapper JSON dell'applicazione, se disponibile e non ambiguo
      * @return il codec
      */
     @Bean
     @ConditionalOnMissingBean
     public ProprietaPendenzaCodec proprietaPendenzaCodec(ObjectProvider<ObjectMapper> objectMapper) {
         return new ProprietaPendenzaCodec(
-                objectMapper.getIfAvailable(() -> JsonMapper.builder().build()));
+                objectMapper.getIfUnique(() -> JsonMapper.builder().build()));
     }
 }

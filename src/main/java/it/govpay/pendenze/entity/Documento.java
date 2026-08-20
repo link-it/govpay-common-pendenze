@@ -1,7 +1,5 @@
 package it.govpay.pendenze.entity;
 
-import java.util.Objects;
-
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -93,9 +91,10 @@ public class Documento {
         return id.equals(that.id);
     }
 
+    /** Costante, per la stessa ragione documentata su {@code Versamento.hashCode()}. */
     @Override
     public int hashCode() {
-        return id == null ? System.identityHashCode(this) : Objects.hash(id);
+        return Documento.class.hashCode();
     }
 
     @Override

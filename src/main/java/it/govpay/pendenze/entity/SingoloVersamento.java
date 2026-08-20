@@ -1,7 +1,6 @@
 package it.govpay.pendenze.entity;
 
 import java.math.BigDecimal;
-import java.util.Objects;
 
 import it.govpay.pendenze.entity.converter.ImportoConverter;
 import it.govpay.pendenze.entity.converter.TipoBolloConverter;
@@ -291,9 +290,10 @@ public class SingoloVersamento {
         return id.equals(that.id);
     }
 
+    /** Costante, per la stessa ragione documentata su {@code Versamento.hashCode()}. */
     @Override
     public int hashCode() {
-        return id == null ? System.identityHashCode(this) : Objects.hash(id);
+        return SingoloVersamento.class.hashCode();
     }
 
     /** Volutamente senza la relazione verso la pendenza, che e' LAZY. */

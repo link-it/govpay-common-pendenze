@@ -50,6 +50,26 @@ class ProprietaPendenzaCodecTest {
     }
 
     @Test
+    @DisplayName("un importo non numerico annulla la sola voce, non l'intera proprieta'")
+    void importoNonNumericoNonScartaTutto() {
+        String json = """
+                {"lineaTestoRicevuta1":"riga",
+                 "dataScandenzaAvviso":"2026-03-31T12:00+02:00",
+                 "descrizioneImporto":[{"voce":"a","importo":"n.d."},
+                                       {"voce":"b","importo":"5.00"}]}""";
+
+        ProprietaPendenza rilette = codec.decodifica(json).orElseThrow();
+
+        assertThat(rilette.lineaTestoRicevuta1()).isEqualTo("riga");
+        assertThat(rilette.dataScandenzaAvviso()).isNotNull();
+        assertThat(rilette.descrizioneImporto()).hasSize(2);
+        assertThat(rilette.descrizioneImporto().get(0).voce()).isEqualTo("a");
+        assertThat(rilette.descrizioneImporto().get(0).importo()).isNull();
+        assertThat(rilette.descrizioneImporto().get(1).importo())
+                .isEqualByComparingTo(new BigDecimal("5.00"));
+    }
+
+    @Test
     @DisplayName("il nome della data di scadenza conserva il refuso storico")
     void nomeConRefusoPreservato() {
         ProprietaPendenza proprieta = new ProprietaPendenza(null, null, null, null, null, null, null,

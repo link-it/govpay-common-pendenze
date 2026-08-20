@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 import org.junit.jupiter.api.DisplayName;
@@ -95,7 +94,7 @@ class IstantiPersistitiTest {
         pendenza.setImportoPagato(BigDecimal.ZERO);
         pendenza.setImportoIncassato(BigDecimal.ZERO);
         pendenza.setDataCreazione(ISTANTE.atZone(ROMA).toOffsetDateTime());
-        pendenza.setDataOraUltimoAggiornamento(OffsetDateTime.now(ROMA));
+        pendenza.setDataOraUltimoAggiornamento(ISTANTE.atZone(ROMA).toOffsetDateTime());
         return pendenza;
     }
 }

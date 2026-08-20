@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.hibernate.annotations.UpdateTimestamp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -257,11 +256,17 @@ public class Versamento {
     private OffsetDateTime dataScadenza;
 
     /**
-     * Aggiornata a ogni scrittura dell'entita' da {@code @UpdateTimestamp}. Alla
-     * creazione va valorizzata esplicitamente, perche' la colonna e' {@code NOT NULL} e
-     * l'annotazione non interviene sull'insert.
+     * Istante dell'ultima scrittura dell'entita'. Va valorizzato dal chiamante a ogni
+     * scrittura, sempre con il {@code Clock} della libreria.
+     *
+     * <p><b>Perche' non {@code @UpdateTimestamp}.</b> Quell'annotazione genera l'istante
+     * su insert <em>e</em> update ({@code INSERT_AND_UPDATE}), quindi scarta senza
+     * segnalarlo il valore assegnato dal chiamante: un caricamento che deve conservare
+     * l'istante originale non potrebbe farlo. Inoltre l'istante arriverebbe
+     * dall'orologio interno di Hibernate, nel fuso della JVM, scavalcando il bean
+     * {@code pendenzeClock} e la regola sul fuso (F1-2). Il presidio che la colonna si
+     * muova a ogni scrittura sta nel livello di aggiornamento (F3, proposta &sect;6.4).</p>
      */
-    @UpdateTimestamp
     @Column(name = "data_ora_ultimo_aggiornamento", nullable = false)
     private OffsetDateTime dataOraUltimoAggiornamento;
 
@@ -345,6 +350,7 @@ public class Versamento {
      * @param voce voce da aggiungere, non nulla
      */
     public void addSingoloVersamento(SingoloVersamento voce) {
+        Objects.requireNonNull(voce, "la voce da aggiungere non puo' essere nulla");
         singoliVersamenti.add(voce);
         voce.setVersamento(this);
     }
@@ -895,9 +901,17 @@ public class Versamento {
         return id.equals(that.id);
     }
 
+    /**
+     * Costante, non derivato dall'{@code id}: l'{@code id} e' nullo finche' l'entita' non
+     * viene persistita e comparirebbe al flush, cambiando l'hash di un'istanza gia'
+     * finita in un {@code HashSet} o usata come chiave di mappa. Un valore costante e'
+     * coerente con {@link #equals(Object)} e stabile nel passaggio da transiente a
+     * persistente; il prezzo sono le collisioni in raccolte grandi di entita', che non e'
+     * un uso previsto.
+     */
     @Override
     public int hashCode() {
-        return id == null ? System.identityHashCode(this) : Objects.hash(id);
+        return Versamento.class.hashCode();
     }
 
     /** Volutamente senza relazioni LAZY, per non innescare caricamenti. */

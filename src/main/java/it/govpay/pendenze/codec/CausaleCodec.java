@@ -1,6 +1,9 @@
 package it.govpay.pendenze.codec;
 
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -23,8 +26,21 @@ import it.govpay.pendenze.model.Causale;
  * (causali salvate in chiaro, base64 malformati). La decodifica non solleva mai
  * eccezioni: quando non riconosce il contenuto restituisce il valore cosi' com'e' come
  * causale semplice, replicando il comportamento della versione 3.x.</p>
+ *
+ * <p><b>Riconoscimento stretto dei token base64.</b> Non basta che
+ * {@link Base64#getDecoder()} non sollevi eccezioni: quel decoder accetta qualunque
+ * sequenza di caratteri dell'alfabeto, anche senza riempimento, quindi una causale
+ * legacy in chiaro che comincia per {@code 01}/{@code 02}/{@code 03} verrebbe
+ * &laquo;decodificata&raquo; in caratteri illeggibili invece di essere restituita
+ * verbatim (per esempio {@code "02 rate da pagare"}). Un token e' accettato solo se ha
+ * lunghezza multipla di quattro, se ri-codificato torna identico e se i byte che produce
+ * sono UTF-8 valido senza caratteri di controllo; altrimenti il valore e' trattato come
+ * causale in chiaro.</p>
  */
 public final class CausaleCodec {
+
+    /** Lunghezza massima della colonna {@code causale_versamento}. */
+    public static final int LUNGHEZZA_MASSIMA = 1024;
 
     private static final String SEPARATORE = " ";
     private static final String TIPO_SEMPLICE = "01";
@@ -62,13 +78,29 @@ public final class CausaleCodec {
     /**
      * Codifica la causale nel formato della colonna.
      *
+     * <p>La codifica base64 gonfia il testo di un fattore 4/3: una causale lunga puo'
+     * superare la colonna anche se il testo in chiaro ci starebbe. Il controllo di
+     * lunghezza e' qui, cosi' l'errore emerge dove il valore viene prodotto e non come
+     * troncamento al flush, con la transazione gia' abortita.</p>
+     *
      * @param causale causale da codificare, eventualmente {@code null}
      * @return il valore da scrivere in colonna, {@code null} se la causale e' assente
+     * @throws IllegalArgumentException se la codifica supera la lunghezza della colonna
      */
     public static String codifica(Causale causale) {
         if (causale == null) {
             return null;
         }
+        String codificato = codificaSenzaControlli(causale);
+        if (codificato.length() > LUNGHEZZA_MASSIMA) {
+            throw new IllegalArgumentException(
+                    "causale_versamento eccede " + LUNGHEZZA_MASSIMA + " caratteri ("
+                            + codificato.length() + ") una volta codificata in base64");
+        }
+        return codificato;
+    }
+
+    private static String codificaSenzaControlli(Causale causale) {
         return switch (causale) {
             case Causale.Semplice semplice ->
                     TIPO_SEMPLICE + SEPARATORE + codificaBase64(semplice.testo());
@@ -146,7 +178,40 @@ public final class CausaleCodec {
         return Base64.getEncoder().encodeToString(valore.getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Decodifica un token, verificando che sia davvero base64 e non testo in chiaro che
+     * l'alfabeto base64 accetta per caso.
+     *
+     * @param valore token da decodificare
+     * @return il testo decodificato
+     * @throws IllegalArgumentException se il token non e' base64 canonico di testo UTF-8
+     */
     private static String decodificaBase64(String valore) {
-        return new String(Base64.getDecoder().decode(valore), StandardCharsets.UTF_8);
+        if (valore.length() % 4 != 0) {
+            throw new IllegalArgumentException("token base64 di lunghezza non valida: " + valore);
+        }
+        byte[] byteDecodificati = Base64.getDecoder().decode(valore);
+        if (!Base64.getEncoder().encodeToString(byteDecodificati).equals(valore)) {
+            throw new IllegalArgumentException("token base64 non canonico: " + valore);
+        }
+        String testo = decodificaUtf8(byteDecodificati, valore);
+        if (testo.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException(
+                    "il token base64 non decodifica in testo stampabile: " + valore);
+        }
+        return testo;
+    }
+
+    private static String decodificaUtf8(byte[] byteDecodificati, String valore) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(byteDecodificati))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            throw new IllegalArgumentException(
+                    "il token base64 non decodifica in UTF-8: " + valore, e);
+        }
     }
 }
