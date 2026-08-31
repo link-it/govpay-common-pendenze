@@ -44,20 +44,19 @@
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Starter -->
+        <!-- JPA: entita' e persistenza dell'aggregato pendenza -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
-        <!-- Lombok per ridurre boilerplate -->
+        <!-- Jackson 3: serializzazione dei campi JSON (proprieta' pendenza) -->
         <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
 
-        <!-- Spring Boot Configuration Processor -->
+        <!-- Spring Boot Configuration Processor: metadati di PendenzeProperties -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-configuration-processor</artifactId>
@@ -68,6 +67,20 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Slice test JPA (@DataJpaTest, TestEntityManager) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- H2: schema reale caricato in memoria per i test di mapping -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

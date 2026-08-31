@@ -59,7 +59,7 @@ jobs:
 
       - name: Restore existing OWASP DB cache
         id: owasp-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .dependency-check/data
           key: ${{ runner.os }}-owasp-v${{ steps.owasp.outputs.version }}-${{ steps.date.outputs.date }}

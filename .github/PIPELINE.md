@@ -334,3 +334,38 @@ localmente il BOM con `mvn install` dal checkout di `govpay-bom`.
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=link-it_govpay-common-pendenze&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=link-it_govpay-common-pendenze)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=link-it_govpay-common-pendenze&metric=coverage)](https://sonarcloud.io/summary/new_code?id=link-it_govpay-common-pendenze)
 ```
+
+## Versioni delle action
+
+Le action GitHub usate dai due workflow, con il criterio di aggiornamento:
+
+| Action | Versione | Criterio |
+|--------|----------|----------|
+| `actions/checkout` | `v6` | major flottante |
+| `actions/setup-java` | `v5` | major flottante |
+| `actions/cache` | `v6` | major flottante |
+| `actions/upload-artifact` | `v7` | major flottante |
+| `actions/download-artifact` | `v7` | major flottante |
+| `SonarSource/sonarqube-scan-action` | `v8` | major flottante: le patch di sicurezza vanno prese senza intervento |
+| `softprops/action-gh-release` | `v3.0.2` | pinnata |
+| `google/osv-scanner-action` (workflow riusabile) | `v2.3.5` | pinnata |
+
+Note sugli aggiornamenti gia' fatti:
+
+- **Sonar da `v5` a `v8`:** la `v5` non e' piu' supportata e GitHub la segnala come
+  affetta da una vulnerabilita'. La `v6` ha introdotto un breaking change — l'action e'
+  stata riscritta da Bash a JS e l'input `args` viene interpretato diversamente, quindi i
+  valori con spazi vanno quotati in modo differente. Qui non ci sono valori quotati,
+  percio' gli `args` restano validi. La `v8` abilita per default la verifica della firma
+  GPG dei binari dello scanner (`skipSignatureVerification=false`).
+- **`softprops/action-gh-release` da `v2.2.1` a `v3.0.2`:** la `v2` gira su Node 20,
+  deprecato sui runner GitHub; la `v3` porta il runtime a Node 24. **Attenzione:** questa
+  action e' usata solo dal job `github-release`, che scatta esclusivamente sui tag, quindi
+  una pull request non la esercita. La prima verifica reale avverra' al primo tag.
+- `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` resta impostato in `maven.yml`: e' la rete
+  di sicurezza per le action di terze parti che dichiarano ancora Node 20, comprese quelle
+  pinnate dentro i workflow riusabili che non controlliamo.
+
+Manca un aggiornamento automatico: senza Dependabot (o equivalente) sulle GitHub Actions,
+una versione pinnata resta indietro e una vulnerabilita' come quella della Sonar `v5` si
+scopre solo leggendo le annotazioni di un run.
