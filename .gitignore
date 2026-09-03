@@ -20,4 +20,6 @@ buildNumber.properties
 # Output della pipeline CI/CD
 .dependency-check/
 third-party-licenses/
-sbom/
+# ancorato alla root: senza slash iniziale il pattern matcherebbe a qualsiasi
+# livello, escludendo anche script/sbom/ che invece va versionato
+/sbom/
