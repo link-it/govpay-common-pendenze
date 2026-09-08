@@ -687,7 +687,7 @@ fornisce i metodi che quei flussi chiameranno (D4).
 | Fase | Contenuto |
 |---|---|
 | F1 | `model` + `entity` complete (65 colonne, enum, `BigDecimal`, codec causale/`cod_rata`/`incasso`) — **disegno di dettaglio: [f1-modello-e-entita.md](f1-modello-e-entita.md)** |
-| F2 | `repository` + `ricerca` + lettura dettaglio/lista (porting console-api) |
+| F2 | `repository` + `ricerca` + lettura dettaglio/lista (porting console-api) — **disegno di dettaglio: [f2-repository-ricerca-lettura.md](f2-repository-ricerca-lettura.md)** |
 | F3 | `aggiornamento`: 15 metodi + transizioni + audit + `data_ora_ultimo_aggiornamento` |
 | F4 | `caricamento`: motore completo con tutti i flag di §4.6 |
 | F5 | query di batch + eventuale adattatore legacy |
