@@ -9,7 +9,7 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
  * <p>Serve perche' questa e' una libreria e non un'applicazione: gli slice test di Spring
  * Boot ({@code @DataJpaTest}) cercano una classe {@code @SpringBootConfiguration} risalendo
  * i package, e senza di essa non partirebbero. Sta in {@code it.govpay.pendenze} cosi' le
- * entita' di {@code it.govpay.pendenze.entity} vengono trovate dallo scan predefinito.</p>
+ * entita' dei sotto-package vengono trovate dallo scan predefinito.</p>
  */
 @SpringBootConfiguration
 @EnableAutoConfiguration

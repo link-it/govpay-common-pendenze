@@ -1,3 +1,10 @@
+> **ARCHIVIATO** — Superato dalla decisione di andare direttamente al modello
+> nativo dell'evolutiva v3 (multi-debitore, `OpzionePagamento`), con migrazione
+> dati una tantum invece di un porting retrocompatibile del modello attuale.
+> Vedi [issue #8](https://github.com/link-it/govpay-common-pendenze/issues/8).
+> Il contenuto resta valido come riferimento sul comportamento e sullo schema
+> 3.10.x, utile per progettare la migrazione dati.
+
 # Analisi del codice legacy: gestione pendenze in GovPay 3.10.x
 
 Documento di lavoro per definire il perimetro funzionale della libreria

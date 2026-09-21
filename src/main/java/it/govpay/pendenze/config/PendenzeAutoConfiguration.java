@@ -5,20 +5,14 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.hibernate.autoconfigure.HibernatePropertiesCustomizer;
 import org.springframework.context.annotation.Bean;
 
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
-
-import it.govpay.pendenze.codec.ProprietaPendenzaCodec;
-
 /**
- * Autoconfigurazione della libreria: fuso orario, orologio e codec.
+ * Autoconfigurazione della libreria: fuso orario e orologio.
  */
 @AutoConfiguration
 @EnableConfigurationProperties(PendenzeProperties.class)
@@ -65,27 +59,5 @@ public class PendenzeAutoConfiguration {
             hibernateProperties.put(HIBERNATE_JDBC_TIME_ZONE, properties.fusoOrario().getId());
             log.debug("{} impostato a [{}]", HIBERNATE_JDBC_TIME_ZONE, properties.fusoOrario());
         };
-    }
-
-    /**
-     * Codec delle proprieta' della pendenza. Usa il mapper dell'applicazione se c'e',
-     * altrimenti se ne costruisce uno proprio: la libreria non impone al consumatore di
-     * configurare Jackson.
-     *
-     * <p>Si usa {@code getIfUnique} e non {@code getIfAvailable}: se il consumatore
-     * dichiara piu' di un {@code ObjectMapper} senza {@code @Primary}, quest'ultimo
-     * solleverebbe {@code NoUniqueBeanDefinitionException} facendo fallire l'avvio dentro
-     * l'autoconfigurazione della libreria. Il codec lavora sui soli nodi dell'albero
-     * JSON, quindi quale mapper sia non cambia il risultato: meglio ripiegare su un
-     * mapper interno che rompere il contesto.</p>
-     *
-     * @param objectMapper mapper JSON dell'applicazione, se disponibile e non ambiguo
-     * @return il codec
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    public ProprietaPendenzaCodec proprietaPendenzaCodec(ObjectProvider<ObjectMapper> objectMapper) {
-        return new ProprietaPendenzaCodec(
-                objectMapper.getIfUnique(() -> JsonMapper.builder().build()));
     }
 }
