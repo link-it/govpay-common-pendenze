@@ -1,153 +1,141 @@
 -- ---------------------------------------------------------------------------
--- Schema di test dell'aggregato pendenza.
+-- Schema di test dell'aggregato pendenza (modello nativo v3).
 --
--- Provenienza: govpay 3.10.x, src/main/resources/db/sql/postgresql/gov_pay.sql
---   (branch 3.10.x, commit 305365385). Colonne, tipi, lunghezze e vincoli di
---   unicita' sono copiati alla lettera: e' su questo che i test verificano il
---   mapping con spring.jpa.hibernate.ddl-auto=validate.
+-- Provenienza: nessun DDL di produzione esiste ancora (nessuna migrazione dati
+--   scritta finora) — questo schema e' derivato colonna per colonna dalle
+--   annotazioni JPA delle 5 entita' in src/main/java/it/govpay/pendenze/entity,
+--   che restano la fonte di verita'. Se le entita' cambiano, questo file va
+--   riallineato: e' su questo che i test verificano il mapping con
+--   spring.jpa.hibernate.ddl-auto=validate.
 --
--- Differenze volute rispetto al DDL di produzione, e solo queste:
---   1. sono presenti unicamente le tre tabelle dell'aggregato
---      (versamenti, singoli_versamenti, documenti) con le loro sequenze;
---   2. sono state rimosse le foreign key verso l'anagrafica (applicazioni,
---      domini, uo, tipi_versamento, tipi_vers_domini, tributi, iban_accredito),
---      che qui non esiste: la libreria mappa quelle colonne come semplici FK
---      Long, senza relazioni JPA, quindi l'integrita' referenziale verso
---      l'anagrafica non e' oggetto di questi test.
---
--- Se il DDL upstream cambia, questo file va riallineato.
+-- Non sono presenti foreign key verso l'anagrafica (domini, unita' operative,
+-- tipi pendenza), che qui non esiste: la libreria mappa quelle colonne come
+-- semplici FK Long, senza relazioni JPA (M4 di proposta-modello-nativo-v3.md).
 -- ---------------------------------------------------------------------------
 
-CREATE SEQUENCE seq_documenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
-CREATE SEQUENCE seq_versamenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
-CREATE SEQUENCE seq_singoli_versamenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE seq_posizioni_debitorie start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE seq_soggetti_debitori start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE seq_opzioni_pagamento start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE seq_pendenze start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE seq_voci_pendenza start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 
-CREATE TABLE documenti
+CREATE TABLE posizioni_debitorie
 (
-	cod_documento VARCHAR(35) NOT NULL,
-	descrizione VARCHAR(255) NOT NULL,
-	-- fk/pk columns
-	id BIGINT DEFAULT nextval('seq_documenti') NOT NULL,
+	id_a2a VARCHAR(35) NOT NULL,
+	id_posizione_debitoria VARCHAR(35) NOT NULL,
 	id_dominio BIGINT NOT NULL,
-	id_applicazione BIGINT NOT NULL,
-	-- unique constraints
-	CONSTRAINT unique_documenti_1 UNIQUE (cod_documento,id_applicazione,id_dominio),
-	-- fk/pk keys constraints
-	CONSTRAINT pk_documenti PRIMARY KEY (id)
-);
-
-CREATE TABLE versamenti
-(
-	cod_versamento_ente VARCHAR(35) NOT NULL,
-	nome VARCHAR(35),
-	importo_totale DOUBLE PRECISION NOT NULL,
-	stato_versamento VARCHAR(35) NOT NULL,
-	descrizione_stato VARCHAR(255),
-	-- Indica se, decorsa la dataScadenza, deve essere aggiornato da remoto o essere considerato scaduto
-	aggiornabile BOOLEAN NOT NULL,
-	data_creazione TIMESTAMP NOT NULL,
-	data_validita TIMESTAMP,
-	data_scadenza TIMESTAMP,
-	data_ora_ultimo_aggiornamento TIMESTAMP NOT NULL,
-	causale_versamento VARCHAR(1024),
-	debitore_tipo VARCHAR(1),
-	debitore_identificativo VARCHAR(35) NOT NULL,
-	debitore_anagrafica VARCHAR(70) NOT NULL,
-	debitore_indirizzo VARCHAR(70),
-	debitore_civico VARCHAR(16),
-	debitore_cap VARCHAR(16),
-	debitore_localita VARCHAR(35),
-	debitore_provincia VARCHAR(35),
-	debitore_nazione VARCHAR(2),
-	debitore_email VARCHAR(256),
-	debitore_telefono VARCHAR(35),
-	debitore_cellulare VARCHAR(35),
-	debitore_fax VARCHAR(35),
-	tassonomia_avviso VARCHAR(35),
-	tassonomia VARCHAR(35),
-	cod_lotto VARCHAR(35),
-	cod_versamento_lotto VARCHAR(35),
-	cod_anno_tributario VARCHAR(35),
-	cod_bundlekey VARCHAR(256),
-	dati_allegati TEXT,
-	incasso VARCHAR(1),
-	anomalie TEXT,
-	iuv_versamento VARCHAR(35),
-	numero_avviso VARCHAR(35),
-	ack BOOLEAN NOT NULL,
-	anomalo BOOLEAN NOT NULL,
-	divisione VARCHAR(35),
-	direzione VARCHAR(35),
-	id_sessione VARCHAR(35),
-	data_pagamento TIMESTAMP,
-	importo_pagato DOUBLE PRECISION NOT NULL,
-	importo_incassato DOUBLE PRECISION NOT NULL,
-	stato_pagamento VARCHAR(35) NOT NULL,
-	iuv_pagamento VARCHAR(35),
-	src_iuv VARCHAR(35),
-	src_debitore_identificativo VARCHAR(35) NOT NULL,
-	cod_rata VARCHAR(35),
-	tipo VARCHAR(35) NOT NULL,
-	data_notifica_avviso TIMESTAMP,
-	avviso_notificato BOOLEAN,
-	avv_mail_data_prom_scadenza TIMESTAMP,
-	avv_mail_prom_scad_notificato BOOLEAN,
-	avv_app_io_data_prom_scadenza TIMESTAMP,
-	avv_app_io_prom_scad_notificat BOOLEAN,
-	proprieta TEXT,
+	id_unita_operativa BIGINT,
+	descrizione VARCHAR(140) NOT NULL,
+	data_pubblicazione DATE,
+	notifica_send BOOLEAN NOT NULL,
+	nav_notifica VARCHAR(18),
 	data_ultima_modifica_aca TIMESTAMP,
 	data_ultima_comunicazione_aca TIMESTAMP,
+	data_creazione TIMESTAMP NOT NULL,
+	data_ultimo_aggiornamento TIMESTAMP NOT NULL,
 	-- fk/pk columns
-	id BIGINT DEFAULT nextval('seq_versamenti') NOT NULL,
-	id_tipo_versamento_dominio BIGINT NOT NULL,
-	id_tipo_versamento BIGINT NOT NULL,
-	id_dominio BIGINT NOT NULL,
-	id_uo BIGINT,
-	id_applicazione BIGINT NOT NULL,
-	id_documento BIGINT,
+	id BIGINT DEFAULT nextval('seq_posizioni_debitorie') NOT NULL,
 	-- unique constraints
-	CONSTRAINT unique_versamenti_1 UNIQUE (cod_versamento_ente,id_applicazione),
+	CONSTRAINT unique_posizioni_debitorie_1 UNIQUE (id_a2a, id_posizione_debitoria),
 	-- fk/pk keys constraints
-	CONSTRAINT fk_vrs_id_documento FOREIGN KEY (id_documento) REFERENCES documenti(id),
-	CONSTRAINT pk_versamenti PRIMARY KEY (id)
+	CONSTRAINT pk_posizioni_debitorie PRIMARY KEY (id)
 );
 
-CREATE INDEX idx_vrs_id_pendenza ON versamenti (cod_versamento_ente,id_applicazione);
-CREATE INDEX idx_vrs_data_creaz ON versamenti (data_creazione DESC);
-CREATE INDEX idx_vrs_stato_vrs ON versamenti (stato_versamento);
-CREATE INDEX idx_vrs_deb_identificativo ON versamenti (src_debitore_identificativo);
-CREATE INDEX idx_vrs_iuv ON versamenti (src_iuv);
-CREATE INDEX idx_vrs_auth ON versamenti (id_dominio,id_tipo_versamento,id_uo);
-CREATE INDEX idx_vrs_prom_avviso ON versamenti (avviso_notificato,data_notifica_avviso DESC);
-CREATE INDEX idx_vrs_avv_mail_prom_scad ON versamenti (avv_mail_prom_scad_notificato,avv_mail_data_prom_scadenza DESC);
-CREATE INDEX idx_vrs_avv_io_prom_scad ON versamenti (avv_app_io_prom_scad_notificat,avv_app_io_data_prom_scadenza DESC);
-CREATE INDEX idx_vrs_iuv_dominio ON versamenti (iuv_versamento,id_dominio);
-CREATE INDEX idx_vrs_sped_aca ON versamenti (data_ultima_modifica_aca DESC,data_ultima_comunicazione_aca DESC);
-
-CREATE TABLE singoli_versamenti
+CREATE TABLE soggetti_debitori
 (
-	cod_singolo_versamento_ente VARCHAR(70) NOT NULL,
-	stato_singolo_versamento VARCHAR(35) NOT NULL,
-	importo_singolo_versamento DOUBLE PRECISION NOT NULL,
-	tipo_bollo VARCHAR(2),
-	hash_documento VARCHAR(70),
-	provincia_residenza VARCHAR(2),
-	tipo_contabilita VARCHAR(1),
-	codice_contabilita VARCHAR(255),
-	descrizione VARCHAR(256),
-	dati_allegati TEXT,
-	indice_dati INT NOT NULL,
-	descrizione_causale_rpt VARCHAR(140),
-	contabilita TEXT,
-	metadata TEXT,
+	ordine INT NOT NULL,
+	tipo VARCHAR(1) NOT NULL,
+	identificativo VARCHAR(16) NOT NULL,
+	anagrafica VARCHAR(70),
+	indirizzo VARCHAR(70),
+	civico VARCHAR(16),
+	cap VARCHAR(16),
+	localita VARCHAR(35),
+	provincia VARCHAR(35),
+	nazione VARCHAR(2),
+	email VARCHAR(256),
 	-- fk/pk columns
-	id BIGINT DEFAULT nextval('seq_singoli_versamenti') NOT NULL,
-	id_versamento BIGINT NOT NULL,
-	id_tributo BIGINT,
-	id_iban_accredito BIGINT,
-	id_iban_appoggio BIGINT,
-	id_dominio BIGINT,
+	id BIGINT DEFAULT nextval('seq_soggetti_debitori') NOT NULL,
+	id_posizione_debitoria BIGINT NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_soggetti_debitori_1 UNIQUE (id_posizione_debitoria, ordine),
 	-- fk/pk keys constraints
-	CONSTRAINT fk_sng_id_versamento FOREIGN KEY (id_versamento) REFERENCES versamenti(id),
-	CONSTRAINT pk_singoli_versamenti PRIMARY KEY (id)
+	CONSTRAINT fk_sgd_id_posizione_debitoria FOREIGN KEY (id_posizione_debitoria) REFERENCES posizioni_debitorie(id),
+	CONSTRAINT pk_soggetti_debitori PRIMARY KEY (id)
+);
+
+CREATE TABLE opzioni_pagamento
+(
+	versione BIGINT NOT NULL,
+	id_opzione_pagamento UUID NOT NULL,
+	tipologia VARCHAR(35) NOT NULL,
+	giorni INT,
+	stato VARCHAR(35) NOT NULL,
+	data_inizio_validita DATE,
+	data_scadenza DATE,
+	data_creazione TIMESTAMP NOT NULL,
+	data_ultimo_aggiornamento TIMESTAMP NOT NULL,
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_opzioni_pagamento') NOT NULL,
+	id_posizione_debitoria BIGINT NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_opzioni_pagamento_id_opzione UNIQUE (id_opzione_pagamento),
+	-- fk/pk keys constraints
+	CONSTRAINT fk_opz_id_posizione_debitoria FOREIGN KEY (id_posizione_debitoria) REFERENCES posizioni_debitorie(id),
+	CONSTRAINT pk_opzioni_pagamento PRIMARY KEY (id)
+);
+
+CREATE TABLE pendenze
+(
+	id_dominio BIGINT NOT NULL,
+	id_pendenza VARCHAR(35) NOT NULL,
+	id_tipo_pendenza BIGINT NOT NULL,
+	numero_rata INT NOT NULL,
+	importo NUMERIC(19,2) NOT NULL,
+	numero_avviso VARCHAR(18) NOT NULL,
+	iuv VARCHAR(35) NOT NULL,
+	stato VARCHAR(35) NOT NULL,
+	data_pagamento DATE,
+	data_caricamento DATE NOT NULL,
+	data_validita DATE,
+	data_scadenza_avviso DATE,
+	data_ultima_modifica_aca TIMESTAMP,
+	data_ultima_comunicazione_aca TIMESTAMP,
+	data_creazione TIMESTAMP NOT NULL,
+	data_ultimo_aggiornamento TIMESTAMP NOT NULL,
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_pendenze') NOT NULL,
+	id_opzione_pagamento BIGINT NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_pendenze_numero_avviso UNIQUE (id_dominio, numero_avviso),
+	CONSTRAINT unique_pendenze_iuv UNIQUE (id_dominio, iuv),
+	-- fk/pk keys constraints
+	CONSTRAINT fk_pnd_id_opzione_pagamento FOREIGN KEY (id_opzione_pagamento) REFERENCES opzioni_pagamento(id),
+	CONSTRAINT pk_pendenze PRIMARY KEY (id)
+);
+
+CREATE TABLE voci_pendenza
+(
+	id_voce_pendenza VARCHAR(35) NOT NULL,
+	importo NUMERIC(19,2) NOT NULL,
+	descrizione VARCHAR(140) NOT NULL,
+	indice INT NOT NULL,
+	stato VARCHAR(35) NOT NULL,
+	id_dominio BIGINT,
+	tipo_riferimento VARCHAR(35) NOT NULL,
+	cod_entrata VARCHAR(35),
+	iban_accredito VARCHAR(35),
+	iban_appoggio VARCHAR(35),
+	tassonomia VARCHAR(35),
+	tipo_bollo VARCHAR(2),
+	hash_documento VARCHAR(72),
+	provincia_residenza VARCHAR(2),
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_voci_pendenza') NOT NULL,
+	id_pendenza BIGINT NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_voci_pendenza_1 UNIQUE (id_pendenza, indice),
+	-- fk/pk keys constraints
+	CONSTRAINT fk_vcp_id_pendenza FOREIGN KEY (id_pendenza) REFERENCES pendenze(id),
+	CONSTRAINT pk_voci_pendenza PRIMARY KEY (id)
 );

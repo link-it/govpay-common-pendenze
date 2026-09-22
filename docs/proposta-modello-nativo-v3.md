@@ -99,8 +99,14 @@ voci e soggetti in un'unica unità di lavoro.
 | `pendenze` | `List<Pendenza>` | ordinata (determina `numeroRata`) |
 
 Vincoli applicativi (non a DB, coerenti con D3 "un metodo per evento di
-dominio"): `PIANO_RATEALE` richiede ≥2 pendenze, le altre 3 tipologie
-esattamente 1; `giorni` obbligatorio solo per ENTRO/OLTRE.
+dominio"): `PIANO_RATEALE` e `SOLUZIONE_UNICA` richiedono almeno 1 pendenza,
+senza limite massimo (per `SOLUZIONE_UNICA` da quando un dovuto con più di 5
+voci richiede più di un avviso, quindi più di una pendenza — vedi
+`riconciliazione-legacy-v3.md` §4 punto 6); `PIANO_RATEALE` in pratica ne
+richiede almeno 2, altrimenti si userebbe `SOLUZIONE_UNICA`.
+`SOLUZIONE_UNICA_ENTRO`/`SOLUZIONE_UNICA_OLTRE` restano a esattamente 1
+pendenza — **da confermare se il requisito ">5 voci" valga anche per queste
+due**, non ancora deciso. `giorni` obbligatorio solo per ENTRO/OLTRE.
 
 ### 3.4 `Pendenza`
 
@@ -189,14 +195,14 @@ in questo primo disegno** — vedi §6.
    essere `@ManyToOne`/`@OneToMany` reali, a differenza delle FK verso
    l'anagrafica esterna.
 3. Conferma di M8 (nav = numeroAvviso, senza colonna dedicata).
-4. **`cardinalitaPendenzeMassima()` di `SOLUZIONE_UNICA` (M2) — punto aperto,
-   lasciato invariato per ora.** Un commento sull'issue `govpay-pendenze-api#1`
-   (non lo YAML, non il body) descrive un caso reale (dovuto con >5 voci,
-   quindi >1 avviso) che richiederebbe più di una pendenza anche per
-   `SOLUZIONE_UNICA`, in contraddizione con `maxItems: 1` dello YAML
-   attuale — vedi `riconciliazione-legacy-v3.md` §4 punto 6. Il codice resta
-   coerente con lo YAML as-is (`1` per le 3 tipologie "soluzione unica") finché
-   non si decide come modellare il caso ">5 voci".
+4. ~~`cardinalitaPendenzeMassima()` di `SOLUZIONE_UNICA` (M2)~~ — **risolto
+   (2026-09-22)**: confermato dal lead che lo YAML va aggiornato (oggi impone
+   ancora `maxItems: 1`) per consentire più pendenze con `SOLUZIONE_UNICA`
+   (dovuto con >5 voci → >1 avviso, vedi `riconciliazione-legacy-v3.md` §4
+   punto 6). Implementato: `SOLUZIONE_UNICA` senza limite massimo, come
+   `PIANO_RATEALE`. **Nuovo punto da confermare**: `SOLUZIONE_UNICA_ENTRO`/
+   `OLTRE` restano a 1 pendenza — la richiesta discussa riguardava solo
+   `SOLUZIONE_UNICA`, non le due varianti con termine.
 
 **Decisi** (non più da validare):
 - **M6** — niente snapshot del soggetto pagatore, si usa `soggettiDebitori`
