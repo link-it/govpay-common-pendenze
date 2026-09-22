@@ -86,6 +86,10 @@ public class PosizioneDebitoriaService {
                 if (pendenza.getDataCaricamento() == null) {
                     pendenza.setDataCaricamento(adesso.toLocalDate());
                 }
+                // IUV/NAV sono univoci per dominio, non globalmente: la pendenza deve
+                // portare lo stesso dominio della posizione per poter far rispettare
+                // quel vincolo (unique_pendenze_numero_avviso/iuv su (id_dominio, ...)).
+                pendenza.setIdDominio(posizione.getIdDominio());
             }
         }
 
@@ -114,6 +118,15 @@ public class PosizioneDebitoriaService {
      * posizione debitoria, essendo alternative non piu' applicabili (semantica dello YAML
      * v3, schema {@code StatoOpzionePagamento}).
      *
+     * <p><b>Concorrenza.</b> {@link OpzionePagamento#getVersione()} e' un lock ottimistico:
+     * se questo metodo e {@link #annulla(UUID)} vengono chiamati concorrentemente sulla
+     * stessa opzione, chi scrive per secondo su una versione ormai superata riceve un
+     * {@code OptimisticLockException} invece di sovrascrivere in silenzio la transizione
+     * gia' registrata dall'altro — un annullamento non puo' quindi vincere su
+     * un'attivazione appena avvenuta (o viceversa) solo perche' arrivato dopo nel tempo di
+     * esecuzione. Il chiamante deve gestire l'eccezione (tipicamente: rileggere lo stato
+     * attuale e decidere di conseguenza), non ignorarla.</p>
+     *
      * @param idOpzionePagamento identificativo dell'opzione che risulta pagata
      * @return l'opzione appena attivata
      * @throws RisorsaNonTrovataException        se l'opzione non esiste
@@ -130,11 +143,13 @@ public class PosizioneDebitoriaService {
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         opzione.setStato(StatoOpzionePagamento.ATTIVATA);
         opzione.setDataUltimoAggiornamento(adesso);
+        marcaModificaAca(opzione, adesso);
 
         for (OpzionePagamento altra : opzione.getPosizioneDebitoria().getOpzioniPagamento()) {
             if (!altra.getId().equals(opzione.getId()) && altra.getStato() == StatoOpzionePagamento.DISPONIBILE) {
                 altra.setStato(StatoOpzionePagamento.ANNULLATA);
                 altra.setDataUltimoAggiornamento(adesso);
+                marcaModificaAca(altra, adesso);
             }
         }
 
@@ -165,8 +180,10 @@ public class PosizioneDebitoriaService {
                             + "] e' ATTIVATA: corrisponde a un pagamento gia' eseguito, non puo' essere annullata");
         }
 
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
         opzione.setStato(StatoOpzionePagamento.ANNULLATA);
-        opzione.setDataUltimoAggiornamento(OffsetDateTime.now(clock));
+        opzione.setDataUltimoAggiornamento(adesso);
+        marcaModificaAca(opzione, adesso);
         return opzione;
     }
 
@@ -174,5 +191,23 @@ public class PosizioneDebitoriaService {
         return opzionePagamentoRepository.findByIdOpzionePagamento(idOpzionePagamento)
                 .orElseThrow(() -> new RisorsaNonTrovataException(
                         "nessuna opzione di pagamento con identificativo [" + idOpzionePagamento + "]"));
+    }
+
+    /**
+     * Marca come modificati ai fini ACA sia la posizione debitoria sia tutte le pendenze
+     * dell'opzione appena transitata: senza questo, il batch ACA (che si basa su
+     * {@code dataUltimaModificaAca > dataUltimaComunicazioneAca}, vedi
+     * {@code riconciliazione-legacy-v3.md} punto 18) non rileverebbe mai una transizione
+     * di stato avvenuta dopo l'ultima sincronizzazione — l'avviso di una pendenza appena
+     * attivata/annullata resterebbe segnalato come gia' comunicato quando non lo e' piu'.
+     *
+     * @param opzione opzione appena transitata (attivata o annullata)
+     * @param adesso  istante della transizione, dallo stesso {@link Clock} della libreria
+     */
+    private void marcaModificaAca(OpzionePagamento opzione, OffsetDateTime adesso) {
+        opzione.getPosizioneDebitoria().setDataUltimaModificaAca(adesso);
+        for (Pendenza pendenza : opzione.getPendenze()) {
+            pendenza.setDataUltimaModificaAca(adesso);
+        }
     }
 }

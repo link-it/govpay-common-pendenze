@@ -12,16 +12,19 @@ import it.govpay.pendenze.entity.Pendenza;
 public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
 
     /**
-     * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA, univoco
-     *                     (vincolo {@code unique_pendenze_numero_avviso})
+     * IUV e NAV sono univoci **per dominio**, non globalmente (vedi la nota di classe su
+     * {@link Pendenza}): la ricerca richiede sempre entrambi, mai il solo NAV.
+     *
+     * @param idDominio    dominio creditore
+     * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA
      * @return la pendenza, se esiste
      */
-    Optional<Pendenza> findByNumeroAvviso(String numeroAvviso);
+    Optional<Pendenza> findByIdDominioAndNumeroAvviso(Long idDominio, String numeroAvviso);
 
     /**
-     * @param iuv Identificativo Univoco di Versamento, univoco
-     *            (vincolo {@code unique_pendenze_iuv})
+     * @param idDominio dominio creditore
+     * @param iuv       Identificativo Univoco di Versamento
      * @return la pendenza, se esiste
      */
-    Optional<Pendenza> findByIuv(String iuv);
+    Optional<Pendenza> findByIdDominioAndIuv(Long idDominio, String iuv);
 }

@@ -48,6 +48,8 @@ voci e soggetti in un'unica unità di lavoro.
 | M9 | **`StatoPendenza.SCADUTA` derivato, non persistito** (continuità con la vecchia A6): calcolato da `stato=NON_ESEGUITA` + `dataScadenza` (dell'opzione o della pendenza) nel passato, mai scritto su colonna. Le altre 6 costanti (`ESEGUITA`, `NON_ESEGUITA`, `ESEGUITA_PARZIALE`, `ANNULLATA`, `ANOMALA`, `INCASSATA`) sono lo stato persistito reale |
 | M10 | **Audit e timestamp su ogni scrittura, senza eccezioni** (continuità con D10): `dataCreazione`/`dataUltimoAggiornamento` su tutte le entità dell'aggregato, non solo sulla radice |
 | M11 | **Tabelle nuove**, non riuso di `versamenti`/`documenti`/`singoli_versamenti`: `posizioni_debitorie`, `soggetti_debitori`, `opzioni_pagamento`, `pendenze`, `voci_pendenza` |
+| M12 | **Lock ottimistico (`@Version`) su `OpzionePagamento`** (rilievo del lead, 2026-09-22): senza un controllo di concorrenza, `attiva`/`annulla` chiamati concorrentemente sulla stessa opzione potrebbero sovrascriversi in silenzio — un annullamento basato su una lettura antecedente potrebbe vincere su un'attivazione appena registrata (o viceversa), corrompendo la macchina a stati. Con `@Version` chi scrive per secondo su una versione superata riceve un'eccezione invece di un aggiornamento perso |
+| M13 | **`idDominio` denormalizzato su `Pendenza`** (rilievo del lead, 2026-09-22): IUV e NAV sono univoci **per dominio**, non globalmente — coerente con `idx_vrs_iuv_dominio` del legacy, già composto `(iuv_versamento, id_dominio)`. Un vincolo di unicità globale (come nella prima stesura di questo documento) impedirebbe a due enti creditori diversi di generare legittimamente lo stesso IUV/numero avviso, rompendo il multi-ente e la migrazione dei dati storici |
 
 ## 3. Entità proposte
 
@@ -86,6 +88,7 @@ voci e soggetti in un'unica unità di lavoro.
 | Campo | Tipo | Note |
 |---|---|---|
 | `id` | `Long` (PK) | tecnico |
+| `versione` | `long` | **nuovo, M12** — lock ottimistico (`@Version`), protegge le transizioni di stato dalla concorrenza |
 | `idOpzionePagamento` | `UUID` | esposto in API, generato da GovPay, stabile |
 | `posizioneDebitoria` | FK | |
 | `tipologia` | enum `PIANO_RATEALE`/`SOLUZIONE_UNICA`/`SOLUZIONE_UNICA_ENTRO`/`SOLUZIONE_UNICA_OLTRE` | M2 |
@@ -105,12 +108,13 @@ esattamente 1; `giorni` obbligatorio solo per ENTRO/OLTRE.
 |---|---|---|
 | `id` | `Long` (PK) | tecnico |
 | `opzionePagamento` | FK | |
+| `idDominio` | `Long` | **nuovo (M13)** — denormalizzato dalla posizione: IUV/NAV sono univoci per dominio, non globalmente (rilievo del lead, 2026-09-22) |
 | `idPendenza` | `String` | business key |
 | `idTipoPendenza` | `Long` | FK, colonna (M4) |
 | `numeroRata` | `int` | derivato dalla posizione nell'array (assegnato da GovPay) |
 | `importo` | `BigDecimal` | continuità §4.2 del vecchio disegno (conversione dedicata, mai `new BigDecimal(double)`) |
-| `numeroAvviso` | `String` | = NAV (M8), generato se assente |
-| `iuv` | `String` | generato |
+| `numeroAvviso` | `String` | = NAV (M8), generato se assente; univoco insieme a `idDominio` (M13), non da solo |
+| `iuv` | `String` | generato; univoco insieme a `idDominio` (M13), non da solo |
 | `stato` | enum (6 valori persistiti, M9) | |
 | `dataPagamento` | `LocalDate` | nullable |
 | `dataCaricamento` | `LocalDate` | = data creazione, business-facing |
@@ -185,6 +189,14 @@ in questo primo disegno** — vedi §6.
    essere `@ManyToOne`/`@OneToMany` reali, a differenza delle FK verso
    l'anagrafica esterna.
 3. Conferma di M8 (nav = numeroAvviso, senza colonna dedicata).
+4. **`cardinalitaPendenzeMassima()` di `SOLUZIONE_UNICA` (M2) — punto aperto,
+   lasciato invariato per ora.** Un commento sull'issue `govpay-pendenze-api#1`
+   (non lo YAML, non il body) descrive un caso reale (dovuto con >5 voci,
+   quindi >1 avviso) che richiederebbe più di una pendenza anche per
+   `SOLUZIONE_UNICA`, in contraddizione con `maxItems: 1` dello YAML
+   attuale — vedi `riconciliazione-legacy-v3.md` §4 punto 6. Il codice resta
+   coerente con lo YAML as-is (`1` per le 3 tipologie "soluzione unica") finché
+   non si decide come modellare il caso ">5 voci".
 
 **Decisi** (non più da validare):
 - **M6** — niente snapshot del soggetto pagatore, si usa `soggettiDebitori`

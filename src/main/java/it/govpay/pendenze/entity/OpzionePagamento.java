@@ -22,6 +22,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
@@ -54,6 +55,18 @@ public class OpzionePagamento {
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_opzioni_pagamento")
     @Column(name = "id")
     private Long id;
+
+    /**
+     * Lock ottimistico: senza questo controllo un {@code annulla} basato su una lettura
+     * antecedente a un {@code attiva} concorrente (o viceversa) sovrascriverebbe in
+     * silenzio la transizione appena registrata — un pagamento gia' eseguito potrebbe
+     * risultare annullato. Hibernate incrementa questa colonna a ogni update e rifiuta
+     * (con {@code OptimisticLockException}) uno scritto basato su una versione superata:
+     * il chiamante deve rileggere e ridecidere, non perdere l'aggiornamento in silenzio.
+     */
+    @Version
+    @Column(name = "versione", nullable = false)
+    private long versione;
 
     /** Esposto in API, generato da GovPay alla creazione, stabile per tutta la vita della posizione. */
     @Column(name = "id_opzione_pagamento", nullable = false, unique = true)
@@ -111,6 +124,11 @@ public class OpzionePagamento {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    /** Nessun setter: la versione e' gestita da Hibernate, non va scritta dal chiamante. */
+    public long getVersione() {
+        return versione;
     }
 
     public UUID getIdOpzionePagamento() {

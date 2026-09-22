@@ -136,3 +136,19 @@ Raccolte qui perché condizionano direttamente lo schema, non solo l'implementaz
    migrazione: oggi `iupd` è usato a grana di singola pendenza (per
    tracciabilità di modifiche/annullamenti), va ribaltato perché identifichi la
    posizione, con `nav` a indirizzare le singole pendenze (nota del lead).
+6. **`SOLUZIONE_UNICA` con più di una pendenza — aperto, da chiarire.** Trovato
+   in un **commento** (non nel body, non nello YAML) dell'issue
+   `govpay-pendenze-api#1`: *"il dovuto ha un numero di voci superiore a 5,
+   pertanto è necessario creare più di un avviso di pagamento per pagare la
+   posizione. È quindi necessario consentire la creazione di una Posizione
+   Debitoria con più pendenze di tipo soluzione unica. La logica è come per il
+   pagamento rateale (la posizione è pagata quando tutte le pendenze pagate)
+   cambia solo il layout di stampa degli avvisi"*. Contraddice lo YAML attuale,
+   che per `SOLUZIONE_UNICA`/`ENTRO`/`OLTRE` impone `maxItems: 1`
+   esplicitamente (verificato). Non è quindi un errore di lettura ma un gap
+   reale tra l'issue e lo schema. **Per ora lasciato come punto aperto**:
+   `TipologiaOpzionePagamento.cardinalitaPendenzeMassima()` resta `1` per le 3
+   tipologie "soluzione unica", coerente con lo YAML as-is, in attesa di
+   decidere come modellare il caso ">5 voci" (alzare il limite? un vincolo
+   legato al numero di voci complessive invece che al numero di pendenze?
+   altro?).

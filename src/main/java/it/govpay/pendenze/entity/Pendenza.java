@@ -39,11 +39,18 @@ import it.govpay.pendenze.model.StatoPendenza;
  * <p>{@link StatoPendenza} non include {@code SCADUTA}: e' uno stato derivato
  * (pendenza {@code NON_ESEGUITA} con scadenza nel passato), calcolato da un livello
  * successivo, non persistito qui.</p>
+ *
+ * <p><b>{@link #idDominio} denormalizzato dalla posizione debitoria</b> (come faceva
+ * {@code versamenti.id_dominio} nel legacy): IUV e NAV sono univoci **per dominio**, non
+ * globalmente — due enti creditori diversi possono legittimamente generare lo stesso
+ * IUV/numero avviso (`idx_vrs_iuv_dominio` del legacy era gia' composto
+ * `(iuv_versamento, id_dominio)`, non `iuv` da solo). Un vincolo di unicita' globale
+ * romperebbe il funzionamento multi-ente e la migrazione dei dati storici.</p>
  */
 @Entity
 @Table(name = "pendenze", uniqueConstraints = {
-        @UniqueConstraint(name = "unique_pendenze_numero_avviso", columnNames = "numero_avviso"),
-        @UniqueConstraint(name = "unique_pendenze_iuv", columnNames = "iuv")
+        @UniqueConstraint(name = "unique_pendenze_numero_avviso", columnNames = {"id_dominio", "numero_avviso"}),
+        @UniqueConstraint(name = "unique_pendenze_iuv", columnNames = {"id_dominio", "iuv"})
 })
 @SequenceGenerator(name = "seq_pendenze", sequenceName = "seq_pendenze", allocationSize = 1)
 public class Pendenza {
@@ -56,6 +63,10 @@ public class Pendenza {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "id_opzione_pagamento", nullable = false)
     private OpzionePagamento opzionePagamento;
+
+    /** Denormalizzato da {@code posizioneDebitoria.idDominio}: vedi nota di classe su IUV/NAV. */
+    @Column(name = "id_dominio", nullable = false)
+    private Long idDominio;
 
     @Column(name = "id_pendenza", nullable = false, length = 35)
     private String idPendenza;
@@ -143,6 +154,14 @@ public class Pendenza {
 
     public void setOpzionePagamento(OpzionePagamento opzionePagamento) {
         this.opzionePagamento = opzionePagamento;
+    }
+
+    public Long getIdDominio() {
+        return idDominio;
+    }
+
+    public void setIdDominio(Long idDominio) {
+        this.idDominio = idDominio;
     }
 
     public String getIdPendenza() {
