@@ -6,10 +6,17 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.hibernate.autoconfigure.HibernatePropertiesCustomizer;
 import org.springframework.context.annotation.Bean;
+
+import it.govpay.common.repository.ApplicazioneRepository;
+import it.govpay.common.repository.DominioRepository;
+import it.govpay.pendenze.iuv.GeneratoreIuvStandard;
+import it.govpay.pendenze.iuv.GeneratoreProgressivoIuv;
+import it.govpay.pendenze.spi.GeneratoreIuv;
 
 /**
  * Autoconfigurazione della libreria: fuso orario e orologio.
@@ -59,5 +66,29 @@ public class PendenzeAutoConfiguration {
             hibernateProperties.put(HIBERNATE_JDBC_TIME_ZONE, properties.fusoOrario().getId());
             log.debug("{} impostato a [{}]", HIBERNATE_JDBC_TIME_ZONE, properties.fusoOrario());
         };
+    }
+
+    /**
+     * Implementazione standard di {@link GeneratoreIuv}, condivisa fra i consumatori (vedi
+     * Javadoc di {@link GeneratoreIuv} e {@link GeneratoreIuvStandard}). Registrata solo se il
+     * consumatore ha gia' un {@link DominioRepository} di {@code govpay-common} nel contesto
+     * (per le proprie esigenze di anagrafica) e non ha gia' fornito una propria
+     * implementazione di {@link GeneratoreIuv}: se manca l'uno o l'altro, questa libreria non
+     * prova a fornire generazione IUV, esattamente come prima di questo bean.
+     *
+     * @param dominioRepository      repository dell'anagrafica dominio di govpay-common
+     * @param applicazioneRepository repository dell'anagrafica applicazione di govpay-common,
+     *                               per risolvere il placeholder {@code %(a)} del prefisso IUV
+     * @param generatoreProgressivo  allocatore dei progressivi IUV con buffer per chiave
+     * @param clock                  orologio della libreria, per risolvere {@code %(Y)}/{@code %(y)}
+     * @return l'implementazione standard di {@link GeneratoreIuv}
+     */
+    @Bean
+    @ConditionalOnMissingBean(GeneratoreIuv.class)
+    @ConditionalOnBean(DominioRepository.class)
+    public GeneratoreIuv generatoreIuvStandard(DominioRepository dominioRepository,
+            ApplicazioneRepository applicazioneRepository, GeneratoreProgressivoIuv generatoreProgressivo,
+            Clock clock) {
+        return new GeneratoreIuvStandard(dominioRepository, applicazioneRepository, generatoreProgressivo, clock);
     }
 }

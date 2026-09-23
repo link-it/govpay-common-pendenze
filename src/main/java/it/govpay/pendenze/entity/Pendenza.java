@@ -22,6 +22,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 
 import it.govpay.pendenze.model.StatoPendenza;
@@ -73,6 +74,21 @@ public class Pendenza {
 
     @Column(name = "id_tipo_pendenza", nullable = false)
     private Long idTipoPendenza;
+
+    /**
+     * Codifica IUV del tipo pendenza (equivalente di {@code TipoVersamento.codificaIuv}/
+     * {@code TipoVersamentoDominio.codificaIuv} del legacy), usata per risolvere i
+     * placeholder {@code %(p)}/{@code %(t)} del prefisso IUV di dominio in
+     * {@link it.govpay.pendenze.spi.GeneratoreIuv#genera}.
+     *
+     * <p><b>Transiente, mai persistita</b>: questa libreria non ha accesso all'anagrafica
+     * tipo-versamento (M4), quindi non può risolvere da sola {@code idTipoPendenza} → codifica
+     * — il chiamante che la conosce la valorizza qui prima di invocare
+     * {@code PosizioneDebitoriaService#crea}, solo se il prefisso del dominio la richiede. Una
+     * volta generato, l'IUV la incorpora già nelle sue cifre: non serve rileggerla in futuro.</p>
+     */
+    @Transient
+    private String codificaIuvTipoPendenza;
 
     /**
      * Posizione (1-based) di questa pendenza nell'elenco {@code pendenze} della sua
@@ -178,6 +194,14 @@ public class Pendenza {
 
     public void setIdTipoPendenza(Long idTipoPendenza) {
         this.idTipoPendenza = idTipoPendenza;
+    }
+
+    public String getCodificaIuvTipoPendenza() {
+        return codificaIuvTipoPendenza;
+    }
+
+    public void setCodificaIuvTipoPendenza(String codificaIuvTipoPendenza) {
+        this.codificaIuvTipoPendenza = codificaIuvTipoPendenza;
     }
 
     public int getNumeroRata() {

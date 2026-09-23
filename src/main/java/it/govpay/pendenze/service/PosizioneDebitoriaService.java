@@ -5,17 +5,25 @@ import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
+import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
+import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
+import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.OpzionePagamentoRepository;
 import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
+import it.govpay.pendenze.spi.GeneratoreIuv;
+import it.govpay.pendenze.spi.IdentificativiPagamento;
+import it.govpay.pendenze.validazione.ValidatorePosizioneDebitoria;
 
 /**
  * Servizio applicativo sull'aggregato {@link PosizioneDebitoria}.
@@ -39,12 +47,24 @@ public class PosizioneDebitoriaService {
     private final PosizioneDebitoriaRepository posizioneDebitoriaRepository;
     private final OpzionePagamentoRepository opzionePagamentoRepository;
     private final Clock clock;
+    private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
 
+    /**
+     * {@code generatoreIuvProvider} e' un {@link ObjectProvider}, non una dipendenza
+     * diretta: {@link GeneratoreIuv} e' una SPI opzionale (vedi Javadoc
+     * dell'interfaccia). Stesso idioma gia' usato in
+     * {@code PendenzeAutoConfiguration.proprietaPendenzaCodec} per non far fallire
+     * l'avvio del consumatore se non fornisce un'implementazione — semplicemente
+     * {@link #crea(PosizioneDebitoria)} rifiutera' le pendenze prive di IUV/numero
+     * avviso proprio.
+     */
     public PosizioneDebitoriaService(PosizioneDebitoriaRepository posizioneDebitoriaRepository,
-            OpzionePagamentoRepository opzionePagamentoRepository, Clock clock) {
+            OpzionePagamentoRepository opzionePagamentoRepository, Clock clock,
+            ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
         this.clock = clock;
+        this.generatoreIuvProvider = generatoreIuvProvider;
     }
 
     /**
@@ -54,15 +74,49 @@ public class PosizioneDebitoriaService {
      * dell'aggregato, non solo sulla radice) e genera {@link OpzionePagamento#getIdOpzionePagamento()}
      * se assente.
      *
-     * <p>Non genera IUV/numero avviso: restano a carico del chiamante in questa prima
-     * versione (la generazione, tramite una SPI dedicata come nel disegno precedente, e'
-     * sviluppo successivo) — {@link Pendenza#getIuv()}/{@link Pendenza#getNumeroAvviso()}
-     * devono quindi essere gia' valorizzati.</p>
+     * <p>Prima di tutto valida i vincoli semantici dell'aggregato con
+     * {@link ValidatorePosizioneDebitoria} (cardinalità delle pendenze per tipologia,
+     * importo di ogni pendenza coerente con la somma delle sue voci): quelli che lo
+     * schema JSON non può esprimere da solo.</p>
+     *
+     * <p>Assegna {@link SoggettoDebitore#getOrdine()}, {@link Pendenza#getNumeroRata()} e
+     * {@link VocePendenza#getIndice()} dalla posizione nelle rispettive liste, sempre —
+     * mai lasciati al chiamante: coincidono per definizione con l'ordine delle liste
+     * (semantica dello YAML v3 per {@code numeroRata}: "Non richiesto in scrittura: è
+     * GovPay ad assegnarlo in base all'ordine delle pendenze nell'array").</p>
+     *
+     * <p>Per ogni pendenza priva sia di IUV sia di numero avviso, richiede una coppia nuova a
+     * {@link GeneratoreIuv#genera} (semantica dello YAML v3: {@code numeroAvviso} "opzionale,
+     * se non fornito viene generato automaticamente"). Se il chiamante fornisce già
+     * <b>entrambi</b>, non vengono toccati. Se fornisce solo il <b>numero avviso</b>, l'IUV
+     * viene ricavato da esso con {@link GeneratoreIuv#convertiDaNumeroAvviso}: una conversione
+     * di formato, non una generazione — non consuma alcun progressivo (vedi
+     * {@code proposta-modello-nativo-v3.md}). Se fornisce solo lo <b>IUV</b>, la creazione
+     * fallisce esplicitamente: non esiste un percorso legacy verificato per ricostruire il
+     * numero avviso dal solo IUV. Se manca l'identificativo necessario (coppia intera, o solo
+     * l'IUV da ricavare) e nessuna implementazione di {@link GeneratoreIuv} è disponibile nel
+     * contesto, la creazione fallisce anch'essa invece di inserire colonne {@code NOT NULL}
+     * vuote.</p>
+     *
+     * <p>Infine valida/assegna {@link PosizioneDebitoria#getNavNotifica()}: se fornito,
+     * deve corrispondere al {@code numeroAvviso} di una pendenza della posizione
+     * (altrimenti 400, semantica dello YAML v3); se assente e
+     * {@link PosizioneDebitoria#isNotificaSend()} è attivo, viene assegnato
+     * automaticamente alla pendenza dell'opzione {@code SOLUZIONE_UNICA} se presente,
+     * altrimenti alla rata 1 dell'unico {@code PIANO_RATEALE}.</p>
      *
      * @param posizione posizione da creare, con l'intero aggregato gia' collegato
      * @return la posizione persistita
+     * @throws ValidazioneNonSuperataException se l'aggregato non rispetta i vincoli
+     *                                          semantici richiesti (inclusi navNotifica
+     *                                          e la coppia IUV/numero avviso parziale)
+     * @throws IllegalStateException se una pendenza e' priva sia di IUV sia di numero
+     *                                avviso e non e' disponibile un {@link GeneratoreIuv}
      */
     public PosizioneDebitoria crea(PosizioneDebitoria posizione) {
+        ValidatorePosizioneDebitoria.valida(posizione);
+        assegnaIndici(posizione);
+
         OffsetDateTime adesso = OffsetDateTime.now(clock);
 
         posizione.setDataCreazione(adesso);
@@ -90,10 +144,134 @@ public class PosizioneDebitoriaService {
                 // portare lo stesso dominio della posizione per poter far rispettare
                 // quel vincolo (unique_pendenze_numero_avviso/iuv su (id_dominio, ...)).
                 pendenza.setIdDominio(posizione.getIdDominio());
+
+                assegnaIdentificativiPagamento(posizione, pendenza);
             }
         }
 
+        assegnaOValidaNavNotifica(posizione);
+
         return posizioneDebitoriaRepository.save(posizione);
+    }
+
+    /**
+     * Assegna {@code ordine} (0-based, sui soggetti) e {@code numeroRata} (1-based, sulle
+     * pendenze di ciascuna opzione) dalla posizione nelle rispettive liste. Sovrascrive
+     * sempre, anche se il chiamante li aveva gia' valorizzati: nessuno dei due e'
+     * scrivibile in API (per {@code numeroRata} lo YAML lo dice esplicitamente), quindi
+     * l'unica fonte di verita' e' l'ordine delle liste stesse — un valore "a mano"
+     * diverso dalla posizione reale sarebbe un'incoerenza, non un'informazione in piu'.
+     */
+    private void assegnaIndici(PosizioneDebitoria posizione) {
+        int ordine = 0;
+        for (SoggettoDebitore soggetto : posizione.getSoggettiDebitori()) {
+            soggetto.setOrdine(ordine++);
+        }
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            int numeroRata = 1;
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                pendenza.setNumeroRata(numeroRata++);
+
+                int indice = 1;
+                for (VocePendenza voce : pendenza.getVoci()) {
+                    voce.setIndice(indice++);
+                }
+            }
+        }
+    }
+
+    private void assegnaIdentificativiPagamento(PosizioneDebitoria posizione, Pendenza pendenza) {
+        boolean iuvAssente = pendenza.getIuv() == null;
+        boolean numeroAvvisoAssente = pendenza.getNumeroAvviso() == null;
+
+        if (iuvAssente && numeroAvvisoAssente) {
+            IdentificativiPagamento identificativi = generaIdentificativi(posizione, pendenza);
+            pendenza.setIuv(identificativi.iuv());
+            pendenza.setNumeroAvviso(identificativi.numeroAvviso());
+        } else if (iuvAssente) {
+            pendenza.setIuv(convertiNumeroAvviso(posizione, pendenza).iuv());
+        } else if (numeroAvvisoAssente) {
+            throw new ValidazioneNonSuperataException(
+                    "la pendenza [" + pendenza.getIdPendenza() + "] ha valorizzato lo iuv [" + pendenza.getIuv()
+                            + "] senza il numeroAvviso corrispondente: fornire entrambi, oppure solo il"
+                            + " numeroAvviso (lo iuv viene ricavato automaticamente)");
+        }
+    }
+
+    private IdentificativiPagamento generaIdentificativi(PosizioneDebitoria posizione, Pendenza pendenza) {
+        GeneratoreIuv generatore = generatoreIuvProvider.getIfAvailable();
+        if (generatore == null) {
+            throw new IllegalStateException(
+                    "la pendenza [" + pendenza.getIdPendenza() + "] e' priva di IUV/numero avviso e nessun "
+                            + GeneratoreIuv.class.getSimpleName() + " e' configurato nel contesto");
+        }
+        return generatore.genera(posizione.getIdDominio(), posizione.getIdA2A(), pendenza.getIdPendenza(),
+                pendenza.getCodificaIuvTipoPendenza());
+    }
+
+    private IdentificativiPagamento convertiNumeroAvviso(PosizioneDebitoria posizione, Pendenza pendenza) {
+        GeneratoreIuv generatore = generatoreIuvProvider.getIfAvailable();
+        if (generatore == null) {
+            throw new IllegalStateException(
+                    "la pendenza [" + pendenza.getIdPendenza() + "] ha solo il numeroAvviso ["
+                            + pendenza.getNumeroAvviso() + "] e nessun " + GeneratoreIuv.class.getSimpleName()
+                            + " e' configurato nel contesto per ricavarne lo iuv");
+        }
+        return generatore.convertiDaNumeroAvviso(posizione.getIdDominio(), pendenza.getNumeroAvviso());
+    }
+
+    /**
+     * Se {@link PosizioneDebitoria#getNavNotifica()} è già valorizzato, verifica che
+     * corrisponda al {@code numeroAvviso} di una pendenza della posizione (semantica
+     * dello YAML v3: "GovPay lo verifica e rifiuta la richiesta se non corrisponde a
+     * nessuna"). Se è assente e {@link PosizioneDebitoria#isNotificaSend()} è attivo, lo
+     * assegna automaticamente: alla pendenza dell'opzione {@code SOLUZIONE_UNICA} se
+     * presente, altrimenti alla rata 1 dell'unico {@code PIANO_RATEALE} (stessa
+     * semantica). Se nessuno dei due casi noti si applica (es. solo opzioni
+     * {@code SOLUZIONE_UNICA_ENTRO}/{@code OLTRE}) la creazione viene rifiutata: la regola
+     * non copre esplicitamente questo caso, e persistere {@code notificaSend} attivo con
+     * {@code navNotifica} nullo sarebbe una configurazione incompleta accettata in
+     * silenzio — meglio richiedere che il chiamante lo indichi esplicitamente.
+     */
+    private void assegnaOValidaNavNotifica(PosizioneDebitoria posizione) {
+        if (posizione.getNavNotifica() != null) {
+            boolean corrisponde = posizione.getOpzioniPagamento().stream()
+                    .flatMap(o -> o.getPendenze().stream())
+                    .anyMatch(p -> posizione.getNavNotifica().equals(p.getNumeroAvviso()));
+            if (!corrisponde) {
+                throw new ValidazioneNonSuperataException(
+                        "navNotifica [" + posizione.getNavNotifica()
+                                + "] non corrisponde al numeroAvviso di alcuna pendenza della posizione");
+            }
+            return;
+        }
+
+        if (!posizione.isNotificaSend()) {
+            return;
+        }
+
+        Optional<Pendenza> candidata = posizione.getOpzioniPagamento().stream()
+                .filter(o -> o.getTipologia() == TipologiaOpzionePagamento.SOLUZIONE_UNICA)
+                .flatMap(o -> o.getPendenze().stream())
+                .findFirst()
+                .or(() -> posizione.getOpzioniPagamento().stream()
+                        .filter(o -> o.getTipologia() == TipologiaOpzionePagamento.PIANO_RATEALE)
+                        .flatMap(o -> o.getPendenze().stream())
+                        .filter(p -> p.getNumeroRata() == 1)
+                        .findFirst());
+
+        if (candidata.isEmpty()) {
+            // Nessuna SOLUZIONE_UNICA ne' PIANO_RATEALE (es. solo ENTRO/OLTRE): la regola
+            // nota non copre questo caso. Meglio rifiutare esplicitamente e richiedere un
+            // navNotifica indicato dal chiamante che accettare in silenzio notificaSend
+            // attivo con navNotifica nullo — una configurazione incompleta persistita
+            // senza errore sarebbe peggio di un rifiuto.
+            throw new ValidazioneNonSuperataException(
+                    "notificaSend e' attivo ma non e' possibile assegnare automaticamente navNotifica "
+                            + "(nessuna opzione SOLUZIONE_UNICA o PIANO_RATEALE nella posizione): indicare "
+                            + "esplicitamente navNotifica");
+        }
+        posizione.setNavNotifica(candidata.get().getNumeroAvviso());
     }
 
     @Transactional(readOnly = true)

@@ -21,13 +21,16 @@ import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
+import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
+import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
+import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 
 /**
@@ -76,6 +79,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setIdPosizioneDebitoria("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
 
         OpzionePagamento scelta = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "2");
@@ -129,6 +133,119 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("crea rifiuta una pendenza priva di IUV/numero avviso se nessun GeneratoreIuv e' configurato")
+    void creaRifiutaSenzaGeneratoreIuv() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setIuv(null);
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setNumeroAvviso(null);
+
+        assertThatThrownBy(() -> service.crea(posizione)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("crea rifiuta una pendenza con solo numeroAvviso valorizzato se nessun GeneratoreIuv "
+            + "e' configurato per ricavarne lo iuv")
+    void creaRifiutaSoloNumeroAvvisoSenzaGeneratoreIuv() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        String numeroAvvisoFornito = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso();
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setIuv(null);
+
+        assertThatThrownBy(() -> service.crea(posizione))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(numeroAvvisoFornito);
+    }
+
+    @Test
+    @DisplayName("crea rifiuta una pendenza con solo iuv valorizzato (senza numeroAvviso)")
+    void creaRifiutaSoloIuv() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setNumeroAvviso(null);
+
+        assertThatThrownBy(() -> service.crea(posizione)).isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    @DisplayName("crea assegna numeroRata e ordine dalla posizione nelle liste, non li lascia a 0")
+    void creaAssegnaNumeroRataEOrdine() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdA2A("A2A-indici");
+        posizione.setIdPosizioneDebitoria("pos-indici");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addSoggettoDebitore(soggettoDiProva2());
+
+        OpzionePagamento opzione = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "1");
+        opzioneConPendenza(opzione, "2");
+
+        service.crea(posizione);
+
+        assertThat(posizione.getSoggettiDebitori()).extracting(SoggettoDebitore::getOrdine)
+                .containsExactly(0, 1);
+        assertThat(opzione.getPendenze()).extracting(Pendenza::getNumeroRata)
+                .containsExactly(1, 2);
+    }
+
+    @Test
+    @DisplayName("crea assegna l'indice delle voci aggiunte con addVocePendenza, non le lascia a 0")
+    void creaAssegnaIndiceVoci() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        Pendenza pendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0);
+        // la fixture parte gia' con una voce da 10.00: la sostituiamo con due da 5.00
+        // aggiunte nello stesso modo (addVocePendenza), per riprodurre esattamente il caso
+        // segnalato — entrambe partirebbero da indice 0 senza il fix.
+        pendenza.getVoci().clear();
+        pendenza.addVocePendenza(voceDiProva("voce-a", new BigDecimal("5.00")));
+        pendenza.addVocePendenza(voceDiProva("voce-b", new BigDecimal("5.00")));
+
+        service.crea(posizione);
+
+        assertThat(pendenza.getVoci()).extracting(VocePendenza::getIndice).containsExactly(1, 2);
+    }
+
+    @Test
+    @DisplayName("crea rifiuta notificaSend attivo senza navNotifica se non c'e' SOLUZIONE_UNICA ne' PIANO_RATEALE")
+    void creaRifiutaNotificaSendSenzaCandidatoPerNavNotifica() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdA2A("A2A-entro");
+        posizione.setIdPosizioneDebitoria("pos-entro");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.setNotificaSend(true);
+        posizione.addSoggettoDebitore(soggettoDiProva());
+
+        OpzionePagamento opzione = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA_ENTRO, "1");
+        opzione.setGiorni(5);
+
+        assertThatThrownBy(() -> service.crea(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("navNotifica");
+    }
+
+    @Test
+    @DisplayName("crea rifiuta navNotifica che non corrisponde al numeroAvviso di alcuna pendenza")
+    void creaRifiutaNavNotificaNonCorrispondente() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.setNavNotifica("999999999999999999");
+
+        assertThatThrownBy(() -> service.crea(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("navNotifica");
+    }
+
+    @Test
+    @DisplayName("crea assegna automaticamente navNotifica se notificaSend e' attivo e la posizione ha una sola pendenza")
+    void creaAssegnaNavNotificaAutomaticamente() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.setNotificaSend(true);
+        String numeroAvviso = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso();
+
+        service.crea(posizione);
+
+        assertThat(posizione.getNavNotifica()).isEqualTo(numeroAvviso);
+    }
+
+    @Test
     @DisplayName("annulla e' idempotente su un'opzione gia' ANNULLATA")
     void annullaIdempotente() {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
@@ -164,6 +281,17 @@ class PosizioneDebitoriaServiceTest {
 
     // ── Fixture ──────────────────────────────────────────────────────────────
 
+    private VocePendenza voceDiProva(String idVocePendenza, BigDecimal importo) {
+        VocePendenza voce = new VocePendenza();
+        voce.setIdVocePendenza(idVocePendenza);
+        voce.setImporto(importo);
+        voce.setDescrizione("test");
+        voce.setStato(StatoVocePendenza.NON_ESEGUITO);
+        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
+        voce.setCodEntrata("SRV-1");
+        return voce;
+    }
+
     private void azzeraMarcatureAca(PosizioneDebitoria posizione) {
         posizione.setDataUltimaModificaAca(null);
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
@@ -180,8 +308,25 @@ class PosizioneDebitoriaServiceTest {
         posizione.setIdPosizioneDebitoria("pos-" + suffisso);
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
         opzioneConPendenza(posizione, tipologia, "1");
         return posizione;
+    }
+
+    private SoggettoDebitore soggettoDiProva() {
+        SoggettoDebitore soggetto = new SoggettoDebitore();
+        soggetto.setTipo(TipoSoggetto.F);
+        soggetto.setIdentificativo("RSSMRA80A01H501U");
+        soggetto.setAnagrafica("Mario Rossi");
+        return soggetto;
+    }
+
+    private SoggettoDebitore soggettoDiProva2() {
+        SoggettoDebitore soggetto = new SoggettoDebitore();
+        soggetto.setTipo(TipoSoggetto.F);
+        soggetto.setIdentificativo("VRDGNN80A01H501W");
+        soggetto.setAnagrafica("Giovanna Verdi");
+        return soggetto;
     }
 
     private OpzionePagamento opzioneConPendenza(PosizioneDebitoria posizione, TipologiaOpzionePagamento tipologia,
