@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
+import it.govpay.pendenze.model.DettaglioContabile;
 import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
@@ -147,7 +149,108 @@ class ValidatorePosizioneDebitoriaTest {
                 .hasMessageContaining("somma delle voci");
     }
 
+    @Test
+    @DisplayName("un dettaglioContabile valido (esattamente un campo alternativo valorizzato) e' accettato")
+    void dettaglioContabileValido() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        primaVoce(posizione).setDettaglioContabile(List.of(
+                new DettaglioContabile.Civilistico("2026", "UFF1", "14.01.03", null, null, BigDecimal.TEN)));
+
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("dettaglioContabile non e' ammesso su una voce di tipo BOLLO")
+    void dettaglioContabileNonAmmessoPerBollo() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.BOLLO);
+        voce.setDettaglioContabile(List.of(new DettaglioContabile.SpeseNotifica(BigDecimal.ONE)));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("BOLLO");
+    }
+
+    @Test
+    @DisplayName("CORRISPETTIVO_DL118 senza nessuno tra capitolo/accertamento/pianoFinanziario5Livello e' rifiutato")
+    void corrispettivoDl118SenzaAlternativi() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        primaVoce(posizione).setDettaglioContabile(List.of(
+                new DettaglioContabile.CorrispettivoDl118("2026", "UFF1", null, null, null, null, BigDecimal.TEN)));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("CORRISPETTIVO_DL118")
+                .hasMessageContaining("esattamente uno");
+    }
+
+    @Test
+    @DisplayName("CORRISPETTIVO_DL118 con due tra capitolo/accertamento/pianoFinanziario5Livello e' rifiutato")
+    void corrispettivoDl118ConDueAlternativi() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        primaVoce(posizione).setDettaglioContabile(List.of(
+                new DettaglioContabile.CorrispettivoDl118("2026", "UFF1", "CAP1", "2026/1", null, null,
+                        BigDecimal.TEN)));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("esattamente uno");
+    }
+
+    @Test
+    @DisplayName("CIVILISTICO richiede esattamente uno tra conto/commessa/nrDocumento")
+    void civilisticoRichiedeEsattamenteUno() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        primaVoce(posizione).setDettaglioContabile(List.of(
+                new DettaglioContabile.Civilistico("2026", "UFF1", null, null, null, BigDecimal.TEN)));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("CIVILISTICO");
+    }
+
+    @Test
+    @DisplayName("INCASSO_TIPICO con sia emissioneFattura sia nrDocumento e' rifiutato (alternativi)")
+    void incassoTipicoNonAmmetteEntrambiGliAlternativi() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        primaVoce(posizione).setDettaglioContabile(List.of(
+                new DettaglioContabile.IncassoTipico("2026", "UFF1", "DIRITTI", "SI", "DOC1", BigDecimal.TEN)));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("alternativi");
+    }
+
+    @Test
+    @DisplayName("UNKNOWN_ENTRIES non e' ammesso in scrittura: e' generato solo in lettura")
+    void sconosciutoRifiutatoInScrittura() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        primaVoce(posizione).setDettaglioContabile(List.of(
+                new DettaglioContabile.Sconosciuto(List.of(new DettaglioContabile.Sconosciuto.Voce("K", "V")))));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("UNKNOWN_ENTRIES");
+    }
+
+    @Test
+    @DisplayName("notificaSend attivo con una voce che ha gia' SPESE_NOTIFICA e' rifiutato (doppio addebito)")
+    void notificaSendConSpeseNotificaGiaPresente() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        posizione.setNotificaSend(true);
+        primaVoce(posizione).setDettaglioContabile(List.of(new DettaglioContabile.SpeseNotifica(BigDecimal.ONE)));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("due volte");
+    }
+
     // ── Fixture ──────────────────────────────────────────────────────────────
+
+    private VocePendenza primaVoce(PosizioneDebitoria posizione) {
+        return posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci().get(0);
+    }
 
     private PosizioneDebitoria posizioneValida(TipologiaOpzionePagamento tipologia, int numeroPendenze) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();

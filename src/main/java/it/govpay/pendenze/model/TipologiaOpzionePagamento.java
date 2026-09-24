@@ -18,8 +18,8 @@ package it.govpay.pendenze.model;
  * cambia solo il layout di stampa, non la logica: la posizione risulta pagata quando
  * tutte le sue pendenze sono pagate, esattamente come {@link #PIANO_RATEALE}. Le due
  * tipologie con termine ({@link #SOLUZIONE_UNICA_ENTRO}/{@link #SOLUZIONE_UNICA_OLTRE})
- * restano invece a esattamente 1 pendenza: la richiesta discussa con il lead riguardava
- * solo {@code SOLUZIONE_UNICA} — da confermare se vale anche per queste due.</p>
+ * restano invece a esattamente 1 pendenza: confermato dal lead (2026-09-24) che non è
+ * previsto che ammettano più pendenze come {@code SOLUZIONE_UNICA}.</p>
  */
 public enum TipologiaOpzionePagamento {
     PIANO_RATEALE,

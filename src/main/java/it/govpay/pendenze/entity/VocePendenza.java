@@ -1,8 +1,14 @@
 package it.govpay.pendenze.entity;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -16,6 +22,8 @@ import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import it.govpay.pendenze.model.DettaglioContabile;
+import it.govpay.pendenze.model.DettaglioContabileConverter;
 import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 
@@ -33,9 +41,10 @@ import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
  *       {@link #tassonomia} (condivisa con {@code ENTRATA}, non con {@code RIFERIMENTO_ENTRATA})</li>
  * </ul>
  *
- * <p>{@code dettaglioContabile} (riconciliazione contabile pagoPA, solo per
- * {@code ENTRATA}/{@code RIFERIMENTO_ENTRATA}) non e' in questo primo disegno — vedi §5
- * di {@code proposta-modello-nativo-v3.md}.</p>
+ * <p>{@link #dettaglioContabile} (riconciliazione contabile pagoPA) e' ammesso solo per
+ * {@code ENTRATA}/{@code RIFERIMENTO_ENTRATA}, mai per {@code BOLLO} (che si classifica
+ * solo tramite {@code tassonomia}) — vincolo verificato da
+ * {@code ValidatorePosizioneDebitoria}, non esprimibile a livello di colonna.</p>
  */
 @Entity
 @Table(name = "voci_pendenza", uniqueConstraints = @UniqueConstraint(
@@ -104,6 +113,16 @@ public class VocePendenza {
     /** Solo {@code BOLLO}: sigla automobilistica della provincia di residenza. */
     @Column(name = "provincia_residenza", length = 2)
     private String provinciaResidenza;
+
+    /**
+     * Riconciliazione contabile pagoPA (mai per {@code BOLLO}). Vuota, non {@code null},
+     * quando assente: evita di dover distinguere "nessun dettaglio" da "colonna non ancora
+     * letta" nel resto del codice.
+     */
+    @Convert(converter = DettaglioContabileConverter.class)
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+    @Column(name = "dettaglio_contabile")
+    private List<DettaglioContabile> dettaglioContabile = new ArrayList<>();
 
     // ── Accessori ────────────────────────────────────────────────────────────
 
@@ -233,5 +252,13 @@ public class VocePendenza {
 
     public void setProvinciaResidenza(String provinciaResidenza) {
         this.provinciaResidenza = provinciaResidenza;
+    }
+
+    public List<DettaglioContabile> getDettaglioContabile() {
+        return dettaglioContabile;
+    }
+
+    public void setDettaglioContabile(List<DettaglioContabile> dettaglioContabile) {
+        this.dettaglioContabile = dettaglioContabile != null ? dettaglioContabile : new ArrayList<>();
     }
 }

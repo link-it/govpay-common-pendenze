@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import it.govpay.pendenze.criteri.PaginaRisultati;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
@@ -307,9 +308,9 @@ public class PosizioneDebitoriaService {
      * @return la pagina di posizioni debitorie che rispettano il filtro
      */
     @Transactional(readOnly = true)
-    public Page<PosizioneDebitoria> cercaPerDebitore(String idA2A, String idDebitore, Pageable pageable) {
-        return posizioneDebitoriaRepository.findDistinctByIdA2AAndSoggettiDebitori_Identificativo(idA2A, idDebitore,
-                pageable);
+    public PaginaRisultati<PosizioneDebitoria> cercaPerDebitore(String idA2A, String idDebitore, Pageable pageable) {
+        return paginaDa(posizioneDebitoriaRepository.findDistinctByIdA2AAndSoggettiDebitori_Identificativo(idA2A,
+                idDebitore, pageable), pageable);
     }
 
     /**
@@ -326,12 +327,26 @@ public class PosizioneDebitoriaService {
      * @return la pagina di pendenze che rispettano il filtro
      */
     @Transactional(readOnly = true)
-    public Page<Pendenza> cercaPendenze(String idA2A, String numeroAvviso, Long idDominio, Pageable pageable) {
-        return idDominio == null
+    public PaginaRisultati<Pendenza> cercaPendenze(String idA2A, String numeroAvviso, Long idDominio,
+            Pageable pageable) {
+        Page<Pendenza> pagina = idDominio == null
                 ? pendenzaRepository.findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvviso(idA2A,
                         numeroAvviso, pageable)
                 : pendenzaRepository.findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvvisoAndIdDominio(idA2A,
                         numeroAvviso, idDominio, pageable);
+        return paginaDa(pagina, pageable);
+    }
+
+    /**
+     * Converte il {@link Page} di Spring Data (necessario internamente per la query con
+     * conteggio) in {@link PaginaRisultati}: offset e limit vengono presi da {@code pageable}
+     * (il valore effettivamente richiesto), non dai metodi derivati di {@code Page}
+     * ({@code getNumber()}/{@code getSize()}), inaffidabili per un offset non allineato — vedi
+     * Javadoc di {@link it.govpay.pendenze.criteri.OffsetPageRequest#getPageNumber()}.
+     */
+    private <T> PaginaRisultati<T> paginaDa(Page<T> pagina, Pageable pageable) {
+        return new PaginaRisultati<>(pagina.getContent(), pageable.getOffset(), pageable.getPageSize(),
+                pagina.getTotalElements());
     }
 
     /**

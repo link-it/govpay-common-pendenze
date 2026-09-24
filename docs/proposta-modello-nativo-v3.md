@@ -105,8 +105,9 @@ voci richiede più di un avviso, quindi più di una pendenza — vedi
 `riconciliazione-legacy-v3.md` §4 punto 6); `PIANO_RATEALE` in pratica ne
 richiede almeno 2, altrimenti si userebbe `SOLUZIONE_UNICA`.
 `SOLUZIONE_UNICA_ENTRO`/`SOLUZIONE_UNICA_OLTRE` restano a esattamente 1
-pendenza — **da confermare se il requisito ">5 voci" valga anche per queste
-due**, non ancora deciso. `giorni` obbligatorio solo per ENTRO/OLTRE.
+pendenza — confermato dal lead (2026-09-24): non è previsto che ammettano
+più pendenze come `SOLUZIONE_UNICA`. `giorni` obbligatorio solo per
+ENTRO/OLTRE.
 
 ### 3.4 `Pendenza`
 
@@ -210,9 +211,9 @@ libreria non ha accesso all'anagrafica del dominio, M4). 15 test, tutti verdi
    ancora `maxItems: 1`) per consentire più pendenze con `SOLUZIONE_UNICA`
    (dovuto con >5 voci → >1 avviso, vedi `riconciliazione-legacy-v3.md` §4
    punto 6). Implementato: `SOLUZIONE_UNICA` senza limite massimo, come
-   `PIANO_RATEALE`. **Nuovo punto da confermare**: `SOLUZIONE_UNICA_ENTRO`/
-   `OLTRE` restano a 1 pendenza — la richiesta discussa riguardava solo
-   `SOLUZIONE_UNICA`, non le due varianti con termine.
+   `PIANO_RATEALE`. `SOLUZIONE_UNICA_ENTRO`/`OLTRE` restano a 1 pendenza —
+   **confermato dal lead (2026-09-24)**: non è previsto che ammettano più
+   pendenze come `SOLUZIONE_UNICA`.
 
 ## 7. Dipendenza da `govpay-common` (aggiunta il 2026-09-23)
 
@@ -470,3 +471,151 @@ NAV fornito).
 versione precedente se esistono altri utilizzatori di `ID_MESSAGGIO_RELATIVO`
 con `PROTOCOLLO='GovPay'` oltre a `IuvBD`/`TracciatiNotificaPagamentiBD`, per
 escludere collisioni di chiave non ancora note.
+
+## 12. Due bug e una lacuna in `GeneratoreIuvStandard`/`CostruttoreIdentificativiPagamento`, trovati in revisione (2026-09-23/24)
+
+Tutti scoperti dal lead con casi concreti riprodotti, verificati sul codice
+legacy prima di essere corretti.
+
+**1. I prefissi dinamici del vecchio GovPay non venivano risolti.** Il
+prefisso configurato sul dominio veniva usato letteralmente, senza
+sostituire i placeholder `%(a)`/`%(p)`/`%(t)`/`%(y)`/`%(Y)`. Verificato in
+`CustomIuv.buildPrefix` (delimitatori `%(`/`)`, valori da
+`PagamentoContext.getAllIuvProps`) e in `Iuv.generaIUV`, che risolve il
+prefisso **prima** di chiamare `IuvBD.generaIuv` — quindi prima sia della
+chiave del contatore sia della costruzione dello IUV — e valida
+esplicitamente che il risultato sia numerico, con un errore chiaro invece di
+un `NumberFormatException` grezzo. Riprodotto il caso `%(y)`: la nuova
+generazione terminava con `NumberFormatException`. Corretto: nuova classe
+`iuv/RisolutorePrefissoIuv` (porting senza la dipendenza da
+`commons-text.StringSubstitutor`, non necessaria per un set fisso di
+chiavi), che risolve `%(Y)`/`%(y)` (anno, dall'orologio della libreria) e
+`%(a)` (`Applicazione.codApplicazioneIuv`, cercata per `idA2A` — confermato
+dal lead: `idA2A` è esattamente `Applicazione.codApplicazione`)
+prima di usare il prefisso sia per la chiave del contatore sia per lo IUV.
+Un placeholder non risolvibile solleva un errore esplicito che lo nomina,
+invece di restare letterale nel testo.
+
+**2. Il controllo di lunghezza della reference usava sempre il limite di 15
+caratteri.** `costruisciReference` rifiutava solo se `reference.length() >
+15`, anche quando la reference deve essere di 13 (AuxDigit 0 e 3). Caso
+riprodotto: AuxDigit 3, segregazione 12, prefisso `123456789012` (12 cifre),
+progressivo 10 → NAV di 19 cifre invece di 18. Difetto ereditato dal vecchio
+`IuvBD.generaIuv` (stesso controllo sempre `>15`), ma non riportato qui.
+Corretto: il controllo usa ora `lunghezzaTotale` (il parametro già passato
+alla chiamata, 13 o 15 secondo l'AuxDigit).
+
+**3. `%(p)`/`%(t)` (codifica del tipo pendenza) inizialmente non
+supportati.** Nel legacy rappresentano `TipoVersamento.codificaIuv`
+(`PagamentoContext`: `%(p)` e `%(t)` sono alias storici dello stesso
+valore). Non risolvibili da questa libreria da sola: `govpay-common` non
+espone un'anagrafica tipo-versamento (M4). Prima soluzione (rifiuto
+esplicito) lasciava gli enti che usano questi prefissi bloccati dopo il
+passaggio alla v3 — segnalato esplicitamente dal lead come insufficiente.
+Corretto estendendo la SPI: `GeneratoreIuv.genera` ha ora un quarto
+parametro, `codificaIuvTipoPendenza`, sorgente un nuovo campo **transiente**
+(mai persistito) `Pendenza.codificaIuvTipoPendenza` — il chiamante che
+conosce quel valore (fuori da questa libreria, dove vive l'anagrafica
+tipo-versamento) lo imposta sulla pendenza prima di `crea()`. Usando il
+prefisso risolto per costruire sia la chiave del progressivo sia lo IUV
+(già stabilito al punto 1), codifiche diverse sullo stesso dominio ottengono
+progressivi indipendenti — preservando la stessa composizione della chiave
+del legacy (`codDominio+prefix+tipo`).
+
+9 nuovi test (65 totali): `CostruttoreIdentificativiPagamentoTest` (+1, la
+riproduzione esatta del caso AuxDigit 3/prefisso 12 cifre/progressivo 10),
+`GeneratoreIuvStandardTest` (+6: risoluzione `%(y)`/`%(a)`/`%(p)`, alias
+`%(t)`, rifiuto esplicito senza valore fornito, progressivi indipendenti per
+codifiche diverse), `RisolutorePrefissoIuvTest` (nuovo, 5 test puri).
+
+**Confermato dal lead (24/09)**: `idA2A` ≡ `Applicazione.codApplicazione`
+(non più un punto aperto).
+
+## 13. Ricerca, criteri, paginazione (2026-09-24)
+
+Nuovo package `criteri/`:
+
+- `OffsetPageRequest implements Pageable` — paginazione a scorrimento
+  libero (offset/limit, standard AGID RAC_REST_NAME_005), non a pagine
+  allineate come `PageRequest` (che ammette solo `offset = pagina *
+  dimensione`): il cliente può avanzare l'offset di un valore qualunque
+  seguendo `prossimiRisultati`, non necessariamente un multiplo di `limit`.
+- `CriteriOrdinamento` — analizza il parametro di query `sort`
+  (`+campo,-campo2`) contro una mappa esplicita di campi ordinabili fornita
+  dal chiamante (nome esterno → percorso JPA): nessun campo ordinabile per
+  default, un nome non riconosciuto è un errore esplicito
+  (`ValidazioneNonSuperataException`), non un ordinamento arbitrario su un
+  percorso interno non previsto.
+
+Verificati sui due endpoint di ricerca reali dello YAML v3 (non inventati):
+
+- `GET /posizioni-debitorie/{idA2A}` — `idDebitore` è l'**unico** criterio di
+  ricerca ammesso (query, obbligatorio), oltre a `idA2A` (path). Trova la
+  posizione se l'identificativo corrisponde a **qualunque** soggetto in
+  `soggettiDebitori`, non solo al primo (debitori in solido). Implementato:
+  `PosizioneDebitoriaRepository.findDistinctByIdA2AAndSoggettiDebitori_Identificativo`,
+  `PosizioneDebitoriaService.cercaPerDebitore`.
+- `GET /pendenze/{idA2A}` — `numeroAvviso` è l'**unico** criterio,
+  obbligatorio; `idDominio` è un filtro aggiuntivo opzionale, utilizzabile
+  solo insieme a `numeroAvviso` (mai da solo, per esplicita indicazione
+  dello YAML). Senza `idDominio` può restituire più risultati, perché lo
+  stesso NAV può esistere legittimamente su domini diversi (M13).
+  Implementato: due varianti in `PendenzaRepository` (con/senza filtro
+  dominio), `PosizioneDebitoriaService.cercaPendenze`.
+
+**Non implementato**: il parametro di query `fields` (proiezione parziale
+dei campi in risposta) — è un problema di serializzazione JSON lato API,
+non di accesso ai dati, fuori perimetro di questa libreria.
+
+14 nuovi test (79 totali): `OffsetPageRequestTest` (5), `CriteriOrdinamentoTest`
+(6), 3 di integrazione in `PosizioneDebitoriaServiceTest` contro il DB reale
+(incluso uno che dimostra esplicitamente M13: stesso NAV su domini diversi,
+trovato senza filtro, ristretto a uno con `idDominio`).
+
+## 14. `dettaglioContabile` (2026-09-24)
+
+Riconciliazione contabile pagoPA (Dizionario dei metadata, issue #877 dello
+YAML v3), rimandata esplicitamente al §5. Attaccata a `VocePendenza` di tipo
+`RIFERIMENTO_ENTRATA`/`ENTRATA` (mai `BOLLO`, che si classifica solo tramite
+`tassonomia`).
+
+**Modello** (`model/DettaglioContabile`): sealed interface, 5 record — 4
+scrivibili (`CorrispettivoDl118`, `IncassoTipico`, `Civilistico`,
+`SpeseNotifica`) discriminati dal campo `tipo`, più `Sconosciuto`
+(`UNKNOWN_ENTRIES`) di sola lettura, mai accettata in scrittura (fallback
+per metadata di un intermediario/tecnologia terza).
+
+**Persistenza** (`model/DettaglioContabileConverter`): `AttributeConverter`
+JPA, JSON in colonna `voci_pendenza.dettaglio_contabile`
+(`@JdbcTypeCode(SqlTypes.LONGVARCHAR)`, stesso principio di
+`configurazione.valore` in govpay-common). A differenza del vecchio
+`ProprietaPendenzaCodec` (dati storici, decodifica tollerante con log a WARN
+su JSON malformato), qui un JSON illeggibile è un bug di questa libreria,
+non un dato esterno sporco: nessuna tolleranza, fallisce esplicitamente.
+
+**Bug Jackson 3 trovato e corretto durante l'implementazione**:
+`ObjectMapper.writeValueAsString(Object)` su una `List<DettaglioContabile>`
+perde il discriminatore polimorfico `tipo`. Causa: per l'erasure dei
+generici, Jackson risolve il serializzatore di ogni elemento sulla sua
+classe concreta (es. `Civilistico`), non sul tipo dichiarato della lista
+(`DettaglioContabile`, dove vive `@JsonTypeInfo`) — verificato con un test
+diagnostico standalone: funziona per un singolo valore dichiarato come
+`DettaglioContabile`, sparisce per gli elementi di una lista. La lettura
+falliva poi con "missing type id property". Corretto usando
+`writerFor(JavaType)` esplicito in scrittura, simmetrico a
+`readValue(dbData, JavaType)` già usato in lettura.
+
+**Validazioni** (`ValidatorePosizioneDebitoria`): `dettaglioContabile`
+vietato su voci `BOLLO`; `CORRISPETTIVO_DL118`/`CIVILISTICO` richiedono
+esattamente uno tra i rispettivi campi alternativi (`capitolo`/
+`accertamento`/`pianoFinanziario5Livello`; `conto`/`commessa`/
+`nrDocumento`); `INCASSO_TIPICO` non ammette sia `emissioneFattura` sia
+`nrDocumento` insieme; `UNKNOWN_ENTRIES` sempre rifiutato in scrittura;
+`notificaSend` attivo con una voce che ha già `SPESE_NOTIFICA` rifiutato
+(altrimenti le spese verrebbero applicate due volte — semantica esplicita
+dello YAML v3). Non validati i vincoli di lunghezza dei singoli campi (già
+espressi dallo schema JSON, non compito di questa libreria).
+
+13 nuovi test (92 totali): `DettaglioContabileConverterTest` (4, incluso il
+round trip di `Sconosciuto`), 9 nuovi in `ValidatorePosizioneDebitoriaTest`,
+1 in `PosizioneDebitoriaMappingTest` (round trip attraverso il DB reale).

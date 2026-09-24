@@ -8,6 +8,8 @@ import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
+import it.govpay.pendenze.model.DettaglioContabile;
+import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 
 /**
@@ -43,6 +45,7 @@ public final class ValidatorePosizioneDebitoria {
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
             validaOpzione(opzione);
         }
+        validaSpeseNotificaEnotificaSend(posizione);
     }
 
     private static void validaOpzione(OpzionePagamento opzione) {
@@ -89,6 +92,7 @@ public final class ValidatorePosizioneDebitoria {
         for (VocePendenza voce : pendenza.getVoci()) {
             validaScalaImporto(voce.getImporto(), "la voce [" + voce.getIdVocePendenza() + "]");
             sommaVoci = sommaVoci.add(voce.getImporto());
+            validaDettaglioContabile(voce);
         }
         if (sommaVoci.compareTo(pendenza.getImporto()) != 0) {
             throw new ValidazioneNonSuperataException(
@@ -115,6 +119,82 @@ public final class ValidatorePosizioneDebitoria {
         } catch (ArithmeticException e) {
             throw new ValidazioneNonSuperataException(
                     contesto + " ha un importo con più di 2 decimali significativi: " + importo.toPlainString());
+        }
+    }
+
+    /**
+     * {@code dettaglioContabile} e' ammesso solo per {@code RIFERIMENTO_ENTRATA}/
+     * {@code ENTRATA} (mai {@code BOLLO}, che si classifica solo tramite {@code tassonomia}
+     * — vedi lo YAML v3). Ogni voce dell'elenco e' poi validata per tipologia: vincoli di
+     * "esattamente uno tra N campi"/"alternativi" che un record da solo non può esprimere,
+     * e il rifiuto di {@code UNKNOWN_ENTRIES} (sola lettura, mai da GovPay in scrittura).
+     */
+    private static void validaDettaglioContabile(VocePendenza voce) {
+        if (voce.getDettaglioContabile().isEmpty()) {
+            return;
+        }
+        if (voce.getTipoRiferimento() == TipoRiferimentoVocePendenza.BOLLO) {
+            throw new ValidazioneNonSuperataException(
+                    "la voce [" + voce.getIdVocePendenza() + "] e' di tipo BOLLO: non ammette dettaglioContabile"
+                            + " (la classificazione avviene solo tramite tassonomia)");
+        }
+        for (DettaglioContabile dettaglio : voce.getDettaglioContabile()) {
+            validaVoceDettaglioContabile(voce, dettaglio);
+        }
+    }
+
+    private static void validaVoceDettaglioContabile(VocePendenza voce, DettaglioContabile dettaglio) {
+        if (dettaglio instanceof DettaglioContabile.Sconosciuto) {
+            throw new ValidazioneNonSuperataException(
+                    "la voce [" + voce.getIdVocePendenza() + "] contiene un dettaglioContabile di tipo"
+                            + " UNKNOWN_ENTRIES: e' generato solo in lettura, non ammesso in scrittura");
+        } else if (dettaglio instanceof DettaglioContabile.CorrispettivoDl118 d) {
+            richiedeEsattamenteUno(voce, "CORRISPETTIVO_DL118",
+                    "capitolo", d.capitolo(), "accertamento", d.accertamento(),
+                    "pianoFinanziario5Livello", d.pianoFinanziario5Livello());
+        } else if (dettaglio instanceof DettaglioContabile.Civilistico d) {
+            richiedeEsattamenteUno(voce, "CIVILISTICO",
+                    "conto", d.conto(), "commessa", d.commessa(), "nrDocumento", d.nrDocumento());
+        } else if (dettaglio instanceof DettaglioContabile.IncassoTipico d
+                && d.emissioneFattura() != null && d.nrDocumento() != null) {
+            throw new ValidazioneNonSuperataException(
+                    "la voce [" + voce.getIdVocePendenza() + "] ha un dettaglioContabile INCASSO_TIPICO con sia"
+                            + " emissioneFattura sia nrDocumento: sono alternativi, non ammessi insieme");
+        }
+        // SpeseNotifica: nessun vincolo di campo qui, solo l'incrocio con notificaSend
+        // (validaSpeseNotificaEnotificaSend, sull'intera posizione).
+    }
+
+    private static void richiedeEsattamenteUno(VocePendenza voce, String tipo, String nome1, Object valore1,
+            String nome2, Object valore2, String nome3, Object valore3) {
+        int presenti = (valore1 != null ? 1 : 0) + (valore2 != null ? 1 : 0) + (valore3 != null ? 1 : 0);
+        if (presenti != 1) {
+            throw new ValidazioneNonSuperataException(
+                    "la voce [" + voce.getIdVocePendenza() + "] ha un dettaglioContabile " + tipo + " con "
+                            + presenti + " tra " + nome1 + "/" + nome2 + "/" + nome3
+                            + " valorizzati: deve essere presente esattamente uno");
+        }
+    }
+
+    /**
+     * {@code SPESE_NOTIFICA} va indicato solo se l'importo della voce include già le spese
+     * di notifica SEND calcolate autonomamente dall'applicativo — in quel caso
+     * {@code notificaSend} non deve essere attivo sulla posizione, altrimenti le spese
+     * verrebbero applicate due volte (semantica esplicita dello YAML v3).
+     */
+    private static void validaSpeseNotificaEnotificaSend(PosizioneDebitoria posizione) {
+        if (!posizione.isNotificaSend()) {
+            return;
+        }
+        boolean presenteSpeseNotifica = posizione.getOpzioniPagamento().stream()
+                .flatMap(o -> o.getPendenze().stream())
+                .flatMap(p -> p.getVoci().stream())
+                .flatMap(v -> v.getDettaglioContabile().stream())
+                .anyMatch(DettaglioContabile.SpeseNotifica.class::isInstance);
+        if (presenteSpeseNotifica) {
+            throw new ValidazioneNonSuperataException(
+                    "notificaSend e' attivo ma una voce ha gia' un dettaglioContabile SPESE_NOTIFICA: le spese"
+                            + " verrebbero applicate due volte");
         }
     }
 }

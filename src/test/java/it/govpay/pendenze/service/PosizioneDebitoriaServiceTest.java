@@ -15,11 +15,11 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.domain.Page;
 import org.springframework.test.context.ActiveProfiles;
 
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
+import it.govpay.pendenze.criteri.PaginaRisultati;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
@@ -313,11 +313,11 @@ class PosizioneDebitoriaServiceTest {
         opzioneConPendenza(posizioneAltroDebitore, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "3");
         service.crea(posizioneAltroDebitore);
 
-        Page<PosizioneDebitoria> risultato = service.cercaPerDebitore("A2A-CERCA-DEBITORE", "RSSMRA80A01H501U",
-                OffsetPageRequest.of(0, 10));
+        PaginaRisultati<PosizioneDebitoria> risultato = service.cercaPerDebitore("A2A-CERCA-DEBITORE",
+                "RSSMRA80A01H501U", OffsetPageRequest.of(0, 10));
 
-        assertThat(risultato.getTotalElements()).isEqualTo(2);
-        assertThat(risultato.getContent()).extracting(PosizioneDebitoria::getIdPosizioneDebitoria)
+        assertThat(risultato.numeroRisultatiTotali()).isEqualTo(2);
+        assertThat(risultato.risultati()).extracting(PosizioneDebitoria::getIdPosizioneDebitoria)
                 .containsExactlyInAnyOrder("pos-cerca-1", "pos-cerca-2");
     }
 
@@ -335,14 +335,39 @@ class PosizioneDebitoriaServiceTest {
             service.crea(posizione);
         }
 
-        Page<PosizioneDebitoria> primaPagina = service.cercaPerDebitore("A2A-PAGINAZIONE", "RSSMRA80A01H501U",
-                OffsetPageRequest.of(0, 2));
-        Page<PosizioneDebitoria> secondaPagina = service.cercaPerDebitore("A2A-PAGINAZIONE", "RSSMRA80A01H501U",
-                OffsetPageRequest.of(2, 2));
+        PaginaRisultati<PosizioneDebitoria> primaPagina = service.cercaPerDebitore("A2A-PAGINAZIONE",
+                "RSSMRA80A01H501U", OffsetPageRequest.of(0, 2));
+        PaginaRisultati<PosizioneDebitoria> secondaPagina = service.cercaPerDebitore("A2A-PAGINAZIONE",
+                "RSSMRA80A01H501U", OffsetPageRequest.of(2, 2));
 
-        assertThat(primaPagina.getTotalElements()).isEqualTo(3);
-        assertThat(primaPagina.getContent()).hasSize(2);
-        assertThat(secondaPagina.getContent()).hasSize(1);
+        assertThat(primaPagina.numeroRisultatiTotali()).isEqualTo(3);
+        assertThat(primaPagina.risultati()).hasSize(2);
+        assertThat(primaPagina.haAltriRisultati()).isTrue();
+        assertThat(secondaPagina.risultati()).hasSize(1);
+        assertThat(secondaPagina.haAltriRisultati()).isFalse();
+    }
+
+    @Test
+    @DisplayName("haAltriRisultati() e' corretto anche con un offset non multiplo di limit — riproduce esattamente "
+            + "il caso segnalato: 3 risultati totali, offset 1, limit 2, restituiti gli ultimi due")
+    void cercaPerDebitoreHaAltriRisultatiConOffsetNonAllineato() {
+        for (int i = 1; i <= 3; i++) {
+            PosizioneDebitoria posizione = new PosizioneDebitoria();
+            posizione.setIdA2A("A2A-OFFSET-DISALLINEATO");
+            posizione.setIdPosizioneDebitoria("pos-off-" + i);
+            posizione.setIdDominio(1L);
+            posizione.setDescrizione("test");
+            posizione.addSoggettoDebitore(soggettoDiProva());
+            opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, String.valueOf(i));
+            service.crea(posizione);
+        }
+
+        PaginaRisultati<PosizioneDebitoria> pagina = service.cercaPerDebitore("A2A-OFFSET-DISALLINEATO",
+                "RSSMRA80A01H501U", OffsetPageRequest.of(1, 2));
+
+        assertThat(pagina.numeroRisultatiTotali()).isEqualTo(3);
+        assertThat(pagina.risultati()).hasSize(2);
+        assertThat(pagina.haAltriRisultati()).isFalse();
     }
 
     @Test
@@ -372,14 +397,14 @@ class PosizioneDebitoriaServiceTest {
         pendenzaDominio2.setIuv("300000000000000002");
         service.crea(posizioneDominio2);
 
-        Page<Pendenza> senzaFiltroDominio = service.cercaPendenze("A2A-CERCA-NAV", "300000000000000001", null,
-                OffsetPageRequest.of(0, 10));
-        Page<Pendenza> conFiltroDominio = service.cercaPendenze("A2A-CERCA-NAV", "300000000000000001", 2L,
+        PaginaRisultati<Pendenza> senzaFiltroDominio = service.cercaPendenze("A2A-CERCA-NAV", "300000000000000001",
+                null, OffsetPageRequest.of(0, 10));
+        PaginaRisultati<Pendenza> conFiltroDominio = service.cercaPendenze("A2A-CERCA-NAV", "300000000000000001", 2L,
                 OffsetPageRequest.of(0, 10));
 
-        assertThat(senzaFiltroDominio.getTotalElements()).isEqualTo(2);
-        assertThat(conFiltroDominio.getTotalElements()).isEqualTo(1);
-        assertThat(conFiltroDominio.getContent().get(0).getIdDominio()).isEqualTo(2L);
+        assertThat(senzaFiltroDominio.numeroRisultatiTotali()).isEqualTo(2);
+        assertThat(conFiltroDominio.numeroRisultatiTotali()).isEqualTo(1);
+        assertThat(conFiltroDominio.risultati().get(0).getIdDominio()).isEqualTo(2L);
     }
 
     // ── Fixture ──────────────────────────────────────────────────────────────

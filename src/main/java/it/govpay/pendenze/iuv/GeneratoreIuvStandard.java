@@ -27,8 +27,8 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
  * <p><b>Prefisso dinamico</b> (porting di {@code CustomIuv.buildPrefix}/{@code Iuv.generaIUV}):
  * il prefisso configurato sul dominio puo' contenere i placeholder {@code %(Y)}/{@code %(y)}
  * (anno a 4/2 cifre), {@code %(a)} ({@code Applicazione.codApplicazioneIuv}, cercata per
- * {@code idA2A} — assunto qui corrispondere a {@code Applicazione.codApplicazione}, come nelle
- * altre API GovPay) e {@code %(p)}/{@code %(t)} ({@code TipoVersamento.codificaIuv} nel legacy —
+ * {@code idA2A} — confermato dal lead corrispondere esattamente a
+ * {@code Applicazione.codApplicazione}) e {@code %(p)}/{@code %(t)} ({@code TipoVersamento.codificaIuv} nel legacy —
  * stesso valore per entrambe le chiavi, alias storici). Quest'ultimo non e' risolvibile da
  * questa libreria da sola: {@code govpay-common} non espone un'anagrafica tipo-versamento (M4),
  * quindi il valore va fornito dal chiamante tramite il parametro {@code codificaIuvTipoPendenza}

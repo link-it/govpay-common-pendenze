@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 
 import org.hibernate.exception.ConstraintViolationException;
@@ -20,6 +21,7 @@ import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.test.context.ActiveProfiles;
 
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
+import it.govpay.pendenze.model.DettaglioContabile;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoVocePendenza;
@@ -97,6 +99,34 @@ class PosizioneDebitoriaMappingTest {
         assertThat(voceLetta.getTipoRiferimento()).isEqualTo(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
         assertThat(voceLetta.getCodEntrata()).isEqualTo("SRV-12345");
         assertThat(voceLetta.getIbanAccredito()).isNull();
+        assertThat(voceLetta.getDettaglioContabile()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("dettaglioContabile sopravvive alla rilettura tramite il converter JPA")
+    void dettaglioContabileSopravviveAllaRilettura() {
+        PosizioneDebitoria posizione = posizioneMinima();
+        posizione.addSoggettoDebitore(soggetto(0, "RSSMRA80A01H501U", "Mario Rossi"));
+        OpzionePagamento opzione = opzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.addOpzionePagamento(opzione);
+        Pendenza pendenza = pendenza(posizione.getIdDominio(), "10000000001", "300000000000000001");
+        opzione.addPendenza(pendenza);
+
+        VocePendenza conDettaglio = voceRiferimentoEntrata(1);
+        conDettaglio.setDettaglioContabile(List.of(
+                new DettaglioContabile.Civilistico("2026", "UFF1", "14.01.03", null, null,
+                        new BigDecimal("100.50"))));
+        pendenza.addVocePendenza(conDettaglio);
+
+        em.persistAndFlush(posizione);
+        em.clear();
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
+        VocePendenza voceLetta = riletta.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci().get(0);
+
+        assertThat(voceLetta.getDettaglioContabile()).containsExactly(
+                new DettaglioContabile.Civilistico("2026", "UFF1", "14.01.03", null, null,
+                        new BigDecimal("100.50")));
     }
 
     @Test

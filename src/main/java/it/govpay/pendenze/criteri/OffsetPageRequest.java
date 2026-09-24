@@ -36,6 +36,14 @@ public final class OffsetPageRequest implements Pageable {
         return new OffsetPageRequest(offset, limit, sort == null ? Sort.unsorted() : sort);
     }
 
+    /**
+     * Approssimazione (`offset / limit` troncato), richiesta dall'interfaccia {@link Pageable}
+     * ma <b>non affidabile</b> per un offset non multiplo di {@code limit}: usarla per
+     * calcolare {@code hasNext()}/{@code isLast()} (come fa
+     * {@link org.springframework.data.domain.PageImpl}) produce risultati sbagliati — vedi
+     * {@link PaginaRisultati}, che non dipende da questo valore. Non usare questo metodo per
+     * decidere se esistono altri risultati.
+     */
     @Override
     public int getPageNumber() {
         return (int) (offset / limit);

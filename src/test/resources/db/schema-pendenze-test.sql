@@ -136,6 +136,9 @@ CREATE TABLE IF NOT EXISTS voci_pendenza
 	tipo_bollo VARCHAR(2),
 	hash_documento VARCHAR(72),
 	provincia_residenza VARCHAR(2),
+	-- VocePendenza.dettaglioContabile usa @JdbcTypeCode(SqlTypes.LONGVARCHAR), non CLOB:
+	-- stesso motivo di configurazione.valore in govpay-common (vedi piu' sopra).
+	dettaglio_contabile VARCHAR,
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_voci_pendenza') NOT NULL,
 	id_pendenza BIGINT NOT NULL,
