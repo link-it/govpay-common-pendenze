@@ -175,7 +175,7 @@ class GeneratoreIuvStandardTest {
         em.persistAndFlush(dominio);
 
         assertThatThrownBy(() -> generatore.genera(dominio.getId(), "A2A-1", "pend-1", null))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("%(p)");
     }
 

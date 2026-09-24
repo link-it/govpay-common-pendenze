@@ -291,3 +291,78 @@ CREATE TABLE IF NOT EXISTS domini (
     CONSTRAINT uk_domini_cod UNIQUE (cod_dominio),
     CONSTRAINT fk_domini_stazione FOREIGN KEY (id_stazione) REFERENCES stazioni(id)
 );
+
+-- ---------------------------------------------------------------------------
+-- Ricevute e rendicontazioni: fuori dall'aggregato PosizioneDebitoria (decisione
+-- del lead, 2026-09-24) — FK piatte verso pendenze.id, non relazioni JPA, per non
+-- ripetere il problema del vecchio "dettaglio pendenza" (centinaia di query per
+-- una singola lettura). Vedi Ricevuta/Rendicontazione/FlussoRendicontazione per
+-- l'analisi completa, incluso il confronto con lo schema legacy (rpt/fr/rendicontazioni).
+-- ---------------------------------------------------------------------------
+
+CREATE SEQUENCE IF NOT EXISTS seq_flussi_rendicontazione start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS flussi_rendicontazione
+(
+	id_dominio BIGINT NOT NULL,
+	id_flusso VARCHAR(35) NOT NULL,
+	data_flusso TIMESTAMP NOT NULL,
+	trn VARCHAR(35) NOT NULL,
+	data_regolamento TIMESTAMP NOT NULL,
+	id_psp VARCHAR(35) NOT NULL,
+	bic_riversamento VARCHAR(35),
+	numero_pagamenti INT NOT NULL,
+	importo_totale NUMERIC(19,2) NOT NULL,
+	stato VARCHAR(35) NOT NULL,
+	revisione BIGINT NOT NULL,
+	obsoleto BOOLEAN NOT NULL,
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_flussi_rendicontazione') NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_flussi_rendicontazione_1 UNIQUE (id_dominio, id_flusso, data_flusso),
+	CONSTRAINT unique_flussi_rendicontazione_2 UNIQUE (id_dominio, id_flusso, id_psp, revisione),
+	-- fk/pk keys constraints
+	CONSTRAINT pk_flussi_rendicontazione PRIMARY KEY (id)
+);
+
+CREATE SEQUENCE IF NOT EXISTS seq_rendicontazioni start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS rendicontazioni
+(
+	id_pendenza BIGINT NOT NULL,
+	iuv VARCHAR(35) NOT NULL,
+	iur VARCHAR(35) NOT NULL,
+	indice INT,
+	importo NUMERIC(19,2) NOT NULL,
+	esito INT NOT NULL,
+	data DATE NOT NULL,
+	stato VARCHAR(35) NOT NULL,
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_rendicontazioni') NOT NULL,
+	id_flusso_rendicontazione BIGINT NOT NULL,
+	-- fk/pk keys constraints
+	-- FK reale (non relazione JPA) verso pendenze: vive nello stesso schema, a differenza
+	-- di id_dominio su flussi_rendicontazione che punta all'anagrafica esterna di govpay-common.
+	CONSTRAINT fk_rnd_id_pendenza FOREIGN KEY (id_pendenza) REFERENCES pendenze(id),
+	CONSTRAINT fk_rnd_id_flusso_rendicontazione FOREIGN KEY (id_flusso_rendicontazione) REFERENCES flussi_rendicontazione(id),
+	CONSTRAINT pk_rendicontazioni PRIMARY KEY (id)
+);
+
+CREATE SEQUENCE IF NOT EXISTS seq_ricevute start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS ricevute
+(
+	id_pendenza BIGINT NOT NULL,
+	iur VARCHAR(35) NOT NULL,
+	tipo VARCHAR(35) NOT NULL,
+	data TIMESTAMP NOT NULL,
+	-- VocePendenza.dettaglioContabile usa lo stesso principio (@JdbcTypeCode(SqlTypes.LONGVARCHAR)).
+	contenuto VARCHAR NOT NULL,
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_ricevute') NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_ricevute_1 UNIQUE (id_pendenza, iur),
+	-- fk/pk keys constraints
+	CONSTRAINT fk_rcv_id_pendenza FOREIGN KEY (id_pendenza) REFERENCES pendenze(id),
+	CONSTRAINT pk_ricevute PRIMARY KEY (id)
+);

@@ -572,6 +572,26 @@ non di accesso ai dati, fuori perimetro di questa libreria.
 (incluso uno che dimostra esplicitamente M13: stesso NAV su domini diversi,
 trovato senza filtro, ristretto a uno con `idDominio`).
 
+**Bug trovato dal lead e corretto (2026-09-24): `hasNext()` poteva risultare
+`true` con i risultati già esauriti.** `Page`/`Pageable` di Spring Data sono
+pensati per pagine allineate: `PageImpl.hasNext()` si basa su `getNumber()+1
+< getTotalPages()`, e `OffsetPageRequest.getPageNumber()` può solo
+approssimare (`offset / limit` troncato) un offset arbitrario non allineato.
+Riprodotto: 3 risultati totali, offset 1, limit 2 → restituiti gli ultimi
+due, ma `hasNext()` risultava `true` (avrebbe prodotto un `prossimiRisultati`
+verso una pagina vuota). Non risolvibile facendo tornare corretto
+`getPageNumber()` in generale: non esiste un numero di pagina che renda
+`PageImpl.hasNext()` corretto per un offset qualunque. Corretto introducendo
+`criteri/PaginaRisultati<T>` (record: `risultati`, `offset`, `limit`,
+`numeroRisultatiTotali`), il cui `haAltriRisultati()` usa direttamente
+`offset + risultati.size() < numeroRisultatiTotali` — corretto per qualunque
+offset. `PosizioneDebitoriaService.cercaPerDebitore`/`cercaPendenze` ora
+restituiscono `PaginaRisultati<T>`, non più `Page<T>`: gli unici dati letti
+da `Page` sono `getContent()`/`getTotalElements()` (affidabili, vengono da
+una query di conteggio separata), mai i suoi metodi derivati. 4 nuovi test
+(96 totali): `PaginaRisultatiTest` (3, puri), 1 in `PosizioneDebitoriaServiceTest`
+che riproduce esattamente lo scenario segnalato contro il DB reale.
+
 ## 14. `dettaglioContabile` (2026-09-24)
 
 Riconciliazione contabile pagoPA (Dizionario dei metadata, issue #877 dello
@@ -619,3 +639,139 @@ espressi dallo schema JSON, non compito di questa libreria).
 13 nuovi test (92 totali): `DettaglioContabileConverterTest` (4, incluso il
 round trip di `Sconosciuto`), 9 nuovi in `ValidatorePosizioneDebitoriaTest`,
 1 in `PosizioneDebitoriaMappingTest` (round trip attraverso il DB reale).
+
+## 15. Utility IUV pure spostate in `govpay-common` (2026-09-24)
+
+Proposta del lead: le funzioni senza dipendenza da DB/Spring, e funzionalmente
+indipendenti dal modello di dominio delle pendenze (non solo prive di
+persistenza), vanno in `govpay-common`, non duplicate/isolate qui — riusabili
+da chiunque debba solo costruire/validare un formato IUV o sostituire
+segnaposto in un testo, senza tirarsi dietro questa libreria.
+
+**Verificato package per package** quali funzioni qualificano:
+
+- **`CostruttoreIdentificativiPagamento`** (algoritmo aux digit/check digit
+  mod-93/costruzione-decodifica IUV-NAV) → **spostato in
+  `it.govpay.common.utils.IuvUtils`** (`genera`/`convertiDaNumeroAvviso`,
+  nuovo record annidato `IuvUtils.IdentificativiPagamento`). Non è
+  "processing generico basato su parametri": il "93", l'ordine di
+  concatenazione e i vincoli di lunghezza per AuxDigit sono la formula
+  pagoPA, non riusabili per altro — ma è comunque IUV, e `govpay-common` ne
+  possiede già il concetto (`IuvUtils.isIuvInterno`/`isNumeric`): consolidare
+  in un solo posto invece di spezzare la stessa competenza su due librerie.
+  L'eccezione di formato non valido diventa `IllegalArgumentException`
+  (prima `ValidazioneNonSuperataException`, specifica di questa libreria):
+  `govpay-common` non ha un'eccezione di validazione propria, e
+  `IllegalArgumentException` è idiomatica per una utility di basso livello.
+- **`RisolutorePrefissoIuv`** → **spostato in
+  `it.govpay.common.utils.RisolutoreSegnaposto`, anonimizzato**: il suo
+  `risolvi(String, Map<String,String>)` è sostituzione di segnaposto
+  `%(chiave)` del tutto generica (pattern e mappa sono entrambi parametri
+  del chiamante), senza alcuna conoscenza di IUV — il nome "PrefissoIuv"
+  descriveva solo chi la chiamava, non cosa faceva. Rinominata per non
+  portare un nome fuorviante in una libreria dove non ha piu' alcun legame
+  con IUV. Stessa eccezione (`IllegalArgumentException`) per un placeholder
+  non risolvibile.
+
+**Cosa resta in questa libreria** (richiede DB/Spring, non movibile):
+`GeneratoreIuvStandard`, `GeneratoreProgressivoIuv`,
+`AllocatoreBloccoProgressivoIuv`, `ProgressivoIuv`/`ProgressivoIuvId`/
+`ProgressivoIuvRepository`. Anche la SPI `GeneratoreIuv` resta qui: lega
+generazione a progressivo/DB e al parametro `codificaIuvTipoPendenza`, non è
+un'utility pura.
+
+`GeneratoreIuvStandard.genera`/`convertiDaNumeroAvviso` ora delegano a
+`IuvUtils`, adattando il record di ritorno (`IuvUtils.IdentificativiPagamento`
+→ `it.govpay.pendenze.spi.IdentificativiPagamento`, la SPI resta con il
+proprio tipo). `risolviPrefix` usa `RisolutoreSegnaposto` al posto della
+classe locale ora rimossa.
+
+**Coordinamento fra i due repository**: cambiamento in `govpay-common`
+(stessa versione `2.0.4-SNAPSHOT`, nessun bump necessario — è già uno
+snapshot in evoluzione), installato in locale (`mvn install -DskipTests`)
+per verificare l'integrazione prima che il lead lo pubblichi davvero. 27
+nuovi test in `govpay-common` (`IuvUtilsTest` +12, `RisolutoreSegnapostoTest`
+nuovo, 4 — totale libreria 619 test verdi). In `govpay-common-pendenze`:
+rimossi `CostruttoreIdentificativiPagamento`/`RisolutorePrefissoIuv` e i
+rispettivi test (17 test), 79 totali (da 96).
+
+## 16. Ricevute e rendicontazioni (2026-09-24)
+
+**Perimetro confermato prima di implementare**: la decisione A1 del disegno
+abbandonato (`proposta-libreria-pendenze.md`) — "RPT e pagamenti non nel
+dettaglio: li richiede il consumatore" — e la conferma diretta del lead sul
+vecchio "dettaglio pendenza": caricava tutto (ricevute, rendicontazioni,
+proprietà) insieme al resto, producendo circa 200 query per una singola
+lettura. In v3 questo non deve ripetersi: `Ricevuta`/`Rendicontazione`/
+`FlussoRendicontazione` restano **fuori dall'aggregato `PosizioneDebitoria`**
+— `idPendenza` è una FK piatta (`Long`), non una relazione JPA; `Pendenza` non
+ha una collezione `@OneToMany` verso queste entità. Sono risorse indipendenti,
+interrogate solo su richiesta esplicita, tramite il nuovo
+`RicevutaRendicontazioneService` (letture soltanto — nessuna scrittura: questa
+libreria non acquisisce flussi pagoPA, lo farà un batch/consumer dedicato che
+userà i repository direttamente, senza regole di validazione da rispettare,
+il contenuto è prodotto integralmente da pagoPA).
+
+**`FlussoRendicontazione` è un'entità separata**, non incorporata per riga in
+`Rendicontazione` (a differenza di una prima ipotesi): un flusso raggruppa più
+rendicontazioni, come nel legacy (`fr`/`rendicontazioni`, FK
+`rendicontazioni.id_fr`); incorporarlo avrebbe duplicato inutilmente gli
+stessi dati di testata. `Rendicontazione.flusso` è invece una vera relazione
+JPA (`@ManyToOne`) — a differenza di `idPendenza` — perché
+`Rendicontazione`/`FlussoRendicontazione` formano una loro piccola coppia di
+aggregato, separata da `PosizioneDebitoria`.
+
+**`Ricevuta.contenuto` conserva l'XML grezzo esattamente come nel legacy**,
+non convertito in JSON. Prima ipotesi (poi corretta su indicazione esplicita
+del lead): siccome lo YAML v3 espone `Ricevuta` in forma JSON, salvare già in
+quella forma sembrava naturale. Sbagliato: l'istruzione "manteniamo il più
+possibile i formati per semplificare la migrazione" riguardava lo *storage*,
+non la forma esposta dall'API — con l'XML grezzo la migrazione dei dati
+esistenti resta una copia diretta del blob (come `rpt.xml_rt BYTEA`), mentre
+con JSON avrebbe richiesto scrivere e validare una vera conversione
+XML→JSON in fase di migrazione. La conversione in JSON per l'endpoint di
+lettura si sposta quindi a runtime, nel livello che espone
+`GET .../ricevute`, fuori da questa libreria. Nessuna gerarchia di
+entità/record tipizzati per le tre varianti (`ctRicevutaTelematica`/
+`ctReceipt`/`ctReceiptV2`): questa libreria non valida il contenuto, lo
+conserva e lo restituisce così com'è (a differenza di `DettaglioContabile`,
+che ha vere regole di business da far rispettare).
+
+**Tre bug trovati dal lead in revisione e corretti**:
+
+- **Le revisioni dello stesso flusso non erano conservabili.** Verificato in
+  `Rendicontazioni.java:718` (business layer legacy): una nuova acquisizione
+  con lo stesso `cod_dominio`+`cod_flusso` non sovrascrive la riga esistente,
+  ne inserisce una nuova con `revisione` incrementata, marcando obsoleta
+  quella precedente (`fr.obsoleto`/`fr.revisione`, vincoli `unique_fr_1`
+  `(cod_dominio,cod_flusso,data_ora_flusso)` / `unique_fr_2`
+  `(cod_dominio,cod_flusso,cod_psp,revisione)`). Il vincolo iniziale su
+  `FlussoRendicontazione`, univoco per sola coppia dominio+identificativo,
+  impediva sia di importare tutte le revisioni storiche sia di acquisirne una
+  nuova senza sovrascrivere la testata precedente. Corretto aggiungendo
+  `revisione`/`obsoleto` all'entità e sostituendo il vincolo con i due
+  equivalenti legacy; il metodo di lookup diventa
+  `findByIdDominioAndIdFlussoAndObsoletoFalse` (equivalente al legacy
+  `FrBD.getFr(dominio, flusso)`, che filtra implicitamente `obsoleto=false`).
+- **`Rendicontazione.getFlusso()` lanciava `LazyInitializationException` fuori
+  transazione.** Riprodotto dal lead. `flusso` è `@ManyToOne(fetch = LAZY)`;
+  senza un caricamento esplicito, leggerlo dopo il ritorno dal servizio
+  fallisce. I test iniziali non lo intercettavano perché la transazione di
+  test restava aperta. Corretto con `@EntityGraph(attributePaths = "flusso")`
+  su `RendicontazioneRepository.findByIdPendenza` (fetch join nella stessa
+  query, non un eager permanente sull'entità). Verificato con
+  `Hibernate.isInitialized(...)`, non con la sola lettura del campo (che il
+  bug avrebbe potuto nascondere di nuovo dentro la transazione di test).
+- **L'elenco delle ricevute caricava anche il contenuto XML di ognuna.** Lo
+  YAML v3 espone nell'elenco solo `iur`/`tipo`/`data`; il dettaglio si
+  recupera separatamente per singola ricevuta. `RicevutaRepository`
+  restituiva entità complete. Corretto con una proiezione dedicata
+  (`RicevutaElenco`, interfaccia con i tre soli accessori) e una query
+  esplicita (`findElencoByIdPendenza`) che seleziona solo quelle colonne,
+  evitando di trasferire e allocare gli XML non richiesti.
+
+8 nuovi test (87 totali, da 79): `RicevutaRendicontazioneMappingTest` (4, di
+cui una — `piuRevisioniDelloStessoFlussoCoesistono` — riproduce lo scenario
+delle revisioni multiple), `RicevutaRendicontazioneServiceTest` (4, di cui
+una — `cercaRendicontazioniInizializzaIlFlusso` — verifica il fetch join con
+`Hibernate.isInitialized`).

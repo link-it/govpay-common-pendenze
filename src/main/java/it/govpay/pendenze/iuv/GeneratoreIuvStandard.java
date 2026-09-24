@@ -9,6 +9,8 @@ import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.common.entity.DominioEntity;
 import it.govpay.common.repository.ApplicazioneRepository;
 import it.govpay.common.repository.DominioRepository;
+import it.govpay.common.utils.IuvUtils;
+import it.govpay.common.utils.RisolutoreSegnaposto;
 import it.govpay.pendenze.spi.GeneratoreIuv;
 import it.govpay.pendenze.spi.IdentificativiPagamento;
 
@@ -24,6 +26,13 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
  * fornisce usando govpay-common per le altre proprie esigenze): se assente, questa libreria
  * non prova a fornire generazione IUV, esattamente come prima di questa classe.</p>
  *
+ * <p><b>Algoritmo e sostituzione dei placeholder in {@code govpay-common}</b>: l'algoritmo
+ * pagoPA (aux digit, check digit) e la sostituzione dei placeholder del prefisso sono funzioni
+ * pure, senza alcuna dipendenza dal modello di dominio delle pendenze — vivono in
+ * {@link IuvUtils#genera}/{@link IuvUtils#convertiDaNumeroAvviso} e
+ * {@link RisolutoreSegnaposto#risolvi}, riusabili da qualunque consumatore di govpay-common
+ * senza dipendere da questa libreria.</p>
+ *
  * <p><b>Prefisso dinamico</b> (porting di {@code CustomIuv.buildPrefix}/{@code Iuv.generaIUV}):
  * il prefisso configurato sul dominio puo' contenere i placeholder {@code %(Y)}/{@code %(y)}
  * (anno a 4/2 cifre), {@code %(a)} ({@code Applicazione.codApplicazioneIuv}, cercata per
@@ -33,7 +42,7 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
  * questa libreria da sola: {@code govpay-common} non espone un'anagrafica tipo-versamento (M4),
  * quindi il valore va fornito dal chiamante tramite il parametro {@code codificaIuvTipoPendenza}
  * di {@link #genera}. Se il prefisso lo richiede e non e' stato fornito,
- * {@link RisolutorePrefissoIuv#risolvi} fallisce esplicitamente invece di propagare un
+ * {@link RisolutoreSegnaposto#risolvi} fallisce esplicitamente invece di propagare un
  * placeholder non sostituito fino a un {@link NumberFormatException} nel check digit.</p>
  */
 public class GeneratoreIuvStandard implements GeneratoreIuv {
@@ -64,14 +73,15 @@ public class GeneratoreIuvStandard implements GeneratoreIuv {
         DominioEntity dominio = trovaDominio(idDominio);
         String prefix = risolviPrefix(dominio, idA2A, codificaIuvTipoPendenza);
         long progressivo = generatoreProgressivo.prossimoValore(chiaveProgressivo(dominio, prefix));
-        return CostruttoreIdentificativiPagamento.genera(
+        IuvUtils.IdentificativiPagamento identificativi = IuvUtils.genera(
                 dominio.getAuxDigit(), prefix, dominio.getSegregationCode(), applicationCode(dominio), progressivo);
+        return new IdentificativiPagamento(identificativi.iuv(), identificativi.numeroAvviso());
     }
 
     @Override
     public IdentificativiPagamento convertiDaNumeroAvviso(Long idDominio, String numeroAvviso) {
         DominioEntity dominio = trovaDominio(idDominio);
-        String iuv = CostruttoreIdentificativiPagamento.convertiDaNumeroAvviso(
+        String iuv = IuvUtils.convertiDaNumeroAvviso(
                 numeroAvviso, dominio.getAuxDigit(), dominio.getSegregationCode(), applicationCode(dominio));
         return new IdentificativiPagamento(iuv, numeroAvviso);
     }
@@ -106,7 +116,7 @@ public class GeneratoreIuvStandard implements GeneratoreIuv {
             valori.put(CHIAVE_TIPO_PENDENZA_ALIAS, codificaIuvTipoPendenza);
         }
 
-        String prefixRisolto = RisolutorePrefissoIuv.risolvi(prefixConfigurato, valori);
+        String prefixRisolto = RisolutoreSegnaposto.risolvi(prefixConfigurato, valori);
         validaNumerico(prefixConfigurato, prefixRisolto);
         return prefixRisolto;
     }
