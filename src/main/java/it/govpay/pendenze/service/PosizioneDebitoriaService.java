@@ -6,6 +6,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,7 @@ import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.OpzionePagamentoRepository;
+import it.govpay.pendenze.repository.PendenzaRepository;
 import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
 import it.govpay.pendenze.spi.GeneratoreIuv;
 import it.govpay.pendenze.spi.IdentificativiPagamento;
@@ -46,6 +49,7 @@ public class PosizioneDebitoriaService {
 
     private final PosizioneDebitoriaRepository posizioneDebitoriaRepository;
     private final OpzionePagamentoRepository opzionePagamentoRepository;
+    private final PendenzaRepository pendenzaRepository;
     private final Clock clock;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
 
@@ -59,10 +63,11 @@ public class PosizioneDebitoriaService {
      * avviso proprio.
      */
     public PosizioneDebitoriaService(PosizioneDebitoriaRepository posizioneDebitoriaRepository,
-            OpzionePagamentoRepository opzionePagamentoRepository, Clock clock,
+            OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository, Clock clock,
             ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
+        this.pendenzaRepository = pendenzaRepository;
         this.clock = clock;
         this.generatoreIuvProvider = generatoreIuvProvider;
     }
@@ -287,6 +292,46 @@ public class PosizioneDebitoriaService {
     @Transactional(readOnly = true)
     public Optional<PosizioneDebitoria> trovaPerIdentificativo(String idA2A, String idPosizioneDebitoria) {
         return posizioneDebitoriaRepository.findByIdA2AAndIdPosizioneDebitoria(idA2A, idPosizioneDebitoria);
+    }
+
+    /**
+     * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3):
+     * {@code idDebitore} e' l'unico criterio di ricerca ammesso, oltre a {@code idA2A}. Trova
+     * la posizione se l'identificativo corrisponde a qualunque soggetto in
+     * {@code soggettiDebitori}, non solo al primo.
+     *
+     * @param idA2A      identificativo del gestionale responsabile
+     * @param idDebitore identificativo (codice fiscale/partita IVA) di un soggetto debitore
+     * @param pageable   paginazione/ordinamento richiesti (vedi {@code criteri.OffsetPageRequest}
+     *                   per la paginazione a scorrimento libero usata dallo YAML v3)
+     * @return la pagina di posizioni debitorie che rispettano il filtro
+     */
+    @Transactional(readOnly = true)
+    public Page<PosizioneDebitoria> cercaPerDebitore(String idA2A, String idDebitore, Pageable pageable) {
+        return posizioneDebitoriaRepository.findDistinctByIdA2AAndSoggettiDebitori_Identificativo(idA2A, idDebitore,
+                pageable);
+    }
+
+    /**
+     * Ricerca per numero avviso ({@code GET /pendenze/{idA2A}} dello YAML v3):
+     * {@code numeroAvviso} e' l'unico criterio di ricerca, richiesto; {@code idDominio} e' un
+     * filtro aggiuntivo opzionale, utilizzabile solo insieme a {@code numeroAvviso} (mai da
+     * solo — coerente con lo YAML). Senza {@code idDominio} puo' restituire piu' risultati,
+     * perche' lo stesso numero avviso puo' esistere legittimamente su domini diversi (M13).
+     *
+     * @param idA2A        identificativo del gestionale responsabile
+     * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA
+     * @param idDominio    dominio creditore, o {@code null} per non filtrare per dominio
+     * @param pageable     paginazione/ordinamento richiesti
+     * @return la pagina di pendenze che rispettano il filtro
+     */
+    @Transactional(readOnly = true)
+    public Page<Pendenza> cercaPendenze(String idA2A, String numeroAvviso, Long idDominio, Pageable pageable) {
+        return idDominio == null
+                ? pendenzaRepository.findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvviso(idA2A,
+                        numeroAvviso, pageable)
+                : pendenzaRepository.findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvvisoAndIdDominio(idA2A,
+                        numeroAvviso, idDominio, pageable);
     }
 
     /**

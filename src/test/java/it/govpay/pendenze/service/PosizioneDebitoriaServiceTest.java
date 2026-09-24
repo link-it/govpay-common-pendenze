@@ -15,9 +15,11 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
 import org.springframework.test.context.ActiveProfiles;
 
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
+import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
@@ -277,6 +279,107 @@ class PosizioneDebitoriaServiceTest {
 
         assertThatThrownBy(() -> service.attiva(inesistente)).isInstanceOf(RisorsaNonTrovataException.class);
         assertThatThrownBy(() -> service.annulla(inesistente)).isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
+    @DisplayName("cercaPerDebitore trova tutte le posizioni dello stesso gestionale con quel soggetto, "
+            + "non solo quelle in cui e' il primo debitore")
+    void cercaPerDebitoreTrovaLePosizioniConQuelSoggetto() {
+        PosizioneDebitoria posizioneA = new PosizioneDebitoria();
+        posizioneA.setIdA2A("A2A-CERCA-DEBITORE");
+        posizioneA.setIdPosizioneDebitoria("pos-cerca-1");
+        posizioneA.setIdDominio(1L);
+        posizioneA.setDescrizione("test");
+        posizioneA.addSoggettoDebitore(soggettoDiProva2()); // primo debitore diverso
+        posizioneA.addSoggettoDebitore(soggettoDiProva()); // debitore cercato, non il primo
+        opzioneConPendenza(posizioneA, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        service.crea(posizioneA);
+
+        PosizioneDebitoria posizioneB = new PosizioneDebitoria();
+        posizioneB.setIdA2A("A2A-CERCA-DEBITORE");
+        posizioneB.setIdPosizioneDebitoria("pos-cerca-2");
+        posizioneB.setIdDominio(1L);
+        posizioneB.setDescrizione("test");
+        posizioneB.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizioneB, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+        service.crea(posizioneB);
+
+        PosizioneDebitoria posizioneAltroDebitore = new PosizioneDebitoria();
+        posizioneAltroDebitore.setIdA2A("A2A-CERCA-DEBITORE");
+        posizioneAltroDebitore.setIdPosizioneDebitoria("pos-cerca-3");
+        posizioneAltroDebitore.setIdDominio(1L);
+        posizioneAltroDebitore.setDescrizione("test");
+        posizioneAltroDebitore.addSoggettoDebitore(soggettoDiProva2());
+        opzioneConPendenza(posizioneAltroDebitore, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "3");
+        service.crea(posizioneAltroDebitore);
+
+        Page<PosizioneDebitoria> risultato = service.cercaPerDebitore("A2A-CERCA-DEBITORE", "RSSMRA80A01H501U",
+                OffsetPageRequest.of(0, 10));
+
+        assertThat(risultato.getTotalElements()).isEqualTo(2);
+        assertThat(risultato.getContent()).extracting(PosizioneDebitoria::getIdPosizioneDebitoria)
+                .containsExactlyInAnyOrder("pos-cerca-1", "pos-cerca-2");
+    }
+
+    @Test
+    @DisplayName("cercaPerDebitore rispetta offset e limit (scorrimento libero, non a pagine allineate)")
+    void cercaPerDebitoreRispettaOffsetELimit() {
+        for (int i = 1; i <= 3; i++) {
+            PosizioneDebitoria posizione = new PosizioneDebitoria();
+            posizione.setIdA2A("A2A-PAGINAZIONE");
+            posizione.setIdPosizioneDebitoria("pos-pag-" + i);
+            posizione.setIdDominio(1L);
+            posizione.setDescrizione("test");
+            posizione.addSoggettoDebitore(soggettoDiProva());
+            opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, String.valueOf(i));
+            service.crea(posizione);
+        }
+
+        Page<PosizioneDebitoria> primaPagina = service.cercaPerDebitore("A2A-PAGINAZIONE", "RSSMRA80A01H501U",
+                OffsetPageRequest.of(0, 2));
+        Page<PosizioneDebitoria> secondaPagina = service.cercaPerDebitore("A2A-PAGINAZIONE", "RSSMRA80A01H501U",
+                OffsetPageRequest.of(2, 2));
+
+        assertThat(primaPagina.getTotalElements()).isEqualTo(3);
+        assertThat(primaPagina.getContent()).hasSize(2);
+        assertThat(secondaPagina.getContent()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("cercaPendenze senza idDominio trova pendenze con lo stesso numeroAvviso su domini diversi (M13)")
+    void cercaPendenzeSenzaIdDominioTrovaSuDominiDiversi() {
+        PosizioneDebitoria posizioneDominio1 = new PosizioneDebitoria();
+        posizioneDominio1.setIdA2A("A2A-CERCA-NAV");
+        posizioneDominio1.setIdPosizioneDebitoria("pos-nav-dominio1");
+        posizioneDominio1.setIdDominio(1L);
+        posizioneDominio1.setDescrizione("test");
+        posizioneDominio1.addSoggettoDebitore(soggettoDiProva());
+        Pendenza pendenzaDominio1 = opzioneConPendenza(posizioneDominio1, TipologiaOpzionePagamento.SOLUZIONE_UNICA,
+                "nav-1").getPendenze().get(0);
+        pendenzaDominio1.setNumeroAvviso("300000000000000001");
+        pendenzaDominio1.setIuv("300000000000000001");
+        service.crea(posizioneDominio1);
+
+        PosizioneDebitoria posizioneDominio2 = new PosizioneDebitoria();
+        posizioneDominio2.setIdA2A("A2A-CERCA-NAV");
+        posizioneDominio2.setIdPosizioneDebitoria("pos-nav-dominio2");
+        posizioneDominio2.setIdDominio(2L);
+        posizioneDominio2.setDescrizione("test");
+        posizioneDominio2.addSoggettoDebitore(soggettoDiProva());
+        Pendenza pendenzaDominio2 = opzioneConPendenza(posizioneDominio2, TipologiaOpzionePagamento.SOLUZIONE_UNICA,
+                "nav-2").getPendenze().get(0);
+        pendenzaDominio2.setNumeroAvviso("300000000000000001"); // stesso NAV, dominio diverso: M13
+        pendenzaDominio2.setIuv("300000000000000002");
+        service.crea(posizioneDominio2);
+
+        Page<Pendenza> senzaFiltroDominio = service.cercaPendenze("A2A-CERCA-NAV", "300000000000000001", null,
+                OffsetPageRequest.of(0, 10));
+        Page<Pendenza> conFiltroDominio = service.cercaPendenze("A2A-CERCA-NAV", "300000000000000001", 2L,
+                OffsetPageRequest.of(0, 10));
+
+        assertThat(senzaFiltroDominio.getTotalElements()).isEqualTo(2);
+        assertThat(conFiltroDominio.getTotalElements()).isEqualTo(1);
+        assertThat(conFiltroDominio.getContent().get(0).getIdDominio()).isEqualTo(2L);
     }
 
     // ── Fixture ──────────────────────────────────────────────────────────────
