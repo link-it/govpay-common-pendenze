@@ -1,7 +1,6 @@
 package it.govpay.pendenze.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -10,7 +9,6 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
-import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,7 +68,7 @@ class PosizioneDebitoriaMappingTest {
 
         PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
 
-        assertThat(riletta.getIdA2A()).isEqualTo("A2A-12345");
+        assertThat(riletta.getIdApplicazione()).isEqualTo(1L);
         assertThat(riletta.getIdPosizioneDebitoria()).isEqualTo("abcdef12345");
         assertThat(riletta.getDataCreazione().toInstant()).isEqualTo(ADESSO.toInstant());
         assertThat(riletta.isNotificaSend()).isFalse();
@@ -90,8 +88,8 @@ class PosizioneDebitoriaMappingTest {
 
         assertThat(opzioneLetta.getPendenze()).hasSize(1);
         Pendenza pendenzaLetta = opzioneLetta.getPendenze().get(0);
-        assertThat(pendenzaLetta.getStato()).isEqualTo(StatoPendenza.NON_ESEGUITA);
-        assertThat(pendenzaLetta.getImporto()).isEqualByComparingTo("100.50");
+        assertThat(pendenzaLetta.getStato()).isEqualTo(StatoPendenza.NON_ESEGUITO);
+        assertThat(pendenzaLetta.getImporto()).isEqualTo(100.50);
         assertThat(pendenzaLetta.getIdDominio()).isEqualTo(riletta.getIdDominio());
 
         assertThat(pendenzaLetta.getVoci()).hasSize(1);
@@ -164,44 +162,15 @@ class PosizioneDebitoriaMappingTest {
                 .containsExactly(1, 2);
     }
 
-    @Test
-    @DisplayName("IUV e NAV possono ripetersi su domini diversi, non sullo stesso dominio")
-    void unicitaIuvNavPerDominio() {
-        PosizioneDebitoria posizioneDominio1 = posizioneMinima();
-        posizioneDominio1.setIdDominio(1L);
-        collegaOpzioneUnicaConPendenza(posizioneDominio1, "300000000000000099");
-        em.persistAndFlush(posizioneDominio1);
-
-        // stesso numero avviso, dominio diverso: ammesso (M13)
-        PosizioneDebitoria posizioneDominio2 = posizioneMinima();
-        posizioneDominio2.setIdA2A("A2A-99999");
-        posizioneDominio2.setIdPosizioneDebitoria("altra-posizione");
-        posizioneDominio2.setIdDominio(2L);
-        collegaOpzioneUnicaConPendenza(posizioneDominio2, "300000000000000099");
-        em.persistAndFlush(posizioneDominio2);
-
-        // stesso numero avviso, stesso dominio: rifiutato
-        PosizioneDebitoria duplicata = posizioneMinima();
-        duplicata.setIdA2A("A2A-77777");
-        duplicata.setIdPosizioneDebitoria("posizione-duplicata");
-        duplicata.setIdDominio(1L);
-        collegaOpzioneUnicaConPendenza(duplicata, "300000000000000099");
-
-        assertThatThrownBy(() -> em.persistAndFlush(duplicata))
-                .isInstanceOf(ConstraintViolationException.class);
-    }
-
-    private void collegaOpzioneUnicaConPendenza(PosizioneDebitoria posizione, String numeroAvviso) {
-        OpzionePagamento opzione = opzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
-        Pendenza pendenza = pendenza(posizione.getIdDominio(), "pendenza-" + numeroAvviso, numeroAvviso);
-        opzione.addPendenza(pendenza);
-        pendenza.addVocePendenza(voceRiferimentoEntrata(1));
-    }
+    // L'unicita' di IUV/numeroAvviso per dominio (M13) non e' piu' un vincolo DB da
+    // verificare qui (decisione del lead, 2026-09-25: versamenti non ne ha mai avuto uno in
+    // produzione — solo un indice non univoco — il legacy la applica a livello applicativo,
+    // VER_025): il test e' ora in PosizioneDebitoriaServiceTest, dove vive il controllo
+    // (PosizioneDebitoriaService.verificaNumeroAvvisoNonDuplicato).
 
     private PosizioneDebitoria posizioneMinima() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-12345");
+        posizione.setIdApplicazione(1L);
         posizione.setIdPosizioneDebitoria("abcdef12345");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("Sanzione CdS n. abc00000");
@@ -233,13 +202,19 @@ class PosizioneDebitoriaMappingTest {
     private Pendenza pendenza(Long idDominio, String idPendenza, String numeroAvviso) {
         Pendenza pendenza = new Pendenza();
         pendenza.setIdDominio(idDominio);
+        pendenza.setIdApplicazione(1L);
         pendenza.setIdPendenza(idPendenza);
         pendenza.setIdTipoPendenza(1L);
+        pendenza.setIdTipoVersamento(1L);
         pendenza.setNumeroRata(1);
-        pendenza.setImporto(new BigDecimal("100.50"));
+        pendenza.setImporto(100.50);
         pendenza.setNumeroAvviso(numeroAvviso);
         pendenza.setIuv(numeroAvviso);
-        pendenza.setStato(StatoPendenza.NON_ESEGUITA);
+        pendenza.setSrcIuv(numeroAvviso.toUpperCase());
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
         pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         pendenza.setDataCreazione(ADESSO);
         pendenza.setDataUltimoAggiornamento(ADESSO);
@@ -253,7 +228,7 @@ class PosizioneDebitoriaMappingTest {
     private VocePendenza voceRiferimentoEntrataConIndice(int indice) {
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza("voce-" + indice);
-        voce.setImporto(new BigDecimal("100.50"));
+        voce.setImporto(100.50);
         voce.setDescrizione("Sanzione CdS n. abc00000");
         voce.setIndice(indice);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);

@@ -119,12 +119,12 @@ class ValidatorePosizioneDebitoriaTest {
         // Due voci da 0.005 sommano esattamente 0.01 in memoria (compareTo lo accetterebbe),
         // ma ciascuna verrebbe arrotondata a 0.01 dal database (colonna NUMERIC(19,2)):
         // alla rilettura la somma sarebbe 0.02, non più coerente con l'importo della pendenza.
-        pendenza.setImporto(new BigDecimal("0.01"));
+        pendenza.setImporto(0.01);
         VocePendenza prima = pendenza.getVoci().get(0);
-        prima.setImporto(new BigDecimal("0.005"));
+        prima.setImporto(0.005);
         VocePendenza seconda = new VocePendenza();
         seconda.setIdVocePendenza("voce-extra");
-        seconda.setImporto(new BigDecimal("0.005"));
+        seconda.setImporto(0.005);
         seconda.setDescrizione("test");
         seconda.setIndice(2);
         seconda.setStato(StatoVocePendenza.NON_ESEGUITO);
@@ -142,7 +142,7 @@ class ValidatorePosizioneDebitoriaTest {
     void importoNonCoerenteConLeVoci() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
         posizione.getOpzioniPagamento().get(0).getPendenze().get(0)
-                .getVoci().get(0).setImporto(new BigDecimal("999.99"));
+                .getVoci().get(0).setImporto(999.99);
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class)
@@ -235,6 +235,28 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
+    @DisplayName("rifiuta due pendenze della stessa richiesta con lo stesso numeroAvviso, prima di qualunque accesso al DB")
+    void dueNumeriAvvisoUgualiNellaStessaRichiesta() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setNumeroAvviso("300000000000000001");
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(1).setNumeroAvviso("300000000000000001");
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("stesso numeroAvviso");
+    }
+
+    @Test
+    @DisplayName("numeriAvviso diversi nella stessa richiesta sono accettati")
+    void numeriAvvisoDiversiNellaStessaRichiesta() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setNumeroAvviso("300000000000000001");
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(1).setNumeroAvviso("300000000000000002");
+
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("notificaSend attivo con una voce che ha gia' SPESE_NOTIFICA e' rifiutato (doppio addebito)")
     void notificaSendConSpeseNotificaGiaPresente() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
@@ -254,7 +276,7 @@ class ValidatorePosizioneDebitoriaTest {
 
     private PosizioneDebitoria posizioneValida(TipologiaOpzionePagamento tipologia, int numeroPendenze) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-1");
+        posizione.setIdApplicazione(1L);
         posizione.setIdPosizioneDebitoria("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -271,12 +293,12 @@ class ValidatorePosizioneDebitoriaTest {
         for (int i = 1; i <= numeroPendenze; i++) {
             Pendenza pendenza = new Pendenza();
             pendenza.setIdPendenza("pendenza-" + i);
-            pendenza.setImporto(new BigDecimal("10.00"));
+            pendenza.setImporto(10.00);
             opzione.addPendenza(pendenza);
 
             VocePendenza voce = new VocePendenza();
             voce.setIdVocePendenza("voce-" + i);
-            voce.setImporto(new BigDecimal("10.00"));
+            voce.setImporto(10.00);
             voce.setDescrizione("test");
             voce.setIndice(1);
             voce.setStato(StatoVocePendenza.NON_ESEGUITO);

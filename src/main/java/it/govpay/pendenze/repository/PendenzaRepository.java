@@ -36,29 +36,32 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
      * {@link #findByIdDominioAndNumeroAvviso}, qui {@code idDominio} e' assente: puo'
      * restituire piu' risultati, perche' lo stesso numero avviso puo' legittimamente esistere
      * su domini diversi (M13 — unicita' per dominio, non globale). Filtrata per
-     * {@code idA2A} (il gestionale proprietario), non solo per numero avviso, altrimenti un
-     * gestionale potrebbe vedere pendenze di un altro indovinando un NAV.
+     * {@code idApplicazione} (il gestionale proprietario, risolto da {@code idA2A} dal
+     * chiamante — vedi Javadoc di {@link PosizioneDebitoriaRepository}), non solo per numero
+     * avviso, altrimenti un gestionale potrebbe vedere pendenze di un altro indovinando un NAV.
+     * {@code Pendenza.idApplicazione} coincide con quella della sua {@code Pendenza} stessa
+     * ora che entrambe vivono su {@code versamenti}: filtra direttamente su
+     * {@code idApplicazione}, non piu' passando per {@code opzionePagamento}.
      *
-     * @param idA2A        identificativo del gestionale responsabile
-     * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA
-     * @param pageable     paginazione e ordinamento richiesti
+     * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
+     * @param numeroAvviso   NAV: identificativo dell'avviso di pagamento pagoPA
+     * @param pageable       paginazione e ordinamento richiesti
      * @return la pagina di pendenze che rispettano il filtro
      */
-    Page<Pendenza> findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvviso(String idA2A, String numeroAvviso,
-            Pageable pageable);
+    Page<Pendenza> findByIdApplicazioneAndNumeroAvviso(Long idApplicazione, String numeroAvviso, Pageable pageable);
 
     /**
-     * Come {@link #findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvviso}, con il
-     * filtro aggiuntivo opzionale {@code idDominio} previsto dallo YAML v3 (utilizzabile solo
-     * insieme a {@code numeroAvviso}, mai da solo): restringe a una sola pendenza, dato il
-     * vincolo di unicita' per dominio.
+     * Come {@link #findByIdApplicazioneAndNumeroAvviso}, con il filtro aggiuntivo opzionale
+     * {@code idDominio} previsto dallo YAML v3 (utilizzabile solo insieme a
+     * {@code numeroAvviso}, mai da solo): restringe a una sola pendenza, dato il vincolo di
+     * unicita' per dominio.
      *
-     * @param idA2A        identificativo del gestionale responsabile
-     * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA
-     * @param idDominio    dominio creditore
-     * @param pageable     paginazione e ordinamento richiesti
+     * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
+     * @param numeroAvviso   NAV: identificativo dell'avviso di pagamento pagoPA
+     * @param idDominio      dominio creditore
+     * @param pageable       paginazione e ordinamento richiesti
      * @return la pagina di pendenze che rispettano il filtro (al piu' una)
      */
-    Page<Pendenza> findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvvisoAndIdDominio(String idA2A,
-            String numeroAvviso, Long idDominio, Pageable pageable);
+    Page<Pendenza> findByIdApplicazioneAndNumeroAvvisoAndIdDominio(Long idApplicazione, String numeroAvviso,
+            Long idDominio, Pageable pageable);
 }

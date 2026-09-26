@@ -2,21 +2,26 @@ package it.govpay.pendenze.service;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import it.govpay.common.entity.ApplicazioneEntity;
+import it.govpay.common.repository.ApplicazioneRepository;
 import it.govpay.pendenze.criteri.PaginaRisultati;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
+import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
@@ -51,6 +56,7 @@ public class PosizioneDebitoriaService {
     private final PosizioneDebitoriaRepository posizioneDebitoriaRepository;
     private final OpzionePagamentoRepository opzionePagamentoRepository;
     private final PendenzaRepository pendenzaRepository;
+    private final ApplicazioneRepository applicazioneRepository;
     private final Clock clock;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
 
@@ -64,13 +70,42 @@ public class PosizioneDebitoriaService {
      * avviso proprio.
      */
     public PosizioneDebitoriaService(PosizioneDebitoriaRepository posizioneDebitoriaRepository,
-            OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository, Clock clock,
+            OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository,
+            ApplicazioneRepository applicazioneRepository, Clock clock,
             ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
         this.pendenzaRepository = pendenzaRepository;
+        this.applicazioneRepository = applicazioneRepository;
         this.clock = clock;
         this.generatoreIuvProvider = generatoreIuvProvider;
+    }
+
+    /**
+     * Risolve {@code idA2A} (= {@code Applicazione.codApplicazione}, confermato dal lead,
+     * 2026-09-24) da {@link PosizioneDebitoria#getIdApplicazione()}: da quando
+     * {@code PosizioneDebitoria} e' mappata su {@code documenti}, non esiste piu' una
+     * colonna {@code idA2A} propria — solo la FK piatta verso l'anagrafica esterna (M4).
+     */
+    private String risolviIdA2A(Long idApplicazione) {
+        return applicazioneRepository.findById(idApplicazione)
+                .map(ApplicazioneEntity::getCodApplicazione)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Applicazione [id:" + idApplicazione + "] non trovata in anagrafica"));
+    }
+
+    /**
+     * Risoluzione inversa di {@link #risolviIdA2A}, per i metodi di ricerca che ricevono
+     * {@code idA2A} dal chiamante esterno (contratto pubblico invariato) ma devono
+     * interrogare i repository per {@code idApplicazione} (l'unica FK persistita — vedi
+     * nota di classe di {@link it.govpay.pendenze.repository.PosizioneDebitoriaRepository}).
+     * A differenza di {@link #risolviIdA2A} (percorso di scrittura, dove un'applicazione
+     * ignota e' un errore di configurazione) qui un {@code idA2A} sconosciuto e' un caso
+     * legittimo di ricerca: il chiamante ottiene semplicemente nessun risultato, non
+     * un'eccezione.
+     */
+    private Optional<Long> risolviIdApplicazione(String idA2A) {
+        return applicazioneRepository.findByCodApplicazione(idA2A).map(ApplicazioneEntity::getId);
     }
 
     /**
@@ -118,8 +153,23 @@ public class PosizioneDebitoriaService {
      *                                          e la coppia IUV/numero avviso parziale)
      * @throws IllegalStateException se una pendenza e' priva sia di IUV sia di numero
      *                                avviso e non e' disponibile un {@link GeneratoreIuv}
+     * @throws RisorsaGiaEsistenteException se esiste gia' una posizione con lo stesso
+     *                                {@code idA2A}+{@code idPosizioneDebitoria} (bug del
+     *                                lead, 2026-09-26: senza questo controllo, due posizioni
+     *                                con la stessa chiave logica ma dominio diverso vengono
+     *                                create entrambe — il vincolo DB reale su
+     *                                {@code documenti} include anche {@code id_dominio},
+     *                                mentre la ricerca pubblica per identificativo
+     *                                ({@code trovaPerIdentificativo}) e il 409 dello YAML v3
+     *                                sono chiavati solo su {@code idA2A}+{@code idPosizioneDebitoria})
      */
     public PosizioneDebitoria crea(PosizioneDebitoria posizione) {
+        if (posizioneDebitoriaRepository.existsByIdApplicazioneAndIdPosizioneDebitoria(
+                posizione.getIdApplicazione(), posizione.getIdPosizioneDebitoria())) {
+            throw new RisorsaGiaEsistenteException(
+                    "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
+                            + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
+        }
         ValidatorePosizioneDebitoria.valida(posizione);
         assegnaIndici(posizione);
 
@@ -157,7 +207,21 @@ public class PosizioneDebitoriaService {
 
         assegnaOValidaNavNotifica(posizione);
 
-        return posizioneDebitoriaRepository.save(posizione);
+        try {
+            return posizioneDebitoriaRepository.save(posizione);
+        } catch (DataIntegrityViolationException e) {
+            // Rete di sicurezza contro le creazioni concorrenti (bug del lead, 2026-09-26):
+            // il controllo existsBy... sopra e' un check-then-act, non atomico — due richieste
+            // concorrenti con lo stesso idA2A+idPosizioneDebitoria possono superarlo entrambe.
+            // La garanzia reale e' il vincolo DB unique_documenti_applicazione (migrazione
+            // 01_documenti.sql, cod_documento+id_applicazione senza id_dominio, per far
+            // corrispondere l'identita' pubblica al vincolo): qui se ne traduce la violazione
+            // nella stessa eccezione del controllo esplicito, cosi' il chiamante vede sempre
+            // RisorsaGiaEsistenteException e non un'eccezione di persistenza generica.
+            throw new RisorsaGiaEsistenteException(
+                    "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
+                            + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
+        }
     }
 
     /**
@@ -190,6 +254,10 @@ public class PosizioneDebitoriaService {
         boolean iuvAssente = pendenza.getIuv() == null;
         boolean numeroAvvisoAssente = pendenza.getNumeroAvviso() == null;
 
+        if (!numeroAvvisoAssente) {
+            verificaNumeroAvvisoNonDuplicato(posizione, pendenza);
+        }
+
         if (iuvAssente && numeroAvvisoAssente) {
             IdentificativiPagamento identificativi = generaIdentificativi(posizione, pendenza);
             pendenza.setIuv(identificativi.iuv());
@@ -204,6 +272,28 @@ public class PosizioneDebitoriaService {
         }
     }
 
+    /**
+     * Replica {@code VER_025} del legacy (business layer, {@code Versamento.java:184-189}):
+     * quando il chiamante fornisce {@code numeroAvviso}, verifica che nessun'altra pendenza
+     * dello stesso dominio lo usi gia' prima di inserire. Controllo applicativo, non un
+     * vincolo DB — il legacy stesso non ne ha mai avuto uno su {@code versamenti}
+     * (verificato: solo un indice non univoco su {@code iuv_versamento, id_dominio}, mai
+     * dichiarato {@code UNIQUE}), fa esattamente cosi'. Decisione del lead, 2026-09-25:
+     * nessun vincolo {@code UNIQUE} nuovo su {@code versamenti}, coerente con "minimizza le
+     * variazioni al DB" — IUV/numeroAvviso generati da {@link GeneratoreIuv} non passano da
+     * qui, la loro unicita' e' gia' garantita per costruzione dal progressivo atomico.
+     */
+    private void verificaNumeroAvvisoNonDuplicato(PosizioneDebitoria posizione, Pendenza pendenza) {
+        pendenzaRepository.findByIdDominioAndNumeroAvviso(posizione.getIdDominio(), pendenza.getNumeroAvviso())
+                .ifPresent(esistente -> {
+                    throw new ValidazioneNonSuperataException(
+                            "la pendenza [" + pendenza.getIdPendenza() + "] ha numeroAvviso ["
+                                    + pendenza.getNumeroAvviso()
+                                    + "] gia' usato da un'altra pendenza dello stesso dominio ["
+                                    + esistente.getIdPendenza() + "]");
+                });
+    }
+
     private IdentificativiPagamento generaIdentificativi(PosizioneDebitoria posizione, Pendenza pendenza) {
         GeneratoreIuv generatore = generatoreIuvProvider.getIfAvailable();
         if (generatore == null) {
@@ -211,8 +301,8 @@ public class PosizioneDebitoriaService {
                     "la pendenza [" + pendenza.getIdPendenza() + "] e' priva di IUV/numero avviso e nessun "
                             + GeneratoreIuv.class.getSimpleName() + " e' configurato nel contesto");
         }
-        return generatore.genera(posizione.getIdDominio(), posizione.getIdA2A(), pendenza.getIdPendenza(),
-                pendenza.getCodificaIuvTipoPendenza());
+        return generatore.genera(posizione.getIdDominio(), risolviIdA2A(posizione.getIdApplicazione()),
+                pendenza.getIdPendenza(), pendenza.getCodificaIuvTipoPendenza());
     }
 
     private IdentificativiPagamento convertiNumeroAvviso(PosizioneDebitoria posizione, Pendenza pendenza) {
@@ -292,7 +382,9 @@ public class PosizioneDebitoriaService {
      */
     @Transactional(readOnly = true)
     public Optional<PosizioneDebitoria> trovaPerIdentificativo(String idA2A, String idPosizioneDebitoria) {
-        return posizioneDebitoriaRepository.findByIdA2AAndIdPosizioneDebitoria(idA2A, idPosizioneDebitoria);
+        return risolviIdApplicazione(idA2A)
+                .flatMap(idApplicazione -> posizioneDebitoriaRepository
+                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria));
     }
 
     /**
@@ -309,8 +401,12 @@ public class PosizioneDebitoriaService {
      */
     @Transactional(readOnly = true)
     public PaginaRisultati<PosizioneDebitoria> cercaPerDebitore(String idA2A, String idDebitore, Pageable pageable) {
-        return paginaDa(posizioneDebitoriaRepository.findDistinctByIdA2AAndSoggettiDebitori_Identificativo(idA2A,
-                idDebitore, pageable), pageable);
+        Optional<Long> idApplicazione = risolviIdApplicazione(idA2A);
+        if (idApplicazione.isEmpty()) {
+            return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
+        }
+        return paginaDa(posizioneDebitoriaRepository.findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(
+                idApplicazione.get(), idDebitore, pageable), pageable);
     }
 
     /**
@@ -329,11 +425,15 @@ public class PosizioneDebitoriaService {
     @Transactional(readOnly = true)
     public PaginaRisultati<Pendenza> cercaPendenze(String idA2A, String numeroAvviso, Long idDominio,
             Pageable pageable) {
+        Optional<Long> idApplicazioneOpt = risolviIdApplicazione(idA2A);
+        if (idApplicazioneOpt.isEmpty()) {
+            return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
+        }
+        Long idApplicazione = idApplicazioneOpt.get();
         Page<Pendenza> pagina = idDominio == null
-                ? pendenzaRepository.findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvviso(idA2A,
-                        numeroAvviso, pageable)
-                : pendenzaRepository.findByOpzionePagamento_PosizioneDebitoria_IdA2AAndNumeroAvvisoAndIdDominio(idA2A,
-                        numeroAvviso, idDominio, pageable);
+                ? pendenzaRepository.findByIdApplicazioneAndNumeroAvviso(idApplicazione, numeroAvviso, pageable)
+                : pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndIdDominio(idApplicazione, numeroAvviso,
+                        idDominio, pageable);
         return paginaDa(pagina, pageable);
     }
 

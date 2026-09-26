@@ -2,7 +2,7 @@ package it.govpay.pendenze.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -17,10 +17,15 @@ import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.transaction.TestTransaction;
 
+import it.govpay.common.entity.DominioEntity;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
@@ -29,7 +34,7 @@ import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.Rendicontazione;
-import it.govpay.pendenze.entity.Ricevuta;
+import it.govpay.pendenze.entity.Rpt;
 import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoFlussoRendicontazione;
@@ -37,16 +42,29 @@ import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoRendicontazione;
 import it.govpay.pendenze.model.StatoVocePendenza;
-import it.govpay.pendenze.model.TipoRicevuta;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.RicevutaElenco;
+import it.govpay.pendenze.spi.GeneratoreIuv;
+import it.govpay.pendenze.spi.IdentificativiPagamento;
 
+/**
+ * {@code DominioRepository} e' inclusa nella scansione (a differenza degli altri test di
+ * servizio) perche' {@link RicevutaRendicontazioneService} la usa davvero per risolvere
+ * {@code codDominio} (vedi Javadoc di classe del servizio). Per evitare che questo attivi
+ * {@code PendenzeAutoConfiguration#generatoreIuvStandard} (che richiederebbe l'intera catena
+ * di {@code GeneratoreProgressivoIuv}/{@code AllocatoreBloccoProgressivoIuv}, inutile qui),
+ * {@link Config} registra un {@link GeneratoreIuv} fittizio: soddisfa
+ * {@code @ConditionalOnMissingBean(GeneratoreIuv.class)} senza che nessun test di questa
+ * classe lo invochi mai.
+ */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(PendenzeAutoConfiguration.class)
-@Import(RicevutaRendicontazioneService.class)
+@Import({RicevutaRendicontazioneService.class, RicevutaRendicontazioneServiceTest.Config.class})
+@EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})
+@EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"})
 @ActiveProfiles("test")
 class RicevutaRendicontazioneServiceTest {
 
@@ -62,8 +80,9 @@ class RicevutaRendicontazioneServiceTest {
     @Test
     @DisplayName("cercaRicevute trova solo le ricevute della pendenza richiesta, rispettando la paginazione")
     void cercaRicevute() {
-        Pendenza pendenzaA = pendenzaPersistita("pend-a");
-        Pendenza pendenzaB = pendenzaPersistita("pend-b");
+        Long idDominio = dominioPersistito("DOM-CERCA-RICEVUTE");
+        Pendenza pendenzaA = pendenzaPersistita("pend-a", idDominio);
+        Pendenza pendenzaB = pendenzaPersistita("pend-b", idDominio);
         ricevutaPersistita(pendenzaA, "iur-1");
         ricevutaPersistita(pendenzaA, "iur-2");
         ricevutaPersistita(pendenzaB, "iur-3");
@@ -75,24 +94,43 @@ class RicevutaRendicontazioneServiceTest {
     }
 
     @Test
-    @DisplayName("trovaRicevuta trova per idPendenza+iur, Optional vuoto se non esiste")
-    void trovaRicevuta() {
-        Pendenza pendenza = pendenzaPersistita("pend-trova");
-        ricevutaPersistita(pendenza, "iur-trova");
+    @DisplayName("cercaRicevute esclude le rpt per cui la ricevuta non e' ancora arrivata")
+    void cercaRicevuteEsclusePrimaDellaRicevuta() {
+        Long idDominio = dominioPersistito("DOM-ATTESA");
+        Pendenza pendenza = pendenzaPersistita("pend-attesa", idDominio);
+        ricevutaPersistita(pendenza, "iur-arrivata");
+        rptSenzaRicevutaPersistita(pendenza, "iur-in-attesa");
 
-        Optional<Ricevuta> trovata = service.trovaRicevuta(pendenza.getId(), "iur-trova");
-        Optional<Ricevuta> nonTrovata = service.trovaRicevuta(pendenza.getId(), "iur-inesistente");
+        PaginaRisultati<RicevutaElenco> pagina = service.cercaRicevute(pendenza.getId(), OffsetPageRequest.of(0, 10));
+
+        assertThat(pagina.numeroRisultatiTotali()).isEqualTo(1);
+        assertThat(pagina.risultati()).extracting(RicevutaElenco::getIur).containsExactly("iur-arrivata");
+    }
+
+    @Test
+    @DisplayName("trovaRicevuta trova per idPendenza+iur, Optional vuoto se non esiste o se la ricevuta non e' ancora arrivata")
+    void trovaRicevuta() {
+        Long idDominio = dominioPersistito("DOM-TROVA");
+        Pendenza pendenza = pendenzaPersistita("pend-trova", idDominio);
+        ricevutaPersistita(pendenza, "iur-trova");
+        rptSenzaRicevutaPersistita(pendenza, "iur-in-attesa");
+
+        Optional<Rpt> trovata = service.trovaRicevuta(pendenza.getId(), "iur-trova");
+        Optional<Rpt> nonTrovata = service.trovaRicevuta(pendenza.getId(), "iur-inesistente");
+        Optional<Rpt> nonAncoraArrivata = service.trovaRicevuta(pendenza.getId(), "iur-in-attesa");
 
         assertThat(trovata).isPresent();
         assertThat(nonTrovata).isEmpty();
+        assertThat(nonAncoraArrivata).isEmpty();
     }
 
     @Test
     @DisplayName("cercaRendicontazioni trova solo le rendicontazioni della pendenza richiesta")
     void cercaRendicontazioni() {
-        Pendenza pendenzaA = pendenzaPersistita("pend-rend-a");
-        Pendenza pendenzaB = pendenzaPersistita("pend-rend-b");
-        FlussoRendicontazione flusso = flussoPersistito("flusso-cerca");
+        Long idDominio = dominioPersistito("DOM-CERCA-REND");
+        Pendenza pendenzaA = pendenzaPersistita("pend-rend-a", idDominio);
+        Pendenza pendenzaB = pendenzaPersistita("pend-rend-b", idDominio);
+        FlussoRendicontazione flusso = flussoPersistito("flusso-cerca", idDominio, "DOM-CERCA-REND");
         rendicontazionePersistita(pendenzaA, flusso, "iur-r1");
         rendicontazionePersistita(pendenzaB, flusso, "iur-r2");
 
@@ -104,11 +142,40 @@ class RicevutaRendicontazioneServiceTest {
     }
 
     @Test
+    @DisplayName("cercaRendicontazioni non restituisce le rendicontazioni di un altro dominio con lo stesso IUV")
+    void cercaRendicontazioniNonAttraversaIDomini() {
+        Long idDominioA = dominioPersistito("DOMINIO_A");
+        Long idDominioB = dominioPersistito("DOMINIO_B");
+
+        Pendenza pendenzaA = pendenzaPersistita("pend-dom-a", idDominioA);
+        Pendenza pendenzaB = pendenzaPersistita("pend-dom-b", idDominioB);
+        // Stesso IUV su due domini diversi: legittimo, l'unicita' e' solo per dominio.
+        pendenzaA.setIuv("300000000000000099");
+        pendenzaA.setSrcIuv(pendenzaA.getIuv());
+        pendenzaB.setIuv("300000000000000099");
+        pendenzaB.setSrcIuv(pendenzaB.getIuv());
+        em.persistAndFlush(pendenzaA);
+        em.persistAndFlush(pendenzaB);
+
+        FlussoRendicontazione flussoA = flussoPersistito("flusso-dom-a", idDominioA, "DOMINIO_A");
+        FlussoRendicontazione flussoB = flussoPersistito("flusso-dom-b", idDominioB, "DOMINIO_B");
+        rendicontazionePersistita(pendenzaA, flussoA, "iur-dom-a");
+        rendicontazionePersistita(pendenzaB, flussoB, "iur-dom-b");
+
+        PaginaRisultati<Rendicontazione> pagina = service.cercaRendicontazioni(pendenzaA.getId(),
+                OffsetPageRequest.of(0, 10));
+
+        assertThat(pagina.numeroRisultatiTotali()).isEqualTo(1);
+        assertThat(pagina.risultati().get(0).getIur()).isEqualTo("iur-dom-a");
+    }
+
+    @Test
     @DisplayName("il flusso di una rendicontazione è già inizializzato dopo la ricerca tramite il servizio, "
             + "in una transazione diversa da quella di preparazione")
     void cercaRendicontazioniInizializzaIlFlusso() {
-        Pendenza pendenza = pendenzaPersistita("pend-init-flusso");
-        FlussoRendicontazione flusso = flussoPersistito("flusso-init");
+        Long idDominio = dominioPersistito("DOM-INIT-FLUSSO");
+        Pendenza pendenza = pendenzaPersistita("pend-init-flusso", idDominio);
+        FlussoRendicontazione flusso = flussoPersistito("flusso-init", idDominio, "DOM-INIT-FLUSSO");
         rendicontazionePersistita(pendenza, flusso, "iur-init");
         Long idPendenza = pendenza.getId();
 
@@ -126,33 +193,61 @@ class RicevutaRendicontazioneServiceTest {
         Rendicontazione trovata = pagina.risultati().get(0);
 
         assertThat(Hibernate.isInitialized(trovata.getFlusso())).isTrue();
-        assertThat(trovata.getFlusso().getIdFlusso()).isEqualTo("flusso-init");
+        assertThat(trovata.getFlusso().getCodFlusso()).isEqualTo("flusso-init");
     }
 
     // ── Fixture ──────────────────────────────────────────────────────────────
 
-    private Ricevuta ricevutaPersistita(Pendenza pendenza, String iur) {
-        Ricevuta ricevuta = new Ricevuta();
-        ricevuta.setIdPendenza(pendenza.getId());
-        ricevuta.setIur(iur);
-        ricevuta.setTipo(TipoRicevuta.CT_RECEIPT_V2);
-        ricevuta.setData(ADESSO);
-        ricevuta.setContenuto("<Receipt/>");
-        em.persistAndFlush(ricevuta);
-        return ricevuta;
+    private Long dominioPersistito(String codDominio) {
+        DominioEntity dominio = new DominioEntity();
+        dominio.setCodDominio(codDominio);
+        dominio.setAbilitato(true);
+        dominio.setRagioneSociale("Ente di prova " + codDominio);
+        dominio.setAuxDigit(1);
+        dominio.setIntermediato(false);
+        dominio.setScaricaFr(false);
+        em.persistAndFlush(dominio);
+        return dominio.getId();
     }
 
-    private FlussoRendicontazione flussoPersistito(String idFlusso) {
+    private Rpt ricevutaPersistita(Pendenza pendenza, String iur) {
+        Rpt rpt = new Rpt();
+        rpt.setIdVersamento(pendenza.getId());
+        rpt.setIuv(pendenza.getIuv());
+        rpt.setIur(iur);
+        rpt.setCodDominio("DOMINIO_1");
+        rpt.setXmlRt("<Receipt/>".getBytes(StandardCharsets.UTF_8));
+        rpt.setDataMsgRicevuta(ADESSO);
+        rpt.setVersione("RPTV2_RTV1");
+        em.persistAndFlush(rpt);
+        return rpt;
+    }
+
+    /** RPT (richiesta di pagamento) inviata, ricevuta non ancora acquisita. */
+    private Rpt rptSenzaRicevutaPersistita(Pendenza pendenza, String iur) {
+        Rpt rpt = new Rpt();
+        rpt.setIdVersamento(pendenza.getId());
+        rpt.setIuv(pendenza.getIuv());
+        rpt.setIur(iur);
+        rpt.setCodDominio("DOMINIO_1");
+        rpt.setVersione("RPTV2_RTV1");
+        em.persistAndFlush(rpt);
+        return rpt;
+    }
+
+    private FlussoRendicontazione flussoPersistito(String codFlusso, Long idDominio, String codDominio) {
         FlussoRendicontazione flusso = new FlussoRendicontazione();
-        flusso.setIdDominio(1L);
-        flusso.setIdFlusso(idFlusso);
-        flusso.setDataFlusso(ADESSO);
-        flusso.setTrn("trn");
+        flusso.setIdDominio(idDominio);
+        flusso.setCodDominio(codDominio);
+        flusso.setCodFlusso(codFlusso);
+        flusso.setDataOraFlusso(ADESSO);
+        flusso.setIur("flusso-iur-" + codFlusso);
+        flusso.setDataAcquisizione(ADESSO);
         flusso.setDataRegolamento(ADESSO);
-        flusso.setIdPsp("PSP-1");
-        flusso.setNumeroPagamenti(1);
-        flusso.setImportoTotale(new BigDecimal("10.00"));
-        flusso.setStato(StatoFlussoRendicontazione.ACQUISITO);
+        flusso.setCodPsp("PSP-1");
+        flusso.setNumeroPagamenti(1L);
+        flusso.setImportoTotale(10.00);
+        flusso.setStato(StatoFlussoRendicontazione.ACCETTATA);
         flusso.setRevisione(1L);
         flusso.setObsoleto(false);
         em.persistAndFlush(flusso);
@@ -161,23 +256,22 @@ class RicevutaRendicontazioneServiceTest {
 
     private Rendicontazione rendicontazionePersistita(Pendenza pendenza, FlussoRendicontazione flusso, String iur) {
         Rendicontazione rendicontazione = new Rendicontazione();
-        rendicontazione.setIdPendenza(pendenza.getId());
         rendicontazione.setFlusso(flusso);
         rendicontazione.setIuv(pendenza.getIuv());
         rendicontazione.setIur(iur);
-        rendicontazione.setImporto(new BigDecimal("10.00"));
+        rendicontazione.setImportoPagato(10.00);
         rendicontazione.setEsito(0);
-        rendicontazione.setData(LocalDate.of(2026, 6, 10));
+        rendicontazione.setData(ADESSO);
         rendicontazione.setStato(StatoRendicontazione.OK);
         em.persistAndFlush(rendicontazione);
         return rendicontazione;
     }
 
-    private Pendenza pendenzaPersistita(String idPendenza) {
+    private Pendenza pendenzaPersistita(String idPendenza, Long idDominio) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-RIC-REND-SVC");
+        posizione.setIdApplicazione(1L);
         posizione.setIdPosizioneDebitoria("pos-" + idPendenza + "-" + UUID.randomUUID().toString().substring(0, 8));
-        posizione.setIdDominio(1L);
+        posizione.setIdDominio(idDominio);
         posizione.setDescrizione("test");
         posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
@@ -198,14 +292,20 @@ class RicevutaRendicontazioneServiceTest {
         posizione.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
-        pendenza.setIdDominio(1L);
+        pendenza.setIdDominio(idDominio);
         pendenza.setIdPendenza(idPendenza);
         pendenza.setIdTipoPendenza(1L);
         pendenza.setNumeroRata(1);
-        pendenza.setImporto(new BigDecimal("10.00"));
+        pendenza.setImporto(10.00);
+        pendenza.setIdApplicazione(1L);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
         pendenza.setNumeroAvviso("30000000000000" + String.format("%04d", Math.abs(idPendenza.hashCode() % 10000)));
         pendenza.setIuv(pendenza.getNumeroAvviso());
-        pendenza.setStato(StatoPendenza.NON_ESEGUITA);
+        pendenza.setSrcIuv(pendenza.getIuv());
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
         pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         pendenza.setDataCreazione(ADESSO);
         pendenza.setDataUltimoAggiornamento(ADESSO);
@@ -213,7 +313,7 @@ class RicevutaRendicontazioneServiceTest {
 
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza("voce-" + idPendenza);
-        voce.setImporto(new BigDecimal("10.00"));
+        voce.setImporto(10.00);
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
@@ -223,5 +323,24 @@ class RicevutaRendicontazioneServiceTest {
 
         em.persistAndFlush(posizione);
         return pendenza;
+    }
+
+    @TestConfiguration
+    static class Config {
+        @Bean
+        GeneratoreIuv generatoreIuv() {
+            return new GeneratoreIuv() {
+                @Override
+                public IdentificativiPagamento genera(Long idDominio, String idA2A, String idPendenza,
+                        String codificaIuvTipoPendenza) {
+                    throw new UnsupportedOperationException("mai invocato dai test di questa classe");
+                }
+
+                @Override
+                public IdentificativiPagamento convertiDaNumeroAvviso(Long idDominio, String numeroAvviso) {
+                    throw new UnsupportedOperationException("mai invocato dai test di questa classe");
+                }
+            };
+        }
     }
 }

@@ -1,22 +1,31 @@
 package it.govpay.pendenze.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+
+import it.govpay.common.repository.DominioRepository;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
+import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
@@ -25,6 +34,7 @@ import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
+import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
@@ -46,6 +56,9 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(PendenzeAutoConfiguration.class)
 @Import(PosizioneDebitoriaService.class)
+@EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})
+@EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"},
+        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = DominioRepository.class))
 @ActiveProfiles("test")
 class PosizioneDebitoriaServiceTest {
 
@@ -54,6 +67,17 @@ class PosizioneDebitoriaServiceTest {
 
     @Autowired
     private PosizioneDebitoriaService service;
+
+    private final Map<String, Long> applicazioni = new HashMap<>();
+
+    private Long idApplicazionePer(String codApplicazione) {
+        return applicazioni.computeIfAbsent(codApplicazione, cod -> {
+            ApplicazioneEntity applicazione = ApplicazioneEntity.builder()
+                    .codApplicazione(cod).autoIuv(true).firmaRicevuta("N").trusted(true).build();
+            em.persistAndFlush(applicazione);
+            return applicazione.getId();
+        });
+    }
 
     @Test
     @DisplayName("crea valorizza audit e marcatura ACA su tutta la gerarchia, genera l'UUID dell'opzione")
@@ -77,7 +101,7 @@ class PosizioneDebitoriaServiceTest {
     @DisplayName("attiva porta ad ATTIVATA, annulla automaticamente le altre DISPONIBILI e marca ACA su entrambe")
     void attivaAnnullaLeAlternativeEMarcaAca() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-1");
+        posizione.setIdApplicazione(idApplicazionePer("A2A-1"));
         posizione.setIdPosizioneDebitoria("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -170,7 +194,7 @@ class PosizioneDebitoriaServiceTest {
     @DisplayName("crea assegna numeroRata e ordine dalla posizione nelle liste, non li lascia a 0")
     void creaAssegnaNumeroRataEOrdine() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-indici");
+        posizione.setIdApplicazione(idApplicazionePer("A2A-indici"));
         posizione.setIdPosizioneDebitoria("pos-indici");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -197,8 +221,8 @@ class PosizioneDebitoriaServiceTest {
         // aggiunte nello stesso modo (addVocePendenza), per riprodurre esattamente il caso
         // segnalato — entrambe partirebbero da indice 0 senza il fix.
         pendenza.getVoci().clear();
-        pendenza.addVocePendenza(voceDiProva("voce-a", new BigDecimal("5.00")));
-        pendenza.addVocePendenza(voceDiProva("voce-b", new BigDecimal("5.00")));
+        pendenza.addVocePendenza(voceDiProva("voce-a", 5.00));
+        pendenza.addVocePendenza(voceDiProva("voce-b", 5.00));
 
         service.crea(posizione);
 
@@ -209,7 +233,7 @@ class PosizioneDebitoriaServiceTest {
     @DisplayName("crea rifiuta notificaSend attivo senza navNotifica se non c'e' SOLUZIONE_UNICA ne' PIANO_RATEALE")
     void creaRifiutaNotificaSendSenzaCandidatoPerNavNotifica() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-entro");
+        posizione.setIdApplicazione(idApplicazionePer("A2A-entro"));
         posizione.setIdPosizioneDebitoria("pos-entro");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -286,7 +310,7 @@ class PosizioneDebitoriaServiceTest {
             + "non solo quelle in cui e' il primo debitore")
     void cercaPerDebitoreTrovaLePosizioniConQuelSoggetto() {
         PosizioneDebitoria posizioneA = new PosizioneDebitoria();
-        posizioneA.setIdA2A("A2A-CERCA-DEBITORE");
+        posizioneA.setIdApplicazione(idApplicazionePer("A2A-CERCA-DEBITORE"));
         posizioneA.setIdPosizioneDebitoria("pos-cerca-1");
         posizioneA.setIdDominio(1L);
         posizioneA.setDescrizione("test");
@@ -296,7 +320,7 @@ class PosizioneDebitoriaServiceTest {
         service.crea(posizioneA);
 
         PosizioneDebitoria posizioneB = new PosizioneDebitoria();
-        posizioneB.setIdA2A("A2A-CERCA-DEBITORE");
+        posizioneB.setIdApplicazione(idApplicazionePer("A2A-CERCA-DEBITORE"));
         posizioneB.setIdPosizioneDebitoria("pos-cerca-2");
         posizioneB.setIdDominio(1L);
         posizioneB.setDescrizione("test");
@@ -305,7 +329,7 @@ class PosizioneDebitoriaServiceTest {
         service.crea(posizioneB);
 
         PosizioneDebitoria posizioneAltroDebitore = new PosizioneDebitoria();
-        posizioneAltroDebitore.setIdA2A("A2A-CERCA-DEBITORE");
+        posizioneAltroDebitore.setIdApplicazione(idApplicazionePer("A2A-CERCA-DEBITORE"));
         posizioneAltroDebitore.setIdPosizioneDebitoria("pos-cerca-3");
         posizioneAltroDebitore.setIdDominio(1L);
         posizioneAltroDebitore.setDescrizione("test");
@@ -326,7 +350,7 @@ class PosizioneDebitoriaServiceTest {
     void cercaPerDebitoreRispettaOffsetELimit() {
         for (int i = 1; i <= 3; i++) {
             PosizioneDebitoria posizione = new PosizioneDebitoria();
-            posizione.setIdA2A("A2A-PAGINAZIONE");
+            posizione.setIdApplicazione(idApplicazionePer("A2A-PAGINAZIONE"));
             posizione.setIdPosizioneDebitoria("pos-pag-" + i);
             posizione.setIdDominio(1L);
             posizione.setDescrizione("test");
@@ -353,7 +377,7 @@ class PosizioneDebitoriaServiceTest {
     void cercaPerDebitoreHaAltriRisultatiConOffsetNonAllineato() {
         for (int i = 1; i <= 3; i++) {
             PosizioneDebitoria posizione = new PosizioneDebitoria();
-            posizione.setIdA2A("A2A-OFFSET-DISALLINEATO");
+            posizione.setIdApplicazione(idApplicazionePer("A2A-OFFSET-DISALLINEATO"));
             posizione.setIdPosizioneDebitoria("pos-off-" + i);
             posizione.setIdDominio(1L);
             posizione.setDescrizione("test");
@@ -374,7 +398,7 @@ class PosizioneDebitoriaServiceTest {
     @DisplayName("cercaPendenze senza idDominio trova pendenze con lo stesso numeroAvviso su domini diversi (M13)")
     void cercaPendenzeSenzaIdDominioTrovaSuDominiDiversi() {
         PosizioneDebitoria posizioneDominio1 = new PosizioneDebitoria();
-        posizioneDominio1.setIdA2A("A2A-CERCA-NAV");
+        posizioneDominio1.setIdApplicazione(idApplicazionePer("A2A-CERCA-NAV"));
         posizioneDominio1.setIdPosizioneDebitoria("pos-nav-dominio1");
         posizioneDominio1.setIdDominio(1L);
         posizioneDominio1.setDescrizione("test");
@@ -386,7 +410,7 @@ class PosizioneDebitoriaServiceTest {
         service.crea(posizioneDominio1);
 
         PosizioneDebitoria posizioneDominio2 = new PosizioneDebitoria();
-        posizioneDominio2.setIdA2A("A2A-CERCA-NAV");
+        posizioneDominio2.setIdApplicazione(idApplicazionePer("A2A-CERCA-NAV"));
         posizioneDominio2.setIdPosizioneDebitoria("pos-nav-dominio2");
         posizioneDominio2.setIdDominio(2L);
         posizioneDominio2.setDescrizione("test");
@@ -407,9 +431,112 @@ class PosizioneDebitoriaServiceTest {
         assertThat(conFiltroDominio.risultati().get(0).getIdDominio()).isEqualTo(2L);
     }
 
+    @Test
+    @DisplayName("crea rifiuta un numeroAvviso gia' usato da un'altra pendenza dello stesso dominio "
+            + "(controllo applicativo, replica VER_025 del legacy: versamenti non ha un vincolo UNIQUE per questo)")
+    void creaRifiutaNumeroAvvisoDuplicatoNelloStessoDominio() {
+        PosizioneDebitoria prima = new PosizioneDebitoria();
+        prima.setIdApplicazione(idApplicazionePer("A2A-NAV-DUPLICATO"));
+        prima.setIdPosizioneDebitoria("pos-nav-dup-1");
+        prima.setIdDominio(1L);
+        prima.setDescrizione("test");
+        prima.addSoggettoDebitore(soggettoDiProva());
+        Pendenza pendenzaPrima = opzioneConPendenza(prima, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1")
+                .getPendenze().get(0);
+        pendenzaPrima.setNumeroAvviso("300000000000000042");
+        pendenzaPrima.setIuv("300000000000000042");
+        service.crea(prima);
+
+        PosizioneDebitoria seconda = new PosizioneDebitoria();
+        seconda.setIdApplicazione(idApplicazionePer("A2A-NAV-DUPLICATO"));
+        seconda.setIdPosizioneDebitoria("pos-nav-dup-2");
+        seconda.setIdDominio(1L); // stesso dominio della prima
+        seconda.setDescrizione("test");
+        seconda.addSoggettoDebitore(soggettoDiProva());
+        Pendenza pendenzaSeconda = opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2")
+                .getPendenze().get(0);
+        pendenzaSeconda.setNumeroAvviso("300000000000000042"); // stesso NAV, stesso dominio: rifiutato
+        pendenzaSeconda.setIuv("300000000000000099");
+
+        assertThatThrownBy(() -> service.crea(seconda))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("300000000000000042");
+    }
+
+    @Test
+    @DisplayName("crea rifiuta una posizione con lo stesso idA2A+idPosizioneDebitoria di una gia' esistente, "
+            + "anche con un dominio diverso (bug del lead, 2026-09-26: il vincolo DB reale su documenti include "
+            + "anche id_dominio, ma la ricerca pubblica per identificativo e il 409 dello YAML v3 sono chiavati "
+            + "solo su idA2A+idPosizioneDebitoria)")
+    void creaRifiutaIdPosizioneDebitoriaDuplicatoAncheConDominioDiverso() {
+        Long idApplicazione = idApplicazionePer("A2A-POS-DUPLICATA");
+
+        PosizioneDebitoria prima = new PosizioneDebitoria();
+        prima.setIdApplicazione(idApplicazione);
+        prima.setIdPosizioneDebitoria("pos-duplicata");
+        prima.setIdDominio(1L);
+        prima.setDescrizione("test");
+        prima.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(prima, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        service.crea(prima);
+
+        PosizioneDebitoria seconda = new PosizioneDebitoria();
+        seconda.setIdApplicazione(idApplicazione);
+        seconda.setIdPosizioneDebitoria("pos-duplicata"); // stesso idA2A+idPosizioneDebitoria
+        seconda.setIdDominio(2L); // dominio diverso: il vincolo DB legacy lo lascerebbe passare
+        seconda.setDescrizione("test");
+        seconda.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+
+        assertThatThrownBy(() -> service.crea(seconda))
+                .isInstanceOf(RisorsaGiaEsistenteException.class)
+                .hasMessageContaining("pos-duplicata");
+    }
+
+    @Test
+    @DisplayName("crea non fallisce se il chiamante non valorizza affatto i campi debitore su Pendenza: "
+            + "sono placeholder fissi (debitoreIdentificativo/debitoreAnagrafica/srcDebitoreIdentificativo), "
+            + "non un dato funzionale richiesto al chiamante — bug del lead, 2026-09-26: "
+            + "srcDebitoreIdentificativo era rimasto escluso dal placeholder introdotto per gli altri due")
+    void creaValorizzaIPlaceholderDebitoreSenzaRichiederliAlChiamante() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-SENZA-CAMPI-DEBITORE"));
+        posizione.setIdPosizioneDebitoria("pos-senza-campi-debitore");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+
+        OpzionePagamento opzione = new OpzionePagamento();
+        opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.addOpzionePagamento(opzione);
+
+        // Costruita come farebbe il bean converter del livello API: nessun setDebitoreXxx/
+        // setSrcDebitoreIdentificativo, quelli non fanno parte dello schema Pendenza dello
+        // YAML v3 (il debitore vero sta su soggettiDebitori).
+        Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(posizione.getIdApplicazione());
+        pendenza.setIdPendenza("pendenza-senza-campi-debitore");
+        pendenza.setIdTipoPendenza(1L);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        pendenza.setNumeroAvviso("300000000000000077");
+        pendenza.setIuv("300000000000000077");
+        pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
+        opzione.addPendenza(pendenza);
+
+        pendenza.addVocePendenza(voceDiProva("voce-senza-campi-debitore", 10.00));
+
+        PosizioneDebitoria creata = service.crea(posizione);
+        Pendenza pendenzaCreata = creata.getOpzioniPagamento().get(0).getPendenze().get(0);
+
+        assertThat(pendenzaCreata.getDebitoreIdentificativo()).isEqualTo("VEDERE_SOGGETTI_DEBITORI");
+        assertThat(pendenzaCreata.getDebitoreAnagrafica()).isEqualTo("Vedere tabella soggetti_debitori");
+        assertThat(pendenzaCreata.getSrcDebitoreIdentificativo()).isEqualTo("VEDERE_SOGGETTI_DEBITORI");
+    }
+
     // ── Fixture ──────────────────────────────────────────────────────────────
 
-    private VocePendenza voceDiProva(String idVocePendenza, BigDecimal importo) {
+    private VocePendenza voceDiProva(String idVocePendenza, double importo) {
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza(idVocePendenza);
         voce.setImporto(importo);
@@ -432,7 +559,7 @@ class PosizioneDebitoriaServiceTest {
     private PosizioneDebitoria posizioneConUnaOpzione(TipologiaOpzionePagamento tipologia) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         String suffisso = UUID.randomUUID().toString().substring(0, 8);
-        posizione.setIdA2A("A2A-" + suffisso);
+        posizione.setIdApplicazione(idApplicazionePer("A2A-" + suffisso));
         posizione.setIdPosizioneDebitoria("pos-" + suffisso);
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -468,18 +595,24 @@ class PosizioneDebitoriaServiceTest {
 
     private Pendenza opzioneConPendenza(OpzionePagamento opzione, String suffisso) {
         Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(opzione.getPosizioneDebitoria().getIdApplicazione());
         pendenza.setIdPendenza("pendenza-" + suffisso);
         pendenza.setIdTipoPendenza(1L);
-        pendenza.setImporto(new BigDecimal("10.00"));
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
         pendenza.setNumeroAvviso("30000000000000000" + suffisso);
         pendenza.setIuv("30000000000000000" + suffisso);
-        pendenza.setStato(StatoPendenza.NON_ESEGUITA);
+        pendenza.setSrcIuv("30000000000000000" + suffisso);
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
         pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         opzione.addPendenza(pendenza);
 
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza("voce-" + suffisso);
-        voce.setImporto(new BigDecimal("10.00"));
+        voce.setImporto(10.00);
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);

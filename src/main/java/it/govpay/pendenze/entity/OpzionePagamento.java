@@ -29,7 +29,11 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 
 /**
  * Opzione di pagamento: modalita' alternativa con cui puo' essere estinta una
- * {@link PosizioneDebitoria}, mappata sulla tabella {@code opzioni_pagamento}.
+ * {@link PosizioneDebitoria}, mappata sulla tabella nuova {@code opzioni_pagamento}
+ * (decisione del lead, 2026-09-25: la mutua esclusione tra opzioni alternative non esiste
+ * in v2 in nessuna forma — nemmeno manuale: l'unico annullamento legacy e' un'operazione
+ * esplicita per singolo versamento, senza cascata sui versamenti "fratelli" — quindi va
+ * tracciata da una tabella vera, non da una colonna sparsa su {@code versamenti}).
  *
  * <p><b>Tabella unica per le 4 tipologie (M2 di {@code proposta-modello-nativo-v3.md}).</b>
  * {@code PIANO_RATEALE}/{@code SOLUZIONE_UNICA}/{@code SOLUZIONE_UNICA_ENTRO}/
@@ -73,7 +77,7 @@ public class OpzionePagamento {
     private UUID idOpzionePagamento;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_posizione_debitoria", nullable = false)
+    @JoinColumn(name = "id_documento", nullable = false)
     private PosizioneDebitoria posizioneDebitoria;
 
     @Column(name = "tipologia", nullable = false, length = 35)

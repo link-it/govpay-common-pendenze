@@ -1,6 +1,5 @@
 package it.govpay.pendenze.entity;
 
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 import jakarta.persistence.Column;
@@ -18,47 +17,51 @@ import it.govpay.pendenze.model.StatoFlussoRendicontazione;
 
 /**
  * Dati di testata di un flusso di rendicontazione pagoPA (schema {@code FlussoRendicontazione}
- * dello YAML v3), mappata sulla tabella {@code flussi_rendicontazione}.
+ * dello YAML v3), mappata sulla tabella legacy {@code fr} (decisione del lead,
+ * 2026-09-25, fase 2: riuso diretto, stesso principio gia' applicato al resto
+ * dell'aggregato).
  *
- * <p><b>Tabella separata, non incorporata in {@link Rendicontazione}</b> (a differenza di una
- * prima ipotesi): un flusso raggruppa più rendicontazioni (`{@link Rendicontazione#getFlusso()}`
- * verso questa entità), come nel legacy (`fr`/`rendicontazioni`, FK `rendicontazioni.id_fr`) —
- * incorporarlo per riga avrebbe duplicato inutilmente gli stessi dati di testata.</p>
+ * <p>{@link #idDominio} e' una FK piatta verso l'anagrafica di govpay-common (M4:
+ * nessuna relazione JPA verso l'esterno dell'aggregato) — in produzione {@code fr.id_dominio}
+ * ha un vincolo FK reale verso {@code domini(id)}, qui omesso per coerenza con
+ * {@code documenti}/{@code versamenti}.</p>
  *
- * <p>{@link #idDominio} e' una FK piatta verso l'anagrafica di govpay-common (M4: nessuna
- * relazione JPA verso l'esterno dell'aggregato).</p>
+ * <p><b>{@link #codDominio}</b> (decisione del lead, 2026-09-26): verificato che tutta la
+ * ricerca applicativa legacy su {@code fr}/{@code rpt}/{@code pagamenti} (business layer,
+ * {@code FrBD}/{@code RptBD}/{@code PagamentiBD}) avviene sempre per {@code cod_dominio},
+ * mai per {@code id_dominio} (colonna presente sul bean legacy ma mai usata come parametro
+ * di ricerca) — e {@code rpt}/{@code pagamenti} non hanno nemmeno una colonna
+ * {@code id_dominio}. Per coerenza con {@link Rpt#getCodDominio()}/
+ * {@link Pagamento#getCodDominio()} questa entita' porta entrambi i campi: il chiamante
+ * fornisce sia {@code idDominio} sia {@code codDominio} (stesso principio gia' applicato a
+ * {@link Pendenza#getIdTipoPendenza()}/{@link Pendenza#getIdTipoVersamento()} — nessuna
+ * risoluzione fatta da questa libreria).</p>
  *
- * <p><b>{@link #importoTotale} è {@code NUMERIC(19,2)}, non {@code DOUBLE PRECISION}</b> come
- * la colonna legacy equivalente (`fr.importo_totale_pagamenti`): stesso principio già
- * applicato a {@code Pendenza}/{@code VocePendenza}, per evitare la classe di bug di
- * precisione nota — la conversione in migrazione è un cast, non una trasformazione
- * strutturale.</p>
+ * <p><b>{@link #importoTotale}/{@link #numeroPagamenti}/{@link #revisione}/
+ * {@link #dataRegolamento} sono nullable</b>, fedeli alla colonna legacy reale (a
+ * differenza di una prima ipotesi che li dava tutti {@code NOT NULL}): {@code importo_totale_pagamenti}
+ * e' {@code DOUBLE PRECISION} (non {@code NUMERIC(19,2)} — stesso principio gia'
+ * applicato a {@code Pendenza}/{@code VocePendenza}, per evitare conversioni in
+ * migrazione).</p>
  *
- * <p><b>{@link #revisione}/{@link #obsoleto} preservano le versioni del flusso</b>, come nel
- * legacy (bug del lead, 2026-09-24: la prima versione con solo {@code id_dominio}/
- * {@code id_flusso} univoci impediva di conservare più revisioni dello stesso flusso). Nel
- * legacy (`Rendicontazioni.java`, business layer) una nuova acquisizione dello stesso
- * {@code cod_dominio}+{@code cod_flusso} non sovrascrive la riga esistente: inserisce una
- * nuova riga con {@code revisione} incrementata, marcando obsoleta quella con la
- * {@code data_ora_flusso} più vecchia (`fr.obsoleto`/`fr.revisione`, vincoli
- * {@code unique_fr_1}/{@code unique_fr_2}) — ogni {@link Rendicontazione} resta collegata alla
- * specifica revisione del flusso con cui è stata acquisita, non all'ultima. Questa libreria non
- * calcola essa stessa la prossima revisione né decide quale riga marcare obsoleta (nessuna
- * logica di acquisizione qui, vedi Javadoc di {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}):
- * si limita a offrire uno schema che possa conservarle tutte.</p>
+ * <p><b>{@link #revisione}/{@link #obsoleto} preservano le versioni del flusso</b>, come
+ * nel legacy (bug del lead, 2026-09-24: la prima versione con solo {@code id_dominio}/
+ * {@code codFlusso} univoci impediva di conservare piu' revisioni dello stesso flusso).
+ * Questa libreria non calcola essa stessa la prossima revisione ne' decide quale riga
+ * marcare obsoleta (nessuna logica di acquisizione qui, vedi Javadoc di
+ * {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}): si limita a
+ * offrire uno schema che possa conservarle tutte.</p>
  */
 @Entity
-@Table(name = "flussi_rendicontazione", uniqueConstraints = {
-        @UniqueConstraint(name = "unique_flussi_rendicontazione_1",
-                columnNames = {"id_dominio", "id_flusso", "data_flusso"}),
-        @UniqueConstraint(name = "unique_flussi_rendicontazione_2",
-                columnNames = {"id_dominio", "id_flusso", "id_psp", "revisione"})
+@Table(name = "fr", uniqueConstraints = {
+        @UniqueConstraint(name = "unique_fr_1", columnNames = {"id_dominio", "cod_flusso", "data_ora_flusso"}),
+        @UniqueConstraint(name = "unique_fr_2", columnNames = {"id_dominio", "cod_flusso", "cod_psp", "revisione"})
 })
-@SequenceGenerator(name = "seq_flussi_rendicontazione", sequenceName = "seq_flussi_rendicontazione", allocationSize = 1)
+@SequenceGenerator(name = "seq_fr", sequenceName = "seq_fr", allocationSize = 1)
 public class FlussoRendicontazione {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_flussi_rendicontazione")
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_fr")
     @Column(name = "id")
     private Long id;
 
@@ -66,36 +69,44 @@ public class FlussoRendicontazione {
     @Column(name = "id_dominio", nullable = false)
     private Long idDominio;
 
-    @Column(name = "id_flusso", nullable = false, length = 35)
-    private String idFlusso;
+    /** Codice del dominio creditore — vedi nota di classe: chiave usata per la ricerca nel legacy. */
+    @Column(name = "cod_dominio", nullable = false, length = 35)
+    private String codDominio;
 
-    @Column(name = "data_flusso", nullable = false)
-    private OffsetDateTime dataFlusso;
+    @Column(name = "cod_flusso", nullable = false, length = 35)
+    private String codFlusso;
 
-    @Column(name = "trn", nullable = false, length = 35)
-    private String trn;
+    @Column(name = "data_ora_flusso", nullable = false)
+    private OffsetDateTime dataOraFlusso;
 
-    @Column(name = "data_regolamento", nullable = false)
+    @Column(name = "iur", nullable = false, length = 35)
+    private String iur;
+
+    /** Data di acquisizione del flusso, distinta da {@link #dataOraFlusso} (data dichiarata dal PSP nel flusso). */
+    @Column(name = "data_acquisizione", nullable = false)
+    private OffsetDateTime dataAcquisizione;
+
+    @Column(name = "data_regolamento")
     private OffsetDateTime dataRegolamento;
 
-    @Column(name = "id_psp", nullable = false, length = 35)
-    private String idPsp;
+    @Column(name = "cod_psp", nullable = false, length = 35)
+    private String codPsp;
 
-    @Column(name = "bic_riversamento", length = 35)
+    @Column(name = "cod_bic_riversamento", length = 35)
     private String bicRiversamento;
 
-    @Column(name = "numero_pagamenti", nullable = false)
-    private int numeroPagamenti;
+    @Column(name = "numero_pagamenti")
+    private Long numeroPagamenti;
 
-    @Column(name = "importo_totale", nullable = false, precision = 19, scale = 2)
-    private BigDecimal importoTotale;
+    @Column(name = "importo_totale_pagamenti")
+    private Double importoTotale;
 
     @Column(name = "stato", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)
     private StatoFlussoRendicontazione stato;
 
     /** Numero di revisione del flusso, univoco per dominio+identificativo+psp (vedi nota di classe). */
-    @Column(name = "revisione", nullable = false)
+    @Column(name = "revisione")
     private Long revisione;
 
     /** {@code true} se questa riga è stata soppiantata da una revisione più recente (vedi nota di classe). */
@@ -120,28 +131,44 @@ public class FlussoRendicontazione {
         this.idDominio = idDominio;
     }
 
-    public String getIdFlusso() {
-        return idFlusso;
+    public String getCodDominio() {
+        return codDominio;
     }
 
-    public void setIdFlusso(String idFlusso) {
-        this.idFlusso = idFlusso;
+    public void setCodDominio(String codDominio) {
+        this.codDominio = codDominio;
     }
 
-    public OffsetDateTime getDataFlusso() {
-        return dataFlusso;
+    public String getCodFlusso() {
+        return codFlusso;
     }
 
-    public void setDataFlusso(OffsetDateTime dataFlusso) {
-        this.dataFlusso = dataFlusso;
+    public void setCodFlusso(String codFlusso) {
+        this.codFlusso = codFlusso;
     }
 
-    public String getTrn() {
-        return trn;
+    public OffsetDateTime getDataOraFlusso() {
+        return dataOraFlusso;
     }
 
-    public void setTrn(String trn) {
-        this.trn = trn;
+    public void setDataOraFlusso(OffsetDateTime dataOraFlusso) {
+        this.dataOraFlusso = dataOraFlusso;
+    }
+
+    public String getIur() {
+        return iur;
+    }
+
+    public void setIur(String iur) {
+        this.iur = iur;
+    }
+
+    public OffsetDateTime getDataAcquisizione() {
+        return dataAcquisizione;
+    }
+
+    public void setDataAcquisizione(OffsetDateTime dataAcquisizione) {
+        this.dataAcquisizione = dataAcquisizione;
     }
 
     public OffsetDateTime getDataRegolamento() {
@@ -152,12 +179,12 @@ public class FlussoRendicontazione {
         this.dataRegolamento = dataRegolamento;
     }
 
-    public String getIdPsp() {
-        return idPsp;
+    public String getCodPsp() {
+        return codPsp;
     }
 
-    public void setIdPsp(String idPsp) {
-        this.idPsp = idPsp;
+    public void setCodPsp(String codPsp) {
+        this.codPsp = codPsp;
     }
 
     public String getBicRiversamento() {
@@ -168,19 +195,19 @@ public class FlussoRendicontazione {
         this.bicRiversamento = bicRiversamento;
     }
 
-    public int getNumeroPagamenti() {
+    public Long getNumeroPagamenti() {
         return numeroPagamenti;
     }
 
-    public void setNumeroPagamenti(int numeroPagamenti) {
+    public void setNumeroPagamenti(Long numeroPagamenti) {
         this.numeroPagamenti = numeroPagamenti;
     }
 
-    public BigDecimal getImportoTotale() {
+    public Double getImportoTotale() {
         return importoTotale;
     }
 
-    public void setImportoTotale(BigDecimal importoTotale) {
+    public void setImportoTotale(Double importoTotale) {
         this.importoTotale = importoTotale;
     }
 

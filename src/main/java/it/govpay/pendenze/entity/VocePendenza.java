@@ -1,6 +1,5 @@
 package it.govpay.pendenze.entity;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,100 +27,110 @@ import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 
 /**
- * Voce di pendenza: mappata sulla tabella {@code voci_pendenza}.
+ * Voce di pendenza: mappata sulla tabella legacy {@code singoli_versamenti} (decisione
+ * del lead, 2026-09-25 — riuso possibile perche' {@link Pendenza} e' ora {@code versamenti}:
+ * {@code id_versamento} punta sempre a una riga vera, non serve piu' una tabella nuova).
  *
- * <p><b>Tabella unica per le 3 varianti (M3 di {@code proposta-modello-nativo-v3.md}).</b>
- * {@code RiferimentoEntrata}/{@code Entrata}/{@code Bollo} condividono
- * {@code DatiComuniVocePendenza}; le colonne specifiche di ciascuna variante sono
- * mutuamente esclusive e nullable, selezionate da {@link #tipoRiferimento}:</p>
- * <ul>
- *   <li>{@code RIFERIMENTO_ENTRATA}: solo {@link #codEntrata}</li>
- *   <li>{@code ENTRATA}: {@link #ibanAccredito}, {@link #ibanAppoggio}, {@link #tassonomia}</li>
- *   <li>{@code BOLLO}: {@link #tipoBollo}, {@link #hashDocumento}, {@link #provinciaResidenza},
- *       {@link #tassonomia} (condivisa con {@code ENTRATA}, non con {@code RIFERIMENTO_ENTRATA})</li>
- * </ul>
+ * <p><b>Stato gia' allineato</b>: {@link StatoVocePendenza#NON_ESEGUITO}/{@code ESEGUITO}
+ * coincidono per stringa con {@code StatoSingoloVersamento} legacy (2 soli valori) — nessun
+ * problema di grafia qui, a differenza di {@link Pendenza#getStato()}.
+ * {@link StatoVocePendenza#ANOMALO} e' solo v3, stesso residuo accettato di
+ * {@code StatoPendenza.ESEGUITO_ALTRO_CANALE}.</p>
  *
- * <p>{@link #dettaglioContabile} (riconciliazione contabile pagoPA) e' ammesso solo per
- * {@code ENTRATA}/{@code RIFERIMENTO_ENTRATA}, mai per {@code BOLLO} (che si classifica
- * solo tramite {@code tassonomia}) — vincolo verificato da
- * {@code ValidatorePosizioneDebitoria}, non esprimibile a livello di colonna.</p>
+ * <p><b>Colonne aggiunte</b> (concetti assenti nel legacy, che usa FK verso anagrafiche
+ * separate — {@code id_tributo}/{@code id_iban_accredito}/{@code id_iban_appoggio} — invece
+ * di codici inline): {@link #tipoRiferimento} (il discriminatore RIFERIMENTO_ENTRATA/
+ * ENTRATA/BOLLO non esiste affatto nel legacy), {@link #codEntrata}, {@link #ibanAccredito},
+ * {@link #ibanAppoggio}, {@link #tassonomia}. {@link #tipoBollo}/{@link #hashDocumento}/
+ * {@link #provinciaResidenza} invece coincidono esattamente con colonne legacy reali.</p>
+ *
+ * <p>{@link #dettaglioContabile} riusa {@code contabilita} (colonna legacy, gia' JSON —
+ * vedi {@code ContabilitaConverter} legacy): il formato non si sovrappone su nessuna
+ * chiave con quello vecchio (Contabilita/QuotaContabilita ha {@code quote}/
+ * {@code proprietaCustom}, {@code DettaglioContabile} ha {@code tipo}) — decisione del
+ * lead, 2026-09-25, la compatibilita' si gestisce a livello applicativo (ragioneria v3),
+ * non con una colonna separata.</p>
  */
 @Entity
-@Table(name = "voci_pendenza", uniqueConstraints = @UniqueConstraint(
-        name = "unique_voci_pendenza_1", columnNames = {"id_pendenza", "indice"}))
-@SequenceGenerator(name = "seq_voci_pendenza", sequenceName = "seq_voci_pendenza", allocationSize = 1)
+@Table(name = "singoli_versamenti", uniqueConstraints = @UniqueConstraint(
+        name = "unique_sng_id_voce", columnNames = {"id_versamento", "indice_dati"}))
+@SequenceGenerator(name = "seq_singoli_versamenti", sequenceName = "seq_singoli_versamenti", allocationSize = 1)
 public class VocePendenza {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_voci_pendenza")
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_singoli_versamenti")
     @Column(name = "id")
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_pendenza", nullable = false)
+    @JoinColumn(name = "id_versamento", nullable = false)
     private Pendenza pendenza;
 
-    @Column(name = "id_voce_pendenza", nullable = false, length = 35)
+    @Column(name = "cod_singolo_versamento_ente", nullable = false, length = 70)
     private String idVocePendenza;
 
-    @Column(name = "importo", nullable = false, precision = 19, scale = 2)
-    private BigDecimal importo;
+    @Column(name = "importo_singolo_versamento", nullable = false)
+    private double importo;
 
-    @Column(name = "descrizione", nullable = false, length = 140)
+    @Column(name = "descrizione", length = 256)
     private String descrizione;
 
     /** Ordine (1-5) della voce all'interno della pendenza. */
-    @Column(name = "indice", nullable = false)
+    @Column(name = "indice_dati", nullable = false)
     private int indice;
 
-    @Column(name = "stato", nullable = false, length = 35)
+    @Column(name = "stato_singolo_versamento", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)
     private StatoVocePendenza stato;
 
-    /** Diverso da quello della pendenza solo nel caso multi-beneficiario. */
-    @Column(name = "id_dominio")
-    private Long idDominio;
-
-    @Column(name = "tipo_riferimento", nullable = false, length = 35)
+    /**
+     * Colonna aggiunta: il discriminatore RIFERIMENTO_ENTRATA/ENTRATA/BOLLO non esiste nel
+     * legacy. Nullable sul DB (decisione del lead, 2026-09-26, in vista della migrazione
+     * di un DB v2 esistente): le voci storiche non hanno un valore sensato da retro-
+     * assegnare — l'obbligatorietà per le voci create da v3 resta una validazione
+     * puramente applicativa (campo obbligatorio dello YAML v3), non un vincolo DB, stesso
+     * principio gia' dichiarato nel Javadoc di {@link it.govpay.pendenze.validazione.ValidatorePosizioneDebitoria}
+     * per i campi strutturali.
+     */
+    @Column(name = "tipo_riferimento", length = 35)
     @Enumerated(EnumType.STRING)
     private TipoRiferimentoVocePendenza tipoRiferimento;
 
-    /** Solo {@code RIFERIMENTO_ENTRATA}. */
+    /** Colonna aggiunta. Solo {@code RIFERIMENTO_ENTRATA}. */
     @Column(name = "cod_entrata", length = 35)
     private String codEntrata;
 
-    /** Solo {@code ENTRATA}. */
-    @Column(name = "iban_accredito", length = 35)
+    /** Colonna aggiunta. Solo {@code ENTRATA}. */
+    @Column(name = "iban_accredito_v3", length = 35)
     private String ibanAccredito;
 
-    /** Solo {@code ENTRATA}. */
-    @Column(name = "iban_appoggio", length = 35)
+    /** Colonna aggiunta. Solo {@code ENTRATA}. */
+    @Column(name = "iban_appoggio_v3", length = 35)
     private String ibanAppoggio;
 
-    /** {@code ENTRATA} e {@code BOLLO} (non {@code RIFERIMENTO_ENTRATA}). */
-    @Column(name = "tassonomia", length = 35)
+    /** Colonna aggiunta. {@code ENTRATA} e {@code BOLLO} (non {@code RIFERIMENTO_ENTRATA}). */
+    @Column(name = "tassonomia_v3", length = 35)
     private String tassonomia;
 
-    /** Solo {@code BOLLO}. */
+    /** Colonna legacy reale, stesso nome. Solo {@code BOLLO}. */
     @Column(name = "tipo_bollo", length = 2)
     private String tipoBollo;
 
-    /** Solo {@code BOLLO}: digest in base64 del documento informatico. */
-    @Column(name = "hash_documento", length = 72)
+    /** Colonna legacy reale, stesso nome. Solo {@code BOLLO}: digest in base64 del documento informatico. */
+    @Column(name = "hash_documento", length = 70)
     private String hashDocumento;
 
-    /** Solo {@code BOLLO}: sigla automobilistica della provincia di residenza. */
+    /** Colonna legacy reale, stesso nome. Solo {@code BOLLO}: sigla automobilistica della provincia di residenza. */
     @Column(name = "provincia_residenza", length = 2)
     private String provinciaResidenza;
 
     /**
-     * Riconciliazione contabile pagoPA (mai per {@code BOLLO}). Vuota, non {@code null},
-     * quando assente: evita di dover distinguere "nessun dettaglio" da "colonna non ancora
-     * letta" nel resto del codice.
+     * Riconciliazione contabile pagoPA (mai per {@code BOLLO}), su colonna legacy riusata
+     * {@code contabilita} — vedi nota di classe. Vuota, non {@code null}, quando assente.
      */
     @Convert(converter = DettaglioContabileConverter.class)
     @JdbcTypeCode(SqlTypes.LONGVARCHAR)
-    @Column(name = "dettaglio_contabile")
+    @Column(name = "contabilita")
     private List<DettaglioContabile> dettaglioContabile = new ArrayList<>();
 
     // ── Accessori ────────────────────────────────────────────────────────────
@@ -150,11 +159,11 @@ public class VocePendenza {
         this.idVocePendenza = idVocePendenza;
     }
 
-    public BigDecimal getImporto() {
+    public double getImporto() {
         return importo;
     }
 
-    public void setImporto(BigDecimal importo) {
+    public void setImporto(double importo) {
         this.importo = importo;
     }
 
@@ -180,14 +189,6 @@ public class VocePendenza {
 
     public void setStato(StatoVocePendenza stato) {
         this.stato = stato;
-    }
-
-    public Long getIdDominio() {
-        return idDominio;
-    }
-
-    public void setIdDominio(Long idDominio) {
-        this.idDominio = idDominio;
     }
 
     public TipoRiferimentoVocePendenza getTipoRiferimento() {

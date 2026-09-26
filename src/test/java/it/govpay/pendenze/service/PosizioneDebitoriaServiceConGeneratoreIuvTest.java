@@ -2,19 +2,25 @@ package it.govpay.pendenze.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.math.BigDecimal;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+
+import it.govpay.common.repository.DominioRepository;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
+import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
@@ -38,17 +44,31 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ImportAutoConfiguration(PendenzeAutoConfiguration.class)
 @Import({PosizioneDebitoriaService.class, PosizioneDebitoriaServiceConGeneratoreIuvTest.Config.class})
+@EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})
+@EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"},
+        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = DominioRepository.class))
 @ActiveProfiles("test")
 class PosizioneDebitoriaServiceConGeneratoreIuvTest {
 
     @Autowired
     private PosizioneDebitoriaService service;
 
+    @Autowired
+    private TestEntityManager em;
+
+    private Long applicazionePersistita(String codApplicazione) {
+        ApplicazioneEntity applicazione = ApplicazioneEntity.builder()
+                .codApplicazione(codApplicazione).autoIuv(true).firmaRicevuta("N").trusted(true).build();
+        em.persistAndFlush(applicazione);
+        return applicazione.getId();
+    }
+
     @Test
     @DisplayName("crea genera IUV/numero avviso per le pendenze che ne sono prive")
     void creaGeneraIdentificativiMancanti() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-1");
+        Long idApplicazione = applicazionePersistita("A2A-1");
+        posizione.setIdApplicazione(idApplicazione);
         posizione.setIdPosizioneDebitoria("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -62,16 +82,21 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(idApplicazione);
         pendenza.setIdPendenza("pendenza-1");
         pendenza.setIdTipoPendenza(1L);
-        pendenza.setImporto(new BigDecimal("10.00"));
-        pendenza.setStato(StatoPendenza.NON_ESEGUITA);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
         // IUV/numeroAvviso volutamente non impostati: deve generarli il GeneratoreIuv.
         opzione.addPendenza(pendenza);
 
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza("voce-1");
-        voce.setImporto(new BigDecimal("10.00"));
+        voce.setImporto(10.00);
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
@@ -89,7 +114,8 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
     @DisplayName("crea non tocca IUV/numero avviso se il chiamante li fornisce entrambi, anche con un GeneratoreIuv disponibile")
     void creaNonSovrascriveIdentificativiForniti() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-2");
+        Long idApplicazione = applicazionePersistita("A2A-2");
+        posizione.setIdApplicazione(idApplicazione);
         posizione.setIdPosizioneDebitoria("pos-2");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -103,17 +129,22 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(idApplicazione);
         pendenza.setIdPendenza("pendenza-2");
         pendenza.setIdTipoPendenza(1L);
-        pendenza.setImporto(new BigDecimal("10.00"));
-        pendenza.setStato(StatoPendenza.NON_ESEGUITA);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
         pendenza.setIuv("IUV-FORNITO-DAL-CHIAMANTE");
         pendenza.setNumeroAvviso("111111111111111111");
         opzione.addPendenza(pendenza);
 
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza("voce-2");
-        voce.setImporto(new BigDecimal("10.00"));
+        voce.setImporto(10.00);
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
@@ -131,7 +162,8 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
     @DisplayName("crea ricava lo iuv dal numeroAvviso fornito senza generare una coppia nuova (conversione, non generazione)")
     void creaRicavaIuvDaNumeroAvvisoFornito() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdA2A("A2A-3");
+        Long idApplicazione = applicazionePersistita("A2A-3");
+        posizione.setIdApplicazione(idApplicazione);
         posizione.setIdPosizioneDebitoria("pos-3");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
@@ -145,17 +177,22 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(idApplicazione);
         pendenza.setIdPendenza("pendenza-3");
         pendenza.setIdTipoPendenza(1L);
-        pendenza.setImporto(new BigDecimal("10.00"));
-        pendenza.setStato(StatoPendenza.NON_ESEGUITA);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
         // solo il numeroAvviso e' fornito: lo iuv va ricavato da esso (conversione), non generato.
         pendenza.setNumeroAvviso("222222222222222222");
         opzione.addPendenza(pendenza);
 
         VocePendenza voce = new VocePendenza();
         voce.setIdVocePendenza("voce-3");
-        voce.setImporto(new BigDecimal("10.00"));
+        voce.setImporto(10.00);
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);

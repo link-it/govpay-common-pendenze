@@ -14,21 +14,25 @@ import it.govpay.pendenze.entity.PosizioneDebitoria;
 public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDebitoria, Long> {
 
     /**
-     * Cerca per la chiave logica (identificativo del gestionale + identificativo della
-     * posizione), univoca per costruzione (vincolo {@code unique_posizioni_debitorie_1}).
+     * Cerca per la chiave logica (applicazione + identificativo della posizione). {@code idA2A}
+     * (parametro pubblico del servizio) e' risolto in {@code idApplicazione} dal chiamante
+     * (decisione del lead, 2026-09-25: {@code idA2A} non e' piu' una colonna propria di
+     * {@code PosizioneDebitoria} da quando e' mappata su {@code documenti} — coincide con
+     * {@code Applicazione.codApplicazione}).
      *
-     * @param idA2A                identificativo del gestionale responsabile
+     * @param idApplicazione       FK verso l'anagrafica esterna del gestionale responsabile
      * @param idPosizioneDebitoria identificativo della posizione nel gestionale
      * @return la posizione, se esiste
      */
-    Optional<PosizioneDebitoria> findByIdA2AAndIdPosizioneDebitoria(String idA2A, String idPosizioneDebitoria);
+    Optional<PosizioneDebitoria> findByIdApplicazioneAndIdPosizioneDebitoria(Long idApplicazione,
+            String idPosizioneDebitoria);
 
     /**
-     * @param idA2A                identificativo del gestionale responsabile
+     * @param idApplicazione       FK verso l'anagrafica esterna del gestionale responsabile
      * @param idPosizioneDebitoria identificativo della posizione nel gestionale
      * @return {@code true} se esiste gia' una posizione con questa chiave logica
      */
-    boolean existsByIdA2AAndIdPosizioneDebitoria(String idA2A, String idPosizioneDebitoria);
+    boolean existsByIdApplicazioneAndIdPosizioneDebitoria(Long idApplicazione, String idPosizioneDebitoria);
 
     /**
      * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3:
@@ -38,11 +42,11 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * debitori in solido). {@code Distinct} evita duplicati se piu' soggetti della stessa
      * posizione avessero — per un dato scorretto — lo stesso identificativo.
      *
-     * @param idA2A      identificativo del gestionale responsabile
-     * @param idDebitore identificativo (codice fiscale/partita IVA) di un soggetto debitore
-     * @param pageable   paginazione e ordinamento richiesti
+     * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
+     * @param idDebitore     identificativo (codice fiscale/partita IVA) di un soggetto debitore
+     * @param pageable       paginazione e ordinamento richiesti
      * @return la pagina di posizioni debitorie che rispettano il filtro
      */
-    Page<PosizioneDebitoria> findDistinctByIdA2AAndSoggettiDebitori_Identificativo(String idA2A, String idDebitore,
-            Pageable pageable);
+    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(Long idApplicazione,
+            String idDebitore, Pageable pageable);
 }

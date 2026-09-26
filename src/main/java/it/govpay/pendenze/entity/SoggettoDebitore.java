@@ -18,22 +18,24 @@ import it.govpay.pendenze.model.TipoSoggetto;
 
 /**
  * Soggetto obbligato al pagamento di una {@link PosizioneDebitoria} ("debitore in
- * solido"), mappato sulla tabella {@code soggetti_debitori}.
- *
- * <p>Entita' con identita' propria (non {@code @Embeddable}), coerente con M5 di
- * {@code proposta-modello-nativo-v3.md}: e' un'entita' figlia dell'aggregato, non un
- * valore annidato.</p>
+ * solido"), mappato sulla tabella nuova {@code soggetti_debitori} (decisione del lead,
+ * 2026-09-25: TUTTI i debitori vivono qui, incluso il primo — il debitore appartiene
+ * logicamente al documento, non al singolo versamento legacy).
  *
  * <p>{@link #ordine} e' la sola fonte di verita' su "chi e' il soggetto pagatore": il
- * primo per ordine, per convenzione dello YAML v3 (righe 1484-1494), essendo il Nodo dei
- * Pagamenti vincolato a un solo soggetto pagatore per avviso. Nessuno snapshot separato
- * (decisione del lead, M6): il rischio noto che modifiche a questa lista dopo
- * l'attivazione di un'opzione possano cambiare retroattivamente chi risulta pagatore di
- * una pendenza gia' chiusa resta presente e non mitigato a livello di schema.</p>
+ * primo (ordine 0), per convenzione dello YAML v3 (righe 1484-1494), essendo il Nodo dei
+ * Pagamenti vincolato a un solo soggetto pagatore per avviso. <b>Non</b> viene sincronizzato
+ * su {@code versamenti.debitore_*} (decisione del lead, 2026-09-26, dopo un tentativo
+ * intermedio di sincronizzarlo davvero, poi scartato): questa lista resta modificabile dopo
+ * la creazione (aggiornamento via PATCH, sviluppo successivo), e tenere allineate quelle
+ * colonne a ogni modifica sarebbe complessita' pura — {@code soggetti_debitori} e' l'unica
+ * fonte di verita' per v3, quelle colonne restano un placeholder per la sola compatibilita'
+ * con la pipeline di pagamento legacy non ancora adattata a v3 — vedi Javadoc di
+ * {@link Pendenza}.</p>
  */
 @Entity
 @Table(name = "soggetti_debitori", uniqueConstraints = @UniqueConstraint(
-        name = "unique_soggetti_debitori_1", columnNames = {"id_posizione_debitoria", "ordine"}))
+        name = "unique_soggetti_debitori_1", columnNames = {"id_documento", "ordine"}))
 @SequenceGenerator(name = "seq_soggetti_debitori", sequenceName = "seq_soggetti_debitori", allocationSize = 1)
 public class SoggettoDebitore {
 
@@ -43,10 +45,10 @@ public class SoggettoDebitore {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_posizione_debitoria", nullable = false)
+    @JoinColumn(name = "id_documento", nullable = false)
     private PosizioneDebitoria posizioneDebitoria;
 
-    /** Posizione (0-based o 1-based, da fissare in fase di implementazione) nell'elenco. */
+    /** 0-based: 0 e' sempre il soggetto pagatore per convenzione. */
     @Column(name = "ordine", nullable = false)
     private int ordine;
 
@@ -54,8 +56,8 @@ public class SoggettoDebitore {
     @Enumerated(EnumType.STRING)
     private TipoSoggetto tipo;
 
-    /** Codice fiscale o partita IVA del soggetto. */
-    @Column(name = "identificativo", nullable = false, length = 16)
+    /** Codice fiscale o partita IVA del soggetto — 35 per combaciare con {@code versamenti.debitore_identificativo}. */
+    @Column(name = "identificativo", nullable = false, length = 35)
     private String identificativo;
 
     @Column(name = "anagrafica", length = 70)

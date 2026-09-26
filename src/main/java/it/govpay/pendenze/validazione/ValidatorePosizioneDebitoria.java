@@ -2,6 +2,8 @@ package it.govpay.pendenze.validazione;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashSet;
+import java.util.Set;
 
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
@@ -46,6 +48,31 @@ public final class ValidatorePosizioneDebitoria {
             validaOpzione(opzione);
         }
         validaSpeseNotificaEnotificaSend(posizione);
+        validaNumeroAvvisoNonDuplicatoNellAggregato(posizione);
+    }
+
+    /**
+     * Rifiuta due pendenze dello stesso {@code numeroAvviso} gia' all'interno dello stesso
+     * aggregato in ingresso (bug del lead, 2026-09-26): il controllo del servizio contro il
+     * DB ({@code PosizioneDebitoriaService#verificaNumeroAvvisoNonDuplicato}) confronta ogni
+     * pendenza contro le righe gia' persistite, non contro le altre pendenze della stessa
+     * richiesta ancora in memoria — due pendenze duplicate nella stessa richiesta superano
+     * entrambe quel controllo (nessuna delle due e' ancora su DB quando vengono verificate) e
+     * vengono salvate entrambe. Riproducibile senza concorrenza, va risolto qui: un controllo
+     * puramente strutturale sull'aggregato, non serve alcun accesso al DB.
+     */
+    private static void validaNumeroAvvisoNonDuplicatoNellAggregato(PosizioneDebitoria posizione) {
+        Set<String> numeriAvviso = new HashSet<>();
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                String numeroAvviso = pendenza.getNumeroAvviso();
+                if (numeroAvviso != null && !numeriAvviso.add(numeroAvviso)) {
+                    throw new ValidazioneNonSuperataException(
+                            "piu' pendenze della stessa richiesta hanno lo stesso numeroAvviso ["
+                                    + numeroAvviso + "]");
+                }
+            }
+        }
     }
 
     private static void validaOpzione(OpzionePagamento opzione) {
@@ -86,15 +113,15 @@ public final class ValidatorePosizioneDebitoria {
                             + numeroVoci);
         }
 
-        validaScalaImporto(pendenza.getImporto(), "la pendenza [" + pendenza.getIdPendenza() + "]");
+        validaScalaImporto(BigDecimal.valueOf(pendenza.getImporto()), "la pendenza [" + pendenza.getIdPendenza() + "]");
 
         BigDecimal sommaVoci = BigDecimal.ZERO;
         for (VocePendenza voce : pendenza.getVoci()) {
-            validaScalaImporto(voce.getImporto(), "la voce [" + voce.getIdVocePendenza() + "]");
-            sommaVoci = sommaVoci.add(voce.getImporto());
+            validaScalaImporto(BigDecimal.valueOf(voce.getImporto()), "la voce [" + voce.getIdVocePendenza() + "]");
+            sommaVoci = sommaVoci.add(BigDecimal.valueOf(voce.getImporto()));
             validaDettaglioContabile(voce);
         }
-        if (sommaVoci.compareTo(pendenza.getImporto()) != 0) {
+        if (sommaVoci.compareTo(BigDecimal.valueOf(pendenza.getImporto())) != 0) {
             throw new ValidazioneNonSuperataException(
                     "la pendenza [" + pendenza.getIdPendenza() + "] ha importo " + pendenza.getImporto()
                             + " ma la somma delle voci e' " + sommaVoci);

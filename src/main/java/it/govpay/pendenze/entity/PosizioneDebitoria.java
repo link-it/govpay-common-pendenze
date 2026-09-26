@@ -1,6 +1,5 @@
 package it.govpay.pendenze.entity;
 
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -9,6 +8,7 @@ import java.util.Objects;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -19,84 +19,103 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 /**
- * Posizione debitoria: radice dell'aggregato pendenza nel modello nativo v3, mappata
- * sulla tabella {@code posizioni_debitorie}.
+ * Posizione debitoria: radice dell'aggregato pendenza, mappata sulla tabella legacy
+ * {@code documenti} (decisione del lead, 2026-09-25: riuso diretto invece di uno schema
+ * v3 separato, per minimizzare la differenza strutturale da v2 e ridurre al minimo la
+ * migrazione dati — vedi {@code proposta-modello-nativo-v3.md} §17).
  *
- * <p><b>Confine dell'aggregato.</b> Come nel disegno precedente (§4.8 di
- * {@code proposta-libreria-pendenze.md}), le chiavi esterne verso l'anagrafica
- * ({@code idDominio}, {@code idUnitaOperativa}) sono mappate come semplici {@code Long},
- * non come relazioni JPA, per non accoppiare il grafo delle entita' e la persistence
- * unit di ogni consumatore. Le relazioni verso {@link SoggettoDebitore} e
- * {@link OpzionePagamento} sono invece relazioni JPA vere: appartengono allo stesso
- * aggregato e alla stessa unita' transazionale.</p>
+ * <p><b>{@code idA2A} non e' una colonna</b>: e' esattamente
+ * {@code Applicazione.codApplicazione} (confermato dal lead, 2026-09-24) — questa entita'
+ * espone solo {@link #idApplicazione}, FK piatta verso l'anagrafica esterna di
+ * govpay-common (M4: nessuna relazione JPA). La risoluzione idA2A &#8596; idApplicazione
+ * e' compito del chiamante (repository/service), non di questa entita'.</p>
  *
- * <p><b>{@code iupd} non e' una colonna.</b> Verificato lo spec pagoPA
- * {@code gpd-4-aca.json}: l'identificativo usato nell'interfaccia ACA/GPD non ha alcun
- * vincolo di formato, l'unicita' e' responsabilita' dell'Ente Creditore. Si deriva al
- * volo da {@code idA2A}+{@code idPosizioneDebitoria} (gia' garantiti univoci insieme),
- * senza persistere nulla di nuovo.</p>
+ * <p><b>Colonne aggiunte a {@code documenti}</b> (assenti nel legacy, dove il concetto non
+ * esiste affatto): {@link #idUnitaOperativa}, {@link #notificaSend}, {@link #navNotifica},
+ * {@link #dataUltimaModificaAca}, {@link #dataUltimaComunicazioneAca},
+ * {@link #dataCreazione}, {@link #dataUltimoAggiornamento} — 7 colonne additive, non le 3
+ * inizialmente stimate (mancava di considerare unita' operativa/nav-notifica/ACA, propri
+ * solo di questa libreria).</p>
  *
- * <p><b>Soggetto pagatore: nessuno snapshot.</b> A differenza di una prima proposta, per
- * decisione esplicita del lead si usa {@code soggettiDebitori} ordinato per
- * {@link SoggettoDebitore#getOrdine()}, primo elemento per convenzione (cosi' come indica
- * lo YAML v3), in attesa di un'evoluzione dell'interfaccia pagoPA che porti l'identita'
- * del soggetto pagatore esplicitamente nelle operazioni.</p>
+ * <p><b>{@link #soggettiDebitori} punta a {@code soggetti_debitori}</b>, tabella nuova che
+ * contiene TUTTI i debitori, incluso il primo (decisione del lead, 2026-09-25, corregge una
+ * proposta precedente che teneva il primo solo su {@code versamenti.debitore_*}): il
+ * debitore appartiene logicamente al documento, non al singolo versamento. Il primo soggetto
+ * (ordine 0) NON viene sincronizzato su {@code versamenti.debitore_*} (decisione del lead,
+ * 2026-09-26, dopo un tentativo intermedio di sincronizzarlo davvero, poi scartato: quella
+ * lista resta modificabile dopo la creazione, tenerli allineati nel tempo sarebbe complessita'
+ * pura) — quelle colonne restano {@code NOT NULL} in produzione ma valorizzate con placeholder
+ * fissi, vedi Javadoc di {@link Pendenza}.</p>
+ *
+ * <p><b>{@code unique_documenti_applicazione}</b> ({@code cod_documento}+{@code id_applicazione},
+ * senza {@code id_dominio}): vincolo aggiunto in migrazione (decisione del lead, 2026-09-26)
+ * per far corrispondere l'identita' pubblica di {@code idPosizioneDebitoria} (chiavata solo su
+ * {@code idA2A}+{@code idPosizioneDebitoria} nello YAML v3) al vincolo DB reale — senza,
+ * {@link it.govpay.pendenze.repository.PosizioneDebitoriaRepository#findByIdApplicazioneAndIdPosizioneDebitoria}
+ * potrebbe trovare piu' righe (stesso {@code idPosizioneDebitoria} su domini diversi) e il
+ * controllo applicativo in {@code PosizioneDebitoriaService#crea} da solo non basterebbe
+ * contro creazioni concorrenti. Il vincolo storico {@code unique_documenti_1} (con
+ * {@code id_dominio}) resta, ridondante ma innocuo.</p>
  */
 @Entity
-@Table(name = "posizioni_debitorie", uniqueConstraints = @UniqueConstraint(
-        name = "unique_posizioni_debitorie_1", columnNames = {"id_a2a", "id_posizione_debitoria"}))
-@SequenceGenerator(name = "seq_posizioni_debitorie", sequenceName = "seq_posizioni_debitorie", allocationSize = 1)
+@Table(name = "documenti", uniqueConstraints = {
+        @UniqueConstraint(name = "unique_documenti_1", columnNames = {"cod_documento", "id_applicazione", "id_dominio"}),
+        @UniqueConstraint(name = "unique_documenti_applicazione", columnNames = {"cod_documento", "id_applicazione"})})
+@SequenceGenerator(name = "seq_documenti", sequenceName = "seq_documenti", allocationSize = 1)
 public class PosizioneDebitoria {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_posizioni_debitorie")
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_documenti")
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "id_a2a", nullable = false, length = 35)
-    private String idA2A;
-
-    @Column(name = "id_posizione_debitoria", nullable = false, length = 35)
+    /** {@code idPosizioneDebitoria} dello YAML v3. */
+    @Column(name = "cod_documento", nullable = false, length = 35)
     private String idPosizioneDebitoria;
+
+    /** FK piatta verso l'anagrafica esterna di govpay-common (M4) — corrisponde a {@code idA2A}. */
+    @Column(name = "id_applicazione", nullable = false)
+    private Long idApplicazione;
 
     @Column(name = "id_dominio", nullable = false)
     private Long idDominio;
 
+    /** Colonna aggiunta: concetto assente in {@code documenti} legacy. */
     @Column(name = "id_unita_operativa")
     private Long idUnitaOperativa;
 
-    @Column(name = "descrizione", nullable = false, length = 140)
+    @Column(name = "descrizione", nullable = false, length = 255)
     private String descrizione;
 
-    /** {@code null} = pubblicata immediatamente (semantica dello YAML v3). */
-    @Column(name = "data_pubblicazione")
-    private LocalDate dataPubblicazione;
-
+    /** Colonna aggiunta: concetto assente in {@code documenti} legacy. */
     @Column(name = "notifica_send", nullable = false)
     private boolean notificaSend;
 
-    /** Deve corrispondere al {@code numeroAvviso} di una pendenza della posizione. */
+    /** Colonna aggiunta. Deve corrispondere al {@code numeroAvviso} di una pendenza della posizione. */
     @Column(name = "nav_notifica", length = 18)
     private String navNotifica;
 
-    /** Valorizzata da questa libreria: fa prendere in carico la posizione dal batch ACA. */
+    /** Colonna aggiunta. Valorizzata da questa libreria: fa prendere in carico la posizione dal batch ACA. */
     @Column(name = "data_ultima_modifica_aca")
     private OffsetDateTime dataUltimaModificaAca;
 
-    /** Scritta esclusivamente dal batch ACA, mai da questa libreria. */
+    /** Colonna aggiunta. Scritta esclusivamente dal batch ACA, mai da questa libreria. */
     @Column(name = "data_ultima_comunicazione_aca")
     private OffsetDateTime dataUltimaComunicazioneAca;
 
+    /** Colonna aggiunta. */
     @Column(name = "data_creazione", nullable = false)
     private OffsetDateTime dataCreazione;
 
+    /** Colonna aggiunta. */
     @Column(name = "data_ultimo_aggiornamento", nullable = false)
     private OffsetDateTime dataUltimoAggiornamento;
 
     /**
-     * Elenco dei soggetti obbligati al pagamento, in ordine: il primo e' per convenzione
-     * il soggetto pagatore usato in RPT e nelle comunicazioni che richiedono un unico
-     * destinatario (Nodo dei Pagamenti, ACA/GPD).
+     * Elenco dei soggetti obbligati al pagamento, in ordine: il primo (ordine 0) e' per
+     * convenzione il soggetto pagatore usato in RPT e nelle comunicazioni che richiedono un
+     * unico destinatario (Nodo dei Pagamenti, ACA/GPD) — vedi nota di classe sulla
+     * sincronizzazione verso {@code versamenti.debitore_*}.
      */
     @OneToMany(mappedBy = "posizioneDebitoria", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("ordine ASC")
@@ -141,20 +160,20 @@ public class PosizioneDebitoria {
         this.id = id;
     }
 
-    public String getIdA2A() {
-        return idA2A;
-    }
-
-    public void setIdA2A(String idA2A) {
-        this.idA2A = idA2A;
-    }
-
     public String getIdPosizioneDebitoria() {
         return idPosizioneDebitoria;
     }
 
     public void setIdPosizioneDebitoria(String idPosizioneDebitoria) {
         this.idPosizioneDebitoria = idPosizioneDebitoria;
+    }
+
+    public Long getIdApplicazione() {
+        return idApplicazione;
+    }
+
+    public void setIdApplicazione(Long idApplicazione) {
+        this.idApplicazione = idApplicazione;
     }
 
     public Long getIdDominio() {
@@ -179,14 +198,6 @@ public class PosizioneDebitoria {
 
     public void setDescrizione(String descrizione) {
         this.descrizione = descrizione;
-    }
-
-    public LocalDate getDataPubblicazione() {
-        return dataPubblicazione;
-    }
-
-    public void setDataPubblicazione(LocalDate dataPubblicazione) {
-        this.dataPubblicazione = dataPubblicazione;
     }
 
     public boolean isNotificaSend() {
