@@ -1,6 +1,7 @@
 package it.govpay.pendenze.service;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -382,9 +383,10 @@ public class PosizioneDebitoriaService {
      */
     @Transactional(readOnly = true)
     public Optional<PosizioneDebitoria> trovaPerIdentificativo(String idA2A, String idPosizioneDebitoria) {
+        LocalDate oggi = LocalDate.now(clock);
         return risolviIdApplicazione(idA2A)
                 .flatMap(idApplicazione -> posizioneDebitoriaRepository
-                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria));
+                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria, oggi));
     }
 
     /**
@@ -406,7 +408,7 @@ public class PosizioneDebitoriaService {
             return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
         }
         return paginaDa(posizioneDebitoriaRepository.findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(
-                idApplicazione.get(), idDebitore, pageable), pageable);
+                idApplicazione.get(), idDebitore, LocalDate.now(clock), pageable), pageable);
     }
 
     /**
@@ -430,10 +432,11 @@ public class PosizioneDebitoriaService {
             return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
         }
         Long idApplicazione = idApplicazioneOpt.get();
+        LocalDate oggi = LocalDate.now(clock);
         Page<Pendenza> pagina = idDominio == null
-                ? pendenzaRepository.findByIdApplicazioneAndNumeroAvviso(idApplicazione, numeroAvviso, pageable)
+                ? pendenzaRepository.findByIdApplicazioneAndNumeroAvviso(idApplicazione, numeroAvviso, oggi, pageable)
                 : pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndIdDominio(idApplicazione, numeroAvviso,
-                        idDominio, pageable);
+                        idDominio, oggi, pageable);
         return paginaDa(pagina, pageable);
     }
 

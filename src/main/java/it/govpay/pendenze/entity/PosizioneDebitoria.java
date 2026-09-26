@@ -1,5 +1,6 @@
 package it.govpay.pendenze.entity;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,11 +32,13 @@ import jakarta.persistence.UniqueConstraint;
  * e' compito del chiamante (repository/service), non di questa entita'.</p>
  *
  * <p><b>Colonne aggiunte a {@code documenti}</b> (assenti nel legacy, dove il concetto non
- * esiste affatto): {@link #idUnitaOperativa}, {@link #notificaSend}, {@link #navNotifica},
- * {@link #dataUltimaModificaAca}, {@link #dataUltimaComunicazioneAca},
- * {@link #dataCreazione}, {@link #dataUltimoAggiornamento} — 7 colonne additive, non le 3
+ * esiste affatto): {@link #idUnitaOperativa}, {@link #dataPubblicazione}, {@link #notificaSend},
+ * {@link #navNotifica}, {@link #dataUltimaModificaAca}, {@link #dataUltimaComunicazioneAca},
+ * {@link #dataCreazione}, {@link #dataUltimoAggiornamento} — 8 colonne additive, non le 3
  * inizialmente stimate (mancava di considerare unita' operativa/nav-notifica/ACA, propri
- * solo di questa libreria).</p>
+ * solo di questa libreria). {@link #dataPubblicazione} era gia' nel primissimo disegno
+ * (§3.1 di {@code proposta-modello-nativo-v3.md}), persa durante il pivot al riuso delle
+ * tabelle legacy (§17) e ripristinata il 2026-09-26.</p>
  *
  * <p><b>{@link #soggettiDebitori} punta a {@code soggetti_debitori}</b>, tabella nuova che
  * contiene TUTTI i debitori, incluso il primo (decisione del lead, 2026-09-25, corregge una
@@ -86,6 +89,16 @@ public class PosizioneDebitoria {
 
     @Column(name = "descrizione", nullable = false, length = 255)
     private String descrizione;
+
+    /**
+     * Colonna aggiunta: concetto assente in {@code documenti} legacy. Data a partire dalla
+     * quale la posizione (e tutte le sue pendenze) diventa visibile e pagabile — {@code NULL}
+     * significa "pubblicata subito" (semantica dello YAML v3). Presente nel primissimo
+     * disegno di questa entità (§3.1 di {@code proposta-modello-nativo-v3.md}), persa
+     * durante il pivot al riuso delle tabelle legacy (§17) e ripristinata il 2026-09-26.
+     */
+    @Column(name = "data_pubblicazione")
+    private LocalDate dataPubblicazione;
 
     /** Colonna aggiunta: concetto assente in {@code documenti} legacy. */
     @Column(name = "notifica_send", nullable = false)
@@ -198,6 +211,14 @@ public class PosizioneDebitoria {
 
     public void setDescrizione(String descrizione) {
         this.descrizione = descrizione;
+    }
+
+    public LocalDate getDataPubblicazione() {
+        return dataPubblicazione;
+    }
+
+    public void setDataPubblicazione(LocalDate dataPubblicazione) {
+        this.dataPubblicazione = dataPubblicazione;
     }
 
     public boolean isNotificaSend() {

@@ -14,6 +14,17 @@ come base di questo disegno).
 - **Fonte ACA/GPD**: spec ufficiale pagoPA `pagopa/pagopa-api`,
   `openapi/gpd-4-aca.json` (verificata il 2026-09-22)
 
+> **Nota (2026-09-25/26), da leggere prima del resto**: le tabelle *nuove* di
+> §§1-16 (`posizioni_debitorie`, `pendenze`, `voci_pendenza`, `ricevute`,
+> `rendicontazioni`, `flussi_rendicontazione` come schema v3 separato) sono
+> state **abbandonate** in favore del riuso diretto delle tabelle legacy
+> (`documenti`/`versamenti`/`singoli_versamenti`/`rpt`/`pagamenti`/`fr`/
+> `rendicontazioni`) — vedi §17 in poi. Le entità/decisioni di mapping restano
+> valide dove non in contraddizione con §17+ (validazioni di dominio, criteri
+> di ricerca, generazione IUV, `dettaglioContabile`), ma ogni riferimento a
+> nomi di tabella in §§1-16 va inteso come lo schema abbandonato, non quello
+> reale.
+
 ## 1. Struttura dell'aggregato
 
 ```
@@ -775,3 +786,256 @@ cui una — `piuRevisioniDelloStessoFlussoCoesistono` — riproduce lo scenario
 delle revisioni multiple), `RicevutaRendicontazioneServiceTest` (4, di cui
 una — `cercaRendicontazioniInizializzaIlFlusso` — verifica il fetch join con
 `Hibernate.isInitialized`).
+
+## 17. Riuso diretto delle tabelle legacy, non uno schema v3 separato (2026-09-25)
+
+**Decisione che sostituisce §§1-16**: invece delle tabelle nuove `posizioni_debitorie`/
+`pendenze`/`voci_pendenza` (con `opzioni_pagamento`/`ricevute`/`rendicontazioni`/
+`flussi_rendicontazione` come già descritto), l'aggregato centrale riusa
+column-per-column le tabelle legacy reali:
+
+- **`PosizioneDebitoria` → `documenti`**: 7 colonne additive (`id_unita_operativa`,
+  `notifica_send`, `nav_notifica`, `data_ultima_modifica_aca`,
+  `data_ultima_comunicazione_aca`, `data_creazione`, `data_ultimo_aggiornamento`).
+- **`Pendenza` → `versamenti`** (~50 colonne mappate su ~65 reali): 3 colonne
+  additive (`id_opzione_pagamento`, `numero_rata`, `data_caricamento`).
+- **`VocePendenza` → `singoli_versamenti`**: 5 colonne additive (`tipo_riferimento`,
+  `cod_entrata`, `iban_accredito_v3`, `iban_appoggio_v3`, `tassonomia_v3`); riuso
+  as-is di `tipo_bollo`/`hash_documento`/`provincia_residenza` e di `contabilita`
+  (nuovo formato JSON, non sovrapposto al vecchio `Contabilita`/`QuotaContabilita`).
+- **`OpzionePagamento`/`SoggettoDebitore`**: uniche tabelle davvero nuove
+  (`opzioni_pagamento`/`soggetti_debitori`) — la macchina a stati delle opzioni non
+  esiste in v2 in nessuna forma; i debitori in v2 vivono solo denormalizzati su
+  `versamenti.debitore_*`, un solo soggetto per versamento.
+
+**Motivazione**: minimizzare la differenza strutturale da v2 per ridurre al minimo
+la migrazione dati e i problemi di retrocompatibilità — v2 e v3 scrivono le stesse
+tabelle fisiche, un cliente è sempre sull'una o sull'altra API, mai su entrambe
+contemporaneamente sullo stesso record. Principio M4 esteso: nessun vincolo FK
+reale verso l'anagrafica esterna di govpay-common (`domini`/`applicazioni`/
+`tipi_versamento`/`tipi_vers_domini`), anche dove il legacy reale ce l'ha — coerenza
+con la scelta, già presa, di non avere relazioni JPA verso quelle tabelle.
+
+**Cinque micro-decisioni di mapping**, prese una alla volta:
+
+1. **Due FK per il tipo pendenza** (`idTipoPendenza`/`idTipoVersamento`): il legacy
+   ha due livelli (`tipi_versamento` catalogo astratto, `tipi_vers_domini`
+   istanza/override per dominio) — `versamenti.id_tipo_versamento` è una
+   denormalizzazione di comodo. Il chiamante fornisce entrambi gli ID (M4 puro,
+   nessuna query di questa libreria verso l'anagrafica esterna).
+2. **`numero_rata` (nuova colonna) invece di `cod_rata`** (deprecata per v3, resta
+   `NULL` sulle righe v3): `cod_rata` mischiava tipologia e posizione nello stesso
+   formato, ambiguo per un lettore legacy.
+3. **`data_caricamento` (nuova colonna)**: "data di emissione della pendenza" dello
+   YAML v3, concetto distinto da `data_creazione` (timestamp tecnico di scrittura),
+   senza equivalente nel legacy.
+4. **`src_iuv`/`src_debitore_identificativo`**: denormalizzazioni `UPPERCASE` per
+   la ricerca case-insensitive (verificato in `proposta-libreria-pendenze.md` §4.5),
+   non copie di audit. Il legacy ha un bug su un solo percorso di scrittura, non
+   replicato.
+5. **`StatoPendenza` allineato agli 8 valori di `StatoVersamento`** (non i 6 dello
+   YAML v3 attuale — da correggere nello YAML): `Pendenza.stato` mappa direttamente
+   `versamenti.stato_versamento`, un valore diverso da quelli legacy farebbe fallire
+   `valueOf(...)` su qualunque riga letta da codice legacy.
+
+## 18. Unicità IUV/NAV per dominio e bug della cascade mancante (2026-09-25)
+
+**IUV/NAV non hanno un vincolo DB**: verificato che `versamenti` ha solo un indice
+non univoco su `(iuv_versamento, id_dominio)`, mai `UNIQUE` — il legacy la
+garantisce solo a livello applicativo (`Versamento.java:184-189`, `VER_025`:
+"due pendenze non possono avere lo stesso numero avviso"). Replicato in
+`PosizioneDebitoriaService.verificaNumeroAvvisoNonDuplicato`: interroga il DB solo
+quando il chiamante fornisce `numeroAvviso` esplicitamente (IUV/NAV generati da
+`GeneratoreIuv` sono collision-free per costruzione, nessun controllo necessario).
+
+**Bug della cascade mancante**: `Pendenza.voci` (`@OneToMany(mappedBy = "pendenza")`)
+era priva di `cascade = CascadeType.ALL` — sintomo fuorviante: dopo `em.clear()` +
+`em.find()`, collezioni `@OneToMany` *diverse e non correlate*
+(`PosizioneDebitoria.soggettiDebitori`) risultavano vuote alla rilettura, non
+`Pendenza.voci` stessa. Diverse ipotesi sbagliate esplorate (fetch eager,
+`@OrderBy`, timing delle transazioni) prima di trovare la causa reale. Verificato
+che tutte e 4 le `@OneToMany` della libreria abbiano `cascade = CascadeType.ALL`.
+
+## 19. Fase 2: riuso di `rpt`/`pagamenti`/`fr`/`rendicontazioni` (2026-09-25/26)
+
+Stesso principio di §17 esteso a `Ricevuta`/`Rendicontazione`/`FlussoRendicontazione`:
+
+- **`Rpt` → `rpt`**: nessuna colonna aggiunta. **`iur` è fisicamente la colonna
+  `ccp`** — "codice contesto pagamento", nomenclatura SANP storica dello stesso
+  identificativo che le specifiche più recenti del Nodo chiamano `receiptId`,
+  verificato nel business layer legacy (`RicevuteConverter.setIdRicevuta(rpt.getCcp())`,
+  `QuietanzaPagamento.setCcp(pagamento.getIur())`, `CtReceiptUtils.setCcp(receiptId)`;
+  il bean v2 `Ricevuta.idRicevuta` è documentato come "Corrisponde al `receiptId`
+  oppure al `ccp`"). Quindi `(iuv, ccp, cod_dominio)` — il vincolo naturale reale —
+  è esattamente `(iuv, iur, dominio)`: `Rpt` basta da sola per
+  `GET .../ricevute/{iur}`, contraddicendo un'ipotesi precedente (poi abbandonata)
+  che passava da `Pagamento.iur` pensando che `rpt` non avesse un IUR.
+- **`Pagamento` → `pagamenti`**: mappata ma non agganciata alla feature ricevute
+  (introdotta solo per l'ipotesi poi abbandonata) — resta disponibile per un uso
+  futuro (es. una risorsa "riscossioni").
+- **`FlussoRendicontazione` → `fr`**: porta sia `idDominio` (Long, M4) sia
+  `codDominio` (String) — verificato che tutta la ricerca applicativa legacy su
+  questo gruppo di tabelle (`FrBD`/`RptBD`/`PagamentiBD`) avviene sempre per
+  *codice* del dominio, mai per id numerico (colonna presente sui bean ma mai usata
+  come parametro di ricerca). `rpt`/`pagamenti` non hanno nemmeno una colonna
+  `id_dominio`: `codDominio` era già l'unica opzione lì.
+- **`Rendicontazione` → `rendicontazioni`**: **non ha `id_pendenza`** (ipotesi
+  iniziale sbagliata) — il legacy correla solo per `iuv` (stringa). La ricerca
+  ({@code cercaRendicontazioni}) filtra per `iuv` **e per `flusso.codDominio`**
+  (bug trovato in revisione indipendente, §20): lo IUV è univoco solo per dominio,
+  non globalmente.
+
+`TipoRicevuta` (model) rimosso: `Rpt.versione` conserva il valore legacy grezzo di
+`VersioneRPT`, la mappatura sui valori dello YAML v3 è responsabilità del livello
+API, non più un campo tipizzato di questa libreria.
+
+## 20. Cinque bug trovati in revisione indipendente (2026-09-26)
+
+1. **Rendicontazioni cercate senza filtro dominio** — vedi §19, corretto con
+   `RendicontazioneRepository.findByIuvAndFlusso_CodDominio`, risolvendo
+   `codDominio` dall'`idDominio` della pendenza tramite `DominioRepository` di
+   govpay-common.
+2. **`srcDebitoreIdentificativo` mai inizializzato**: `NOT NULL` ma nessun codice lo
+   valorizzava — `crea()` falliva con `DataIntegrityViolationException`. Corretto
+   con lo stesso placeholder fisso di `debitoreIdentificativo` (§21).
+3. **NAV duplicato accettato nello stesso aggregato in ingresso**: il controllo di
+   `verificaNumeroAvvisoNonDuplicato` (§18) confronta solo contro il DB — due
+   pendenze duplicate nella stessa richiesta lo superano entrambe (nessuna delle
+   due è ancora persistita quando vengono verificate). Corretto con un controllo
+   puramente in memoria in `ValidatorePosizioneDebitoria`, prima di qualunque
+   accesso al DB.
+4. **Elenco/dettaglio ricevute includevano RPT senza ricevuta acquisita**:
+   `RptRepository` selezionava tutte le righe del versamento, incluse quelle con
+   `xml_rt`/`data_msg_ricevuta` ancora `NULL` (richiesta di pagamento inviata, RT
+   non ancora arrivata). Corretto filtrando `dataMsgRicevuta is not null`.
+5. **`idPosizioneDebitoria` non univoco rispetto alla ricerca pubblica** — vedi §22.
+
+## 21. Debitore denormalizzato su `versamenti`: placeholder fissi, non sincronizzati (2026-09-26)
+
+**Decisione finale, dopo un'inversione**: `debitoreTipo`/`debitoreIdentificativo`/
+`debitoreAnagrafica`/`srcDebitoreIdentificativo` (quest'ultimo `NOT NULL`,
+`UPPERCASE(debitoreIdentificativo)`) sono valorizzati con **placeholder fissi ed
+espliciti** (`"VEDERE_SOGGETTI_DEBITORI"`/`"Vedere tabella soggetti_debitori"`),
+non sincronizzati col soggetto di ordine 0 di `soggettiDebitori`. `debitoreTipo`
+(nullable) resta indefinito.
+
+Percorso della decisione: inizialmente si era detto di sincronizzarli dal soggetto
+di ordine 0 a ogni scrittura (fonte di verità v3 = `soggetti_debitori`). Poi si è
+notato che `soggettiDebitori` resta modificabile dopo la creazione (PATCH, §5/
+sviluppo successivo) e tenerli allineati nel tempo sarebbe complessità pura — da
+qui i placeholder. Verificando poi se fosse sicuro farlo, è emerso che il motore
+di pagamento **legacy** (attivazione RPT verso il Nodo,
+`CtPaymentPABuilder.buildSoggettoPagatore`; stampa dell'avviso PDF,
+`AvvisoPagamentoUtils.impostaAnagraficaDebitore`) legge queste colonne
+direttamente, per qualunque pendenza indipendentemente da chi l'ha creata — non
+un'opzione applicativa v2 come `id_documento` (§17, mai popolato: letto solo da
+una funzionalità v2 opzionale che un cliente su v3 non esegue più). Un placeholder
+lì produrrebbe un pagamento con il debitore sbagliato.
+
+**Decisione finale**, comunque per i placeholder: quella pipeline legacy è essa
+stessa parte di ciò che verrà sostituito/adattato a fine transizione v3 (quando
+leggerà `soggetti_debitori` direttamente). Fino ad allora resta un gap noto e
+accettato per l'attivazione di un pagamento reale su una pendenza v3 attraverso
+l'endpoint non ancora adattato — non qualcosa che questa libreria deve compensare
+fingendo un dato che potrebbe comunque disallinearsi.
+
+## 22. Unicità pubblica di `idPosizioneDebitoria` (2026-09-26)
+
+Il vincolo legacy reale su `documenti` è `(cod_documento, id_applicazione,
+id_dominio)`, ma l'identità pubblica dello YAML v3 (`GET`/`POST`
+`/posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}`, 409 "Esiste già...") è
+chiavata solo su `idA2A`+`idPosizioneDebitoria`, senza dominio. Due posizioni con
+lo stesso identificativo su domini diversi passavano entrambe la creazione, ma la
+lettura per identificativo (`Optional`) falliva con
+`IncorrectResultSizeDataAccessException`.
+
+Corretto su due livelli:
+
+- **Vincolo DB nuovo**, in migrazione: `unique_documenti_applicazione
+  (cod_documento, id_applicazione)`, senza `id_dominio` — il vincolo storico
+  `unique_documenti_1` resta, ridondante ma innocuo.
+- **`crea()`**: il controllo applicativo (`existsByIdApplicazioneAndIdPosizioneDebitoria`)
+  resta per il fallimento rapido nel caso comune (non atomico, check-then-act); la
+  garanzia reale contro le creazioni concorrenti è il catch della violazione del
+  vincolo DB (`DataIntegrityViolationException` → `RisorsaGiaEsistenteException`,
+  nuova eccezione).
+
+Nessuna difesa aggiuntiva necessaria in lettura: eventuali duplicati legacy
+preesistenti farebbero fallire l'`ALTER TABLE ADD CONSTRAINT` in fase di
+migrazione stessa (script diagnostico incluso come commento), prima che qualunque
+codice v3 possa girare su quel DB — e senza la migrazione applicata,
+`ddl-auto=validate` fallirebbe comunque all'avvio per le colonne mancanti.
+
+## 23. Script di migrazione SQL per un DB v2 esistente (2026-09-26)
+
+`sql/migrazione/` nel repository (non parte della catena di patch versionate del
+core GovPay, `src/main/resources/db/sql/<dialetto>/patch` — script a sé stanti,
+solo PostgreSQL, da eseguire una sola volta in ordine di numerazione):
+
+- `01_documenti.sql`, `04_versamenti.sql`, `05_singoli_versamenti.sql`: colonne
+  additive di §17, con **sentinelle esplicite** per le righe v2 esistenti su
+  colonne `NOT NULL` nuove (`1970-01-01` per le date, `-1` per `numero_rata`) —
+  un valore ovviamente non plausibile come dato reale, mai un valore verosimile
+  come `CURRENT_TIMESTAMP` che potrebbe passare per dato genuino. `01_documenti.sql`
+  include anche il vincolo di unicità di §22.
+- `02_opzioni_pagamento.sql`, `03_soggetti_debitori.sql`: le due tabelle nuove,
+  nessuna riga esistente da migrare.
+- `rpt`/`pagamenti`/`fr`/`rendicontazioni` non compaiono: nessuna modifica
+  necessaria, tutto quello che serve a v3 esiste già in produzione (§19).
+
+## 24. `PosizioneDebitoria.dataPubblicazione` ripristinato (2026-09-26)
+
+Presente fin dal primissimo disegno (§3.1: `LocalDate`, nullable = "pubblicata
+subito"), perso silenziosamente durante il pivot al riuso delle tabelle legacy
+(§17) — nel ricostruire l'elenco colonne di `documenti` per quel pivot non è
+stato confrontato sistematicamente con la vecchia tabella §3.1, e questo campo
+(senza un aggancio ovvio a una colonna legacy) è rimasto fuori senza che ce ne
+accorgessimo. Individuato lavorando su `govpay-pendenze-api`, quando
+`NuovaPosizioneDebitoria` dello YAML si è rivelata averlo mentre l'entity no.
+
+Colonna aggiunta (nona, non ottava — vedi §17): `documenti.data_pubblicazione`
+(`DATE`, nullable, nessuna sentinella di migrazione necessaria: `NULL`
+significa "pubblicata subito", esattamente il significato corretto anche per
+le righe v2 esistenti).
+
+**Logica applicativa implementata** ("la posizione si comporta come se non
+esistesse per qualsiasi ricerca/pagamento" prima di quella data, semantica
+dello YAML v3): `PosizioneDebitoriaRepository.findByIdApplicazioneAndIdPosizioneDebitoria`/
+`findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo` e
+`PendenzaRepository.findByIdApplicazioneAndNumeroAvviso`/
+`findByIdApplicazioneAndNumeroAvvisoAndIdDominio` filtrano tutti su
+`dataPubblicazione is null or dataPubblicazione <= :oggi` (`oggi` sempre dal
+`Clock` della libreria, mai da una funzione DB). Per `Pendenza` il filtro passa
+per un `left join` opzionale fino a `PosizioneDebitoria` (via
+`opzionePagamento`, esso stesso nullable): una pendenza priva di
+`opzionePagamento` — creata da v2, o derivante da migrazione, che non hanno mai
+avuto il concetto di posizione/pubblicazione — resta sempre visibile,
+indipendentemente da qualunque `dataPubblicazione`. Deliberatamente **non**
+filtrati: `existsByIdApplicazioneAndIdPosizioneDebitoria` (il controllo duplicati
+in scrittura deve valere comunque, non ha senso lasciar creare una seconda
+posizione "perché la prima non è ancora pubblicata") e `trovaPerId` (lookup
+tecnico interno, non una ricerca pubblica). La futura verifica pagamento resta
+fuori da questo giro.
+
+## Anagrafica `UnitaOperativa` (2026-09-26)
+
+Emersa lavorando su `govpay-pendenze-api`: risolvere `idUnitaOperativa`
+(codice, non id numerico — stessa convenzione di `idA2A`/`idDominio`,
+verificata nel legacy: `PutUnitaOperativaDTO.idUo`) richiede un'anagrafica che
+non esiste affatto in `govpay-common` (a differenza di `Applicazione`/
+`Dominio`, già presenti). `UnitaOperativa` è comunque un concetto legacy reale
+(tabella `uo`, non una tabella nuova — riuso diretto, stesso principio di
+§17), solo mai portato su `govpay-common`.
+
+Decisione del lead: nasce in `govpay-common-pendenze` (non in `govpay-common`,
+condivisa con la 3.10.x, la cui strategia di release per l'aggiunta di novità
+è da chiarire) — se `govpay-console-api` passerà alla 3.11.x dipendendo da
+questa libreria (come previsto), questa resta la sua sede naturale, non un
+ripiego da migrare poi. Mappata per intero (tutte le colonne reali di `uo`,
+nessuna omissione), anche se per ora serve solo a risolvere l'FK in
+scrittura — l'anagrafica in lettura (`GET /domini/{idDominio}/unita-operative/{idUnitaOperativa}`)
+resta lavoro separato.
+
+## Stato dei test
+
+100 test totali, tutti verdi (`mvn clean test`).

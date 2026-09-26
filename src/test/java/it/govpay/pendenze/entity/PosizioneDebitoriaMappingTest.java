@@ -71,6 +71,7 @@ class PosizioneDebitoriaMappingTest {
         assertThat(riletta.getIdApplicazione()).isEqualTo(1L);
         assertThat(riletta.getIdPosizioneDebitoria()).isEqualTo("abcdef12345");
         assertThat(riletta.getDataCreazione().toInstant()).isEqualTo(ADESSO.toInstant());
+        assertThat(riletta.getDataPubblicazione()).isEqualTo(LocalDate.of(2026, 8, 1));
         assertThat(riletta.isNotificaSend()).isFalse();
 
         assertThat(riletta.getSoggettiDebitori()).hasSize(1);
@@ -174,6 +175,7 @@ class PosizioneDebitoriaMappingTest {
         posizione.setIdPosizioneDebitoria("abcdef12345");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("Sanzione CdS n. abc00000");
+        posizione.setDataPubblicazione(LocalDate.of(2026, 8, 1));
         posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
         posizione.setDataUltimoAggiornamento(ADESSO);

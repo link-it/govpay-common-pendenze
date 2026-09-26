@@ -432,6 +432,128 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("trovaPerIdentificativo non trova una posizione con dataPubblicazione futura: si comporta "
+            + "come se non esistesse (semantica dello YAML v3, decisione del lead 2026-09-26)")
+    void trovaPerIdentificativoNonTrovaPosizioneNonAncoraPubblicata() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-NON-PUBBLICATA"));
+        posizione.setIdPosizioneDebitoria("pos-non-pubblicata");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.setDataPubblicazione(LocalDate.now().plusDays(30));
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        service.crea(posizione);
+
+        assertThat(service.trovaPerIdentificativo("A2A-NON-PUBBLICATA", "pos-non-pubblicata")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("trovaPerIdentificativo trova una posizione con dataPubblicazione nulla o gia' passata: "
+            + "NULL significa sempre pubblicata subito, anche per le posizioni create da v2/migrazione, "
+            + "che non hanno mai avuto questo concetto")
+    void trovaPerIdentificativoTrovaPosizionePubblicataONulla() {
+        PosizioneDebitoria conDataNulla = new PosizioneDebitoria();
+        conDataNulla.setIdApplicazione(idApplicazionePer("A2A-PUBBLICATA"));
+        conDataNulla.setIdPosizioneDebitoria("pos-pubblicata-nulla");
+        conDataNulla.setIdDominio(1L);
+        conDataNulla.setDescrizione("test");
+        conDataNulla.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(conDataNulla, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        service.crea(conDataNulla);
+
+        PosizioneDebitoria conDataPassata = new PosizioneDebitoria();
+        conDataPassata.setIdApplicazione(idApplicazionePer("A2A-PUBBLICATA"));
+        conDataPassata.setIdPosizioneDebitoria("pos-pubblicata-passata");
+        conDataPassata.setIdDominio(1L);
+        conDataPassata.setDescrizione("test");
+        conDataPassata.setDataPubblicazione(LocalDate.now().minusDays(1));
+        conDataPassata.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(conDataPassata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+        service.crea(conDataPassata);
+
+        assertThat(service.trovaPerIdentificativo("A2A-PUBBLICATA", "pos-pubblicata-nulla")).isPresent();
+        assertThat(service.trovaPerIdentificativo("A2A-PUBBLICATA", "pos-pubblicata-passata")).isPresent();
+    }
+
+    @Test
+    @DisplayName("cercaPerDebitore esclude le posizioni non ancora pubblicate")
+    void cercaPerDebitoreEsclugePosizioneNonPubblicata() {
+        PosizioneDebitoria pubblicata = new PosizioneDebitoria();
+        pubblicata.setIdApplicazione(idApplicazionePer("A2A-CERCA-PUBBLICAZIONE"));
+        pubblicata.setIdPosizioneDebitoria("pos-cp-pubblicata");
+        pubblicata.setIdDominio(1L);
+        pubblicata.setDescrizione("test");
+        pubblicata.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(pubblicata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        service.crea(pubblicata);
+
+        PosizioneDebitoria nonPubblicata = new PosizioneDebitoria();
+        nonPubblicata.setIdApplicazione(idApplicazionePer("A2A-CERCA-PUBBLICAZIONE"));
+        nonPubblicata.setIdPosizioneDebitoria("pos-cp-non-pubblicata");
+        nonPubblicata.setIdDominio(1L);
+        nonPubblicata.setDescrizione("test");
+        nonPubblicata.setDataPubblicazione(LocalDate.now().plusDays(30));
+        nonPubblicata.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(nonPubblicata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+        service.crea(nonPubblicata);
+
+        PaginaRisultati<PosizioneDebitoria> risultato = service.cercaPerDebitore("A2A-CERCA-PUBBLICAZIONE",
+                "RSSMRA80A01H501U", OffsetPageRequest.of(0, 10));
+
+        assertThat(risultato.numeroRisultatiTotali()).isEqualTo(1);
+        assertThat(risultato.risultati()).extracting(PosizioneDebitoria::getIdPosizioneDebitoria)
+                .containsExactly("pos-cp-pubblicata");
+    }
+
+    @Test
+    @DisplayName("cercaPendenze esclude le pendenze la cui posizione non e' ancora pubblicata")
+    void cercaPendenzeEsclugePendenzaDiPosizioneNonPubblicata() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-CERCA-PENDENZE-PUBBLICAZIONE"));
+        posizione.setIdPosizioneDebitoria("pos-cpp-non-pubblicata");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.setDataPubblicazione(LocalDate.now().plusDays(30));
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        OpzionePagamento opzione = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        String numeroAvviso = opzione.getPendenze().get(0).getNumeroAvviso();
+        service.crea(posizione);
+
+        PaginaRisultati<Pendenza> risultato = service.cercaPendenze("A2A-CERCA-PENDENZE-PUBBLICAZIONE", numeroAvviso,
+                null, OffsetPageRequest.of(0, 10));
+
+        assertThat(risultato.numeroRisultatiTotali()).isZero();
+    }
+
+    @Test
+    @DisplayName("cercaPendenze trova comunque una pendenza priva di opzionePagamento (creata da v2/migrazione, "
+            + "che non ha mai avuto il concetto di posizione/pubblicazione), indipendentemente da qualunque "
+            + "dataPubblicazione")
+    void cercaPendenzeTrovaPendenzaSenzaOpzionePagamento() {
+        Long idApplicazione = idApplicazionePer("A2A-PENDENZA-V2");
+
+        Pendenza pendenzaV2 = new Pendenza();
+        pendenzaV2.setIdApplicazione(idApplicazione);
+        pendenzaV2.setIdDominio(1L);
+        pendenzaV2.setIdPendenza("pendenza-v2");
+        pendenzaV2.setIdTipoPendenza(1L);
+        pendenzaV2.setIdTipoVersamento(1L);
+        pendenzaV2.setImporto(10.00);
+        pendenzaV2.setNumeroAvviso("300000000000000v2");
+        pendenzaV2.setDataCaricamento(LocalDate.of(2020, 1, 1));
+        pendenzaV2.setDataCreazione(java.time.OffsetDateTime.now());
+        pendenzaV2.setDataUltimoAggiornamento(java.time.OffsetDateTime.now());
+        em.persistAndFlush(pendenzaV2);
+
+        PaginaRisultati<Pendenza> risultato = service.cercaPendenze("A2A-PENDENZA-V2", "300000000000000v2", null,
+                OffsetPageRequest.of(0, 10));
+
+        assertThat(risultato.numeroRisultatiTotali()).isEqualTo(1);
+        assertThat(risultato.risultati().get(0).getIdPendenza()).isEqualTo("pendenza-v2");
+    }
+
+    @Test
     @DisplayName("crea rifiuta un numeroAvviso gia' usato da un'altra pendenza dello stesso dominio "
             + "(controllo applicativo, replica VER_025 del legacy: versamenti non ha un vincolo UNIQUE per questo)")
     void creaRifiutaNumeroAvvisoDuplicatoNelloStessoDominio() {

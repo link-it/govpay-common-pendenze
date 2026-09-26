@@ -111,11 +111,45 @@ CREATE TABLE IF NOT EXISTS tipi_vers_domini
 	CONSTRAINT pk_tipi_vers_domini PRIMARY KEY (id)
 );
 
+-- Anagrafica unita' operativa (tabella legacy reale "uo"), non ancora su
+-- govpay-common insieme ad Applicazione/Dominio (decisione del lead,
+-- 2026-09-26) — vedi Javadoc di classe di UnitaOperativa. Nessuna FK reale
+-- verso domini (M4, coerente con documenti/versamenti).
+CREATE SEQUENCE IF NOT EXISTS seq_uo start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS uo
+(
+	cod_uo VARCHAR(35) NOT NULL,
+	abilitato BOOLEAN NOT NULL,
+	uo_codice_identificativo VARCHAR(35),
+	uo_denominazione VARCHAR(70),
+	uo_indirizzo VARCHAR(70),
+	uo_civico VARCHAR(16),
+	uo_cap VARCHAR(16),
+	uo_localita VARCHAR(35),
+	uo_provincia VARCHAR(35),
+	uo_nazione VARCHAR(2),
+	uo_area VARCHAR(255),
+	uo_url_sito_web VARCHAR(255),
+	uo_email VARCHAR(255),
+	uo_pec VARCHAR(255),
+	uo_tel VARCHAR(255),
+	uo_fax VARCHAR(255),
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_uo') NOT NULL,
+	id_dominio BIGINT NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_uo_1 UNIQUE (cod_uo, id_dominio),
+	-- fk/pk keys constraints
+	CONSTRAINT pk_uo PRIMARY KEY (id)
+);
+
 CREATE TABLE IF NOT EXISTS documenti
 (
 	cod_documento VARCHAR(35) NOT NULL,
 	descrizione VARCHAR(255) NOT NULL,
 	-- aggiunte additive per PosizioneDebitoria (assenti nel legacy)
+	data_pubblicazione DATE,
 	notifica_send BOOLEAN NOT NULL,
 	nav_notifica VARCHAR(18),
 	data_ultima_modifica_aca TIMESTAMP,
