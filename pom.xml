@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.gov4j.govpay</groupId>
         <artifactId>govpay-bom</artifactId>
-        <version>2.0.4-SNAPSHOT</version>
+        <version>2.0.5-SNAPSHOT</version>
         <relativePath/>
     </parent>
 
@@ -41,6 +41,8 @@
 
     <properties>
         <sonar.coverage.jacoco.xmlReportPaths>${project.basedir}/target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+        <!-- govpay-common (not in BOM) -->
+        <govpay-common.version>2.0.4-SNAPSHOT</govpay-common.version>
     </properties>
 
     <dependencies>
@@ -48,6 +50,13 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- GovPay Common: utility condivise (es. IuvUtils, DateTimePatterns) -->
+        <dependency>
+            <groupId>org.gov4j.govpay</groupId>
+            <artifactId>govpay-common</artifactId>
+            <version>${govpay-common.version}</version>
         </dependency>
 
         <!-- Jackson 3: serializzazione dei campi JSON (proprieta' pendenza) -->
