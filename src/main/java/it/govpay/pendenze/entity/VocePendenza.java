@@ -50,6 +50,10 @@ import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
  * {@code proprietaCustom}, {@code DettaglioContabile} ha {@code tipo}) — decisione del
  * lead, 2026-09-25, la compatibilita' si gestisce a livello applicativo (ragioneria v3),
  * non con una colonna separata.</p>
+ *
+ * <p>{@link #idDominio} e' invece una colonna legacy reale rimasta fuori dalla mappatura
+ * iniziale (multi-beneficiario pagoPA), ripristinata il 2026-09-26 — vedi Javadoc del
+ * campo.</p>
  */
 @Entity
 @Table(name = "singoli_versamenti", uniqueConstraints = @UniqueConstraint(
@@ -78,6 +82,23 @@ public class VocePendenza {
     /** Ordine (1-5) della voce all'interno della pendenza. */
     @Column(name = "indice_dati", nullable = false)
     private int indice;
+
+    /**
+     * Dominio creditore di questa voce, se diverso da quello della pendenza/posizione (caso
+     * multi-beneficiario pagoPA: un avviso con voci destinate a enti creditori diversi).
+     * Colonna legacy reale ({@code singoli_versamenti.id_dominio}, FK verso {@code domini}),
+     * mai mappata finora — stessa causa di omissione gia' vista per
+     * {@code PosizioneDebitoria.dataPubblicazione} (individuata e corretta dal lead,
+     * 2026-09-26). A differenza di li', qui {@code NULL} non basta a significare "eredita
+     * dal padre": {@link it.govpay.pendenze.service.PosizioneDebitoriaService#crea} la
+     * materializza sempre esplicitamente al valore della posizione se il chiamante non
+     * indica un override — stesso principio gia' in uso per {@link Pendenza#getIdDominio()}
+     * (mai lasciato implicito rispetto alla posizione), confermato anche dal comportamento
+     * del legacy ({@code VersamentoUtils.toSingoloVersamentoModel}: se {@code codDominio} e'
+     * assente sulla voce, usa comunque quello del versamento, non lo lascia indefinito).
+     */
+    @Column(name = "id_dominio")
+    private Long idDominio;
 
     @Column(name = "stato_singolo_versamento", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)
@@ -181,6 +202,14 @@ public class VocePendenza {
 
     public void setIndice(int indice) {
         this.indice = indice;
+    }
+
+    public Long getIdDominio() {
+        return idDominio;
+    }
+
+    public void setIdDominio(Long idDominio) {
+        this.idDominio = idDominio;
     }
 
     public StatoVocePendenza getStato() {

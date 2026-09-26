@@ -61,6 +61,7 @@ class PosizioneDebitoriaMappingTest {
         opzione.addPendenza(pendenza);
 
         VocePendenza voce = voceRiferimentoEntrata(1);
+        voce.setIdDominio(99L); // dominio diverso da quello della posizione: multi-beneficiario
         pendenza.addVocePendenza(voce);
 
         em.persistAndFlush(posizione);
@@ -97,6 +98,7 @@ class PosizioneDebitoriaMappingTest {
         VocePendenza voceLetta = pendenzaLetta.getVoci().get(0);
         assertThat(voceLetta.getTipoRiferimento()).isEqualTo(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
         assertThat(voceLetta.getCodEntrata()).isEqualTo("SRV-12345");
+        assertThat(voceLetta.getIdDominio()).isEqualTo(99L);
         assertThat(voceLetta.getIbanAccredito()).isNull();
         assertThat(voceLetta.getDettaglioContabile()).isEmpty();
     }

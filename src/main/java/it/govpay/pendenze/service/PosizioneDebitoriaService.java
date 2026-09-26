@@ -202,6 +202,16 @@ public class PosizioneDebitoriaService {
                 // quel vincolo (unique_pendenze_numero_avviso/iuv su (id_dominio, ...)).
                 pendenza.setIdDominio(posizione.getIdDominio());
 
+                for (VocePendenza voce : pendenza.getVoci()) {
+                    // Multi-beneficiario pagoPA: se il chiamante non indica un dominio
+                    // diverso per questa voce, eredita quello della posizione — mai
+                    // lasciato implicito (stesso principio di Pendenza.idDominio sopra,
+                    // vedi Javadoc di VocePendenza.idDominio).
+                    if (voce.getIdDominio() == null) {
+                        voce.setIdDominio(posizione.getIdDominio());
+                    }
+                }
+
                 assegnaIdentificativiPagamento(posizione, pendenza);
             }
         }

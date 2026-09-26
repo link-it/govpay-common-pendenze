@@ -1036,6 +1036,60 @@ nessuna omissione), anche se per ora serve solo a risolvere l'FK in
 scrittura — l'anagrafica in lettura (`GET /domini/{idDominio}/unita-operative/{idUnitaOperativa}`)
 resta lavoro separato.
 
+## Anagrafica `TipoVersamento`/`TipoVersamentoDominio` (2026-09-26)
+
+Stesso gap di `UnitaOperativa`, emerso per la stessa ragione: `idTipoPendenza`
+dello YAML v3 (`NuovaPendenza.idTipoPendenza`, es. `IMU`) è un codice
+testuale — verificato nel legacy, `Versamento.SingoloVersamento.codDominio` è
+lo stesso pattern per l'analogo campo dominio — che va risolto negli ID
+numerici `Pendenza.idTipoVersamento` (catalogo astratto) e
+`Pendenza.idTipoPendenza` (= `id_tipo_versamento_dominio`, l'istanza/override
+per dominio). Nessuna anagrafica JPA esisteva per questo, né in
+`govpay-common` né qui.
+
+Risoluzione legacy verificata: `AnagraficaManager.getTipoVersamentoDominio(configWrapper,
+idDominio, codTipoVersamento)` — `codTipoVersamento` univoco *globalmente* nel
+catalogo (`unique_tipi_versamento_1`), l'override è univoco per
+`(idDominio, idTipoVersamento)`; se non trovato, il percorso REST "custom"
+(il più vicino concettualmente a questa v3) rifiuta esplicitamente, **nessun
+fallback automatico** su un dominio di default (l'auto-censimento esiste solo
+nel percorso v2 "flessibile", non riprodotto qui).
+
+**Proiezione minimale, non piena fedeltà** (decisione del lead, 2026-09-26,
+dopo aver verificato la DDL reale — la scelta iniziale, per analogia con
+`UnitaOperativa`, era piena fedeltà, poi corretta): `tipi_versamento` ha ~55
+colonne, quasi tutte configurazione di stampa/notifica del BackOffice legacy
+(form BO/PagOffice, template email/AppIO di promemoria, tracciati CSV) che la
+v3 non usa mai (ha il proprio `notificaSend`/`dataPubblicazione`). Mappate
+solo `codTipoVersamento`/`descrizione`/`abilitato` su `TipoVersamento`, e la
+sola relazione verso di esso (più `idDominio`, FK piatta M4) su
+`TipoVersamentoDominio` — sufficienti a risolvere il codice negli ID
+richiesti, senza portarsi dietro superficie JPA per campi che questo
+microservizio non userà mai. `TipoVersamentoDominioRepository.findByCodTipoVersamentoAndIdDominio`
+risolve entrambi gli ID in un'unica interrogazione.
+
+## `VocePendenza.idDominio` ripristinato (2026-09-26)
+
+Stessa causa di omissione di `PosizioneDebitoria.dataPubblicazione` (§24):
+`singoli_versamenti.id_dominio` è una colonna legacy **reale** (FK verso
+`domini`, nullable) — concetto pagoPA di multi-beneficiario, un avviso con
+voci destinate a enti creditori diversi — mai mappata su `VocePendenza`.
+Individuata lavorando sul converter di `govpay-pendenze-api`, quando le 3
+varianti di `NuovaVocePendenza` dello YAML si sono rivelate avere tutte un
+`idDominio` opzionale (stesso pattern/convenzione di `idDominio` di
+posizione: codice testuale, non id numerico — confermato nel legacy,
+`PendenzeConverter.java`: `sv.setCodDominio(vocePendenza.getIdDominio())`)
+mentre l'entity non aveva alcuna colonna corrispondente.
+
+A differenza di `dataPubblicazione`, qui `NULL` non basta a significare
+"eredita dal padre": `PosizioneDebitoriaService.crea()` materializza sempre
+esplicitamente `VocePendenza.idDominio` al valore della posizione se il
+chiamante non indica un override — stesso principio già in uso per
+`Pendenza.idDominio` (mai lasciato implicito), confermato anche dal
+comportamento del legacy (`VersamentoUtils.toSingoloVersamentoModel`: se
+`codDominio` è assente sulla voce, usa comunque quello del versamento, non lo
+lascia indefinito).
+
 ## Stato dei test
 
-100 test totali, tutti verdi (`mvn clean test`).
+105 test totali, tutti verdi (`mvn clean test`).

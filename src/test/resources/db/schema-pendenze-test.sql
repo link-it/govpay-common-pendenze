@@ -69,13 +69,17 @@
 --     ("VEDERE_SOGGETTI_DEBITORI"/"Vedere tabella soggetti_debitori"); il
 --     nullable debitore_tipo resta indefinito.
 --
--- tipi_versamento/tipi_vers_domini: anagrafica esterna REALE (FK obbligatoria
--- da versamenti), trattata come M4 (FK piatta Long, nessuna relazione JPA,
--- questa libreria non la modella ne' la scrive: "modello 4"/avvisatura restano
--- fuori perimetro, decisione del lead). Qui solo un sottoinsieme minimo di
--- colonne, sufficiente per righe segnaposto nei test — la vera tabella di
--- produzione ha decine di colonne bo_*/pag_*/avv_* che questa libreria non usa
--- mai (stesso principio gia' applicato sopra a domini/applicazioni).
+-- tipi_versamento/tipi_vers_domini: anagrafica legacy reale (FK obbligatoria
+-- da versamenti), come UnitaOperativa non ancora su govpay-common (decisione
+-- del lead, 2026-09-26) — modellata qui via JPA (TipoVersamento/
+-- TipoVersamentoDominio) per risolvere idTipoPendenza (codice) negli ID
+-- numerici richiesti da Pendenza. Proiezione MINIMALE, non piena fedelta'
+-- (deciso dopo aver verificato la DDL reale): la vera tabella di produzione ha
+-- ~55 colonne bo_*/pag_*/avv_*/trac_csv_* (form e notifiche del BackOffice
+-- legacy) che questa libreria non usa mai — vedi Javadoc di classe di
+-- TipoVersamento. id_dominio su tipi_vers_domini resta M4 (FK piatta Long,
+-- nessuna relazione JPA verso l'anagrafica esterna, nessuna FK reale qui
+-- sotto), stesso principio gia' applicato sopra a domini/applicazioni.
 -- ---------------------------------------------------------------------------
 
 CREATE SEQUENCE IF NOT EXISTS seq_documenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
@@ -86,7 +90,7 @@ CREATE SEQUENCE IF NOT EXISTS seq_soggetti_debitori start 1 increment 1 maxvalue
 CREATE SEQUENCE IF NOT EXISTS seq_tipi_versamento start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS seq_tipi_vers_domini start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 
--- Sottoinsieme minimo, non modellato via JPA (M4) — vedi nota di testata.
+-- Proiezione minimale, modellata via JPA (TipoVersamento) — vedi nota di testata.
 CREATE TABLE IF NOT EXISTS tipi_versamento
 (
 	cod_tipo_versamento VARCHAR(35) NOT NULL,
@@ -98,7 +102,7 @@ CREATE TABLE IF NOT EXISTS tipi_versamento
 	CONSTRAINT pk_tipi_versamento PRIMARY KEY (id)
 );
 
--- Sottoinsieme minimo, non modellato via JPA (M4) — vedi nota di testata.
+-- Proiezione minimale, modellata via JPA (TipoVersamentoDominio) — vedi nota di testata.
 CREATE TABLE IF NOT EXISTS tipi_vers_domini
 (
 	codifica_iuv VARCHAR(4),
@@ -325,6 +329,12 @@ CREATE TABLE IF NOT EXISTS singoli_versamenti
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_singoli_versamenti') NOT NULL,
 	id_versamento BIGINT NOT NULL,
+	-- Colonna legacy reale, stesso nome: dominio creditore di questa voce, se
+	-- diverso da quello della pendenza/posizione (multi-beneficiario pagoPA) —
+	-- mai mappata finora, ripristinata il 2026-09-26 (vedi Javadoc di
+	-- VocePendenza.idDominio). Nessuna FK reale verso domini (M4, coerente con
+	-- documenti/versamenti sopra).
+	id_dominio BIGINT,
 	-- unique constraints
 	CONSTRAINT unique_sng_id_voce UNIQUE (id_versamento, indice_dati),
 	-- fk/pk keys constraints

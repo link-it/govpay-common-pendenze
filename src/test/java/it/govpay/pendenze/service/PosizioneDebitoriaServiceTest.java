@@ -230,6 +230,33 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("crea valorizza VocePendenza.idDominio con quello della posizione se il chiamante "
+            + "non indica un override esplicito (multi-beneficiario pagoPA)")
+    void creaValorizzaIdDominioVoceConQuelloDellaPosizioneSeAssente() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        VocePendenza voce = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci().get(0);
+        voce.setIdDominio(null);
+
+        service.crea(posizione);
+
+        assertThat(voce.getIdDominio()).isEqualTo(posizione.getIdDominio());
+    }
+
+    @Test
+    @DisplayName("crea mantiene l'idDominio esplicito di una voce se diverso da quello della posizione "
+            + "(multi-beneficiario pagoPA: entrata destinata a un ente creditore diverso)")
+    void creaMantieneIdDominioEsplicitoDellaVoceSeDiverso() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        VocePendenza voce = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci().get(0);
+        voce.setIdDominio(99L);
+
+        service.crea(posizione);
+
+        assertThat(voce.getIdDominio()).isEqualTo(99L);
+        assertThat(voce.getIdDominio()).isNotEqualTo(posizione.getIdDominio());
+    }
+
+    @Test
     @DisplayName("crea rifiuta notificaSend attivo senza navNotifica se non c'e' SOLUZIONE_UNICA ne' PIANO_RATEALE")
     void creaRifiutaNotificaSendSenzaCandidatoPerNavNotifica() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
