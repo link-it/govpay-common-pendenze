@@ -998,24 +998,27 @@ Colonna aggiunta (nona, non ottava — vedi §17): `documenti.data_pubblicazione
 significa "pubblicata subito", esattamente il significato corretto anche per
 le righe v2 esistenti).
 
-**Logica applicativa implementata** ("la posizione si comporta come se non
-esistesse per qualsiasi ricerca/pagamento" prima di quella data, semantica
-dello YAML v3): `PosizioneDebitoriaRepository.findByIdApplicazioneAndIdPosizioneDebitoria`/
+**Logica applicativa implementata il 2026-09-26, poi rimossa il 2026-09-27 —
+non riaprire senza rileggere §27 per intero.** Prima versione: `dataPubblicazione
+is null or dataPubblicazione <= :oggi` filtrato direttamente in
+`PosizioneDebitoriaRepository.findByIdApplicazioneAndIdPosizioneDebitoria`/
 `findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo` e
 `PendenzaRepository.findByIdApplicazioneAndNumeroAvviso`/
-`findByIdApplicazioneAndNumeroAvvisoAndIdDominio` filtrano tutti su
-`dataPubblicazione is null or dataPubblicazione <= :oggi` (`oggi` sempre dal
-`Clock` della libreria, mai da una funzione DB). Per `Pendenza` il filtro passa
-per un `left join` opzionale fino a `PosizioneDebitoria` (via
-`opzionePagamento`, esso stesso nullable): una pendenza priva di
-`opzionePagamento` — creata da v2, o derivante da migrazione, che non hanno mai
-avuto il concetto di posizione/pubblicazione — resta sempre visibile,
-indipendentemente da qualunque `dataPubblicazione`. Deliberatamente **non**
-filtrati: `existsByIdApplicazioneAndIdPosizioneDebitoria` (il controllo duplicati
-in scrittura deve valere comunque, non ha senso lasciar creare una seconda
-posizione "perché la prima non è ancora pubblicata") e `trovaPerId` (lookup
-tecnico interno, non una ricerca pubblica). La futura verifica pagamento resta
-fuori da questo giro.
+`findByIdApplicazioneAndNumeroAvvisoAndIdDominio` (con un `left join` opzionale
+per `Pendenza`, per non nascondere le pendenze v2 prive di `opzionePagamento`).
+Rimossa perché applicata al consumatore sbagliato: la frase completa dello
+YAML v3 è "si comporta come se non esistesse per qualsiasi ricerca/pagamento
+**esterno** (Nodo dei Pagamenti, ricerca per avviso); resta invece **sempre
+visibile e gestibile per l'applicazione che l'ha creata**" — e ogni chiamante
+di questi metodi, tramite `PosizioneDebitoriaService`, è sempre l'applicazione
+proprietaria (identificata da `idA2A`/`idApplicazione`), mai un consumatore
+realmente esterno. Dettaglio completo del ragionamento e della verifica
+(nessun precedente nel legacy, nessuna menzione nella issue GitHub originale,
+ogni endpoint dello YAML è scoped su `{idA2A}`) in §27. Il campo
+`dataPubblicazione` resta comunque scrivibile/leggibile dal client — questi
+metodi semplicemente non lo usano più per nascondere risultati.
+`existsByIdApplicazioneAndIdPosizioneDebitoria` e `trovaPerId` non erano mai
+stati filtrati.
 
 ## Anagrafica `UnitaOperativa` (2026-09-26)
 
@@ -1159,6 +1162,62 @@ un solo thread la finestra di corsa fra il controllo preliminare e l'INSERT
 reale, verificato disattivando temporaneamente il fix e confermando che il
 test lo intercetta davvero (segnala `unique_documenti_1`, non tradotto).
 
+## 27. Filtro `dataPubblicazione` rimosso dalle ricerche: era per il consumatore sbagliato (2026-09-27)
+
+Riaperta la questione — voluta dal lead esplicitamente "una volta per tutte,
+per evitare di doverci ritornare" — se il filtro §24 (introdotto il 2026-09-26,
+poi rimosso qui) fosse corretto per `govpay-pendenze-api`. Tre riscontri,
+raccolti prima di decidere:
+
+1. **Nessun precedente nel legacy**: verificato a fondo (`versamenti` e tutti
+   i dialetti SQL) — l'unica colonna "pubblicazione" esistente è
+   `fr.data_ora_pubblicazione` (rendicontazione bancaria, concetto estraneo).
+   `dataValidita` ha semantica opposta (fine, non inizio, validità).
+   `avviso_notificato`/`data_notifica_avviso` serve solo a schedulare
+   promemoria, mai a nascondere pagamento o ricerca. Conferma che
+   `dataPubblicazione` è una novità pura della v3, sempre `NULL` sui documenti
+   v2/migrati (comportamento già corretto, invariato da questa modifica).
+2. **La issue GitHub originale del microservizio non la menziona affatto**:
+   l'unica fonte di questa semantica è la descrizione inline del campo nello
+   YAML.
+3. **Quella descrizione, letta per intero**, dice: *"Fino a tale data si
+   comporta come se non esistesse per qualsiasi ricerca/pagamento **esterno**
+   (Nodo dei Pagamenti, ricerca per avviso); resta invece **sempre visibile e
+   gestibile per l'applicazione che l'ha creata**."* — e **ogni** operazione
+   di `govpay-api-pendenze.yaml` è scoped su `{idA2A}`: non esiste, in questo
+   YAML, un'operazione che rappresenti il Nodo dei Pagamenti o un chiamante
+   davvero esterno. "Ricerca/pagamento esterno" si riferisce verosimilmente
+   alla reale interazione col Nodo (verifica/attivazione RPT), che nel
+   monorepo legacy vive in un livello completamente diverso e in v3 non è
+   ancora stata progettata né costruita come servizio.
+
+**Decisione**: il filtro va rimosso da `trovaPerIdentificativo`/
+`cercaPerDebitore`/`cercaPendenze` (unici chiamanti attuali, sempre
+l'applicazione proprietaria) — vedi §24 per il dettaglio tecnico della
+rimozione. Se in futuro nascerà un servizio che implementa la verifica
+pagamento verso il Nodo, dovrà applicare questo filtro con una propria query,
+non riusando questi metodi pensati per il gestionale.
+
+**Nota collaterale emersa durante questa verifica, non ancora affrontata**:
+esiste nel legacy un meccanismo reale di autorizzazione per dominio
+(tabella `utenze_domini`, many-to-many utenza↔dominio con `id_uo` opzionale,
+flag `autorizzazione_domini_star` per bypassarla; classe
+`AuthorizationManager`/`AutorizzazioneUtils` in `jars/core`, usata in modo
+pervasivo in api-backoffice/api-ragioneria e nel listato di api-pendenze
+**v1**). **api-pendenze v2** (il predecessore diretto di questa v3) è invece
+più permissivo: il listato filtra solo per `idA2A` ("un'applicazione vede solo
+le sue pendenze", commento esplicito nel codice), non per domini autorizzati;
+il controllo di autorizzazione sul dominio scatta lì solo puntualmente, in
+lettura/patch di una singola pendenza. **`govpay-pendenze-api` oggi non
+implementa alcun controllo di questo tipo**: `risolviIdDominio` nel converter
+verifica solo che il dominio esista, non che l'applicazione chiamante sia
+autorizzata su di esso — un'applicazione potrebbe creare una posizione
+debitoria per qualsiasi dominio censito. Il lead deve verificare con l'autore
+della specifica quale dei due modelli (v1 restrittivo, v2 permissivo) la v3
+debba seguire, prima che questo venga implementato. Richiederebbe comunque una
+nuova anagrafica (`Utenza`/`UtenzeDomini`), non ancora presente da nessuna
+parte per questa libreria.
+
 ## Stato dei test
 
-109 test totali, tutti verdi (`mvn clean test`).
+108 test totali, tutti verdi (`mvn clean test`).

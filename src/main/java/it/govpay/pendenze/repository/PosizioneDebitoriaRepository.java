@@ -1,13 +1,10 @@
 package it.govpay.pendenze.repository;
 
-import java.time.LocalDate;
 import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 
@@ -23,31 +20,26 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * {@code PosizioneDebitoria} da quando e' mappata su {@code documenti} — coincide con
      * {@code Applicazione.codApplicazione}).
      *
-     * <p>Filtra {@link PosizioneDebitoria#getDataPubblicazione()} (decisione del lead,
-     * 2026-09-26): una posizione non ancora pubblicata "si comporta come se non esistesse per
-     * qualsiasi ricerca" (semantica dello YAML v3) — {@code NULL} significa sempre visibile
-     * (pubblicata subito, compreso il caso delle posizioni create da v2/migrazione, che non
-     * hanno mai avuto questo concetto). {@code oggi} viene dal {@link java.time.Clock} del
-     * chiamante, mai da una funzione DB, per restare coerente col resto della libreria.</p>
+     * <p><b>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()}</b> (decisione del
+     * lead, 2026-09-27, dopo un tentativo intermedio di filtrare poi scartato — non riaprire
+     * senza rileggere §24/§27 di {@code proposta-modello-nativo-v3.md}): lo YAML v3 dice che una
+     * posizione non ancora pubblicata "si comporta come se non esistesse per qualsiasi
+     * ricerca/pagamento <i>esterno</i>... resta invece sempre visibile e gestibile per
+     * l'applicazione che l'ha creata". Ogni chiamante di questo metodo (tramite
+     * {@code PosizioneDebitoriaService}) e' sempre l'applicazione proprietaria, identificata da
+     * {@code idApplicazione}/{@code idA2A} — mai un consumatore realmente esterno (es. la
+     * verifica pagamento verso il Nodo dei Pagamenti, che non passa da questa API e non esiste
+     * ancora come servizio). Filtrare qui avrebbe nascosto la posizione proprio a chi la spec
+     * dice debba vederla sempre.</p>
      *
      * @param idApplicazione       FK verso l'anagrafica esterna del gestionale responsabile
      * @param idPosizioneDebitoria identificativo della posizione nel gestionale
-     * @param oggi                 data odierna, dal {@code Clock} del chiamante
-     * @return la posizione, se esiste ed e' gia' pubblicata
+     * @return la posizione, se esiste
      */
-    @Query("select p from PosizioneDebitoria p where p.idApplicazione = :idApplicazione "
-            + "and p.idPosizioneDebitoria = :idPosizioneDebitoria "
-            + "and (p.dataPubblicazione is null or p.dataPubblicazione <= :oggi)")
-    Optional<PosizioneDebitoria> findByIdApplicazioneAndIdPosizioneDebitoria(
-            @Param("idApplicazione") Long idApplicazione,
-            @Param("idPosizioneDebitoria") String idPosizioneDebitoria, @Param("oggi") LocalDate oggi);
+    Optional<PosizioneDebitoria> findByIdApplicazioneAndIdPosizioneDebitoria(Long idApplicazione,
+            String idPosizioneDebitoria);
 
     /**
-     * Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()}: la duplicazione
-     * dell'identificativo va rifiutata comunque, indipendentemente da quando la posizione
-     * esistente diventera' visibile — non ha senso lasciarne creare una seconda "perche' la
-     * prima non e' ancora pubblicata".
-     *
      * @param idApplicazione       FK verso l'anagrafica esterna del gestionale responsabile
      * @param idPosizioneDebitoria identificativo della posizione nel gestionale
      * @return {@code true} se esiste gia' una posizione con questa chiave logica
@@ -62,19 +54,14 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * debitori in solido). {@code distinct} evita duplicati se piu' soggetti della stessa
      * posizione avessero — per un dato scorretto — lo stesso identificativo.
      *
-     * <p>Filtra {@link PosizioneDebitoria#getDataPubblicazione()} — vedi Javadoc di
+     * <p>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()} — vedi Javadoc di
      * {@link #findByIdApplicazioneAndIdPosizioneDebitoria}.</p>
      *
      * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
      * @param idDebitore     identificativo (codice fiscale/partita IVA) di un soggetto debitore
-     * @param oggi           data odierna, dal {@code Clock} del chiamante
      * @param pageable       paginazione e ordinamento richiesti
      * @return la pagina di posizioni debitorie che rispettano il filtro
      */
-    @Query("select distinct p from PosizioneDebitoria p join p.soggettiDebitori sd "
-            + "where p.idApplicazione = :idApplicazione and sd.identificativo = :idDebitore "
-            + "and (p.dataPubblicazione is null or p.dataPubblicazione <= :oggi)")
-    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(
-            @Param("idApplicazione") Long idApplicazione, @Param("idDebitore") String idDebitore,
-            @Param("oggi") LocalDate oggi, Pageable pageable);
+    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(Long idApplicazione,
+            String idDebitore, Pageable pageable);
 }

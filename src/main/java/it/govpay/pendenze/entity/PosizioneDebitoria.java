@@ -96,6 +96,16 @@ public class PosizioneDebitoria {
      * significa "pubblicata subito" (semantica dello YAML v3). Presente nel primissimo
      * disegno di questa entità (§3.1 di {@code proposta-modello-nativo-v3.md}), persa
      * durante il pivot al riuso delle tabelle legacy (§17) e ripristinata il 2026-09-26.
+     *
+     * <p><b>Non e' un filtro di lettura di questa libreria</b> (decisione del lead,
+     * 2026-09-27, dopo un tentativo intermedio poi scartato — non riaprire senza rileggere
+     * §24/§27 del documento): "diventa visibile" nello YAML v3 significa "per ricerca/
+     * pagamento esterno (Nodo dei Pagamenti)... resta invece sempre visibile e gestibile per
+     * l'applicazione che l'ha creata" — e ogni chiamante di
+     * {@code PosizioneDebitoriaService#trovaPerIdentificativo}/{@code cercaPerDebitore} e'
+     * sempre l'applicazione proprietaria. Un futuro consumatore che implementi la verifica
+     * pagamento verso il Nodo (non ancora esistente) dovra' applicare questo filtro da se',
+     * con una propria query — non riusando questi metodi.</p>
      */
     @Column(name = "data_pubblicazione")
     private LocalDate dataPubblicazione;

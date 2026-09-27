@@ -473,9 +473,14 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("trovaPerIdentificativo non trova una posizione con dataPubblicazione futura: si comporta "
-            + "come se non esistesse (semantica dello YAML v3, decisione del lead 2026-09-26)")
-    void trovaPerIdentificativoNonTrovaPosizioneNonAncoraPubblicata() {
+    @DisplayName("trovaPerIdentificativo trova comunque una posizione con dataPubblicazione futura: lo YAML v3 "
+            + "dice che una posizione non pubblicata resta invisibile solo per ricerca/pagamento ESTERNO "
+            + "(Nodo dei Pagamenti), ma sempre visibile e gestibile per l'applicazione che l'ha creata — "
+            + "decisione del lead, 2026-09-27, che corregge un filtro incondizionato introdotto il 2026-09-26: "
+            + "ogni chiamante di questo metodo e' sempre l'applicazione proprietaria (mai un consumatore "
+            + "realmente esterno), quindi filtrare qui era sbagliato — vedi Javadoc di "
+            + "PosizioneDebitoriaRepository#findByIdApplicazioneAndIdPosizioneDebitoria")
+    void trovaPerIdentificativoTrovaPosizioneAncheSeNonAncoraPubblicata() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(idApplicazionePer("A2A-NON-PUBBLICATA"));
         posizione.setIdPosizioneDebitoria("pos-non-pubblicata");
@@ -486,49 +491,13 @@ class PosizioneDebitoriaServiceTest {
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         service.crea(posizione);
 
-        assertThat(service.trovaPerIdentificativo("A2A-NON-PUBBLICATA", "pos-non-pubblicata")).isEmpty();
+        assertThat(service.trovaPerIdentificativo("A2A-NON-PUBBLICATA", "pos-non-pubblicata")).isPresent();
     }
 
     @Test
-    @DisplayName("trovaPerIdentificativo trova una posizione con dataPubblicazione nulla o gia' passata: "
-            + "NULL significa sempre pubblicata subito, anche per le posizioni create da v2/migrazione, "
-            + "che non hanno mai avuto questo concetto")
-    void trovaPerIdentificativoTrovaPosizionePubblicataONulla() {
-        PosizioneDebitoria conDataNulla = new PosizioneDebitoria();
-        conDataNulla.setIdApplicazione(idApplicazionePer("A2A-PUBBLICATA"));
-        conDataNulla.setIdPosizioneDebitoria("pos-pubblicata-nulla");
-        conDataNulla.setIdDominio(1L);
-        conDataNulla.setDescrizione("test");
-        conDataNulla.addSoggettoDebitore(soggettoDiProva());
-        opzioneConPendenza(conDataNulla, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
-        service.crea(conDataNulla);
-
-        PosizioneDebitoria conDataPassata = new PosizioneDebitoria();
-        conDataPassata.setIdApplicazione(idApplicazionePer("A2A-PUBBLICATA"));
-        conDataPassata.setIdPosizioneDebitoria("pos-pubblicata-passata");
-        conDataPassata.setIdDominio(1L);
-        conDataPassata.setDescrizione("test");
-        conDataPassata.setDataPubblicazione(LocalDate.now().minusDays(1));
-        conDataPassata.addSoggettoDebitore(soggettoDiProva());
-        opzioneConPendenza(conDataPassata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
-        service.crea(conDataPassata);
-
-        assertThat(service.trovaPerIdentificativo("A2A-PUBBLICATA", "pos-pubblicata-nulla")).isPresent();
-        assertThat(service.trovaPerIdentificativo("A2A-PUBBLICATA", "pos-pubblicata-passata")).isPresent();
-    }
-
-    @Test
-    @DisplayName("cercaPerDebitore esclude le posizioni non ancora pubblicate")
-    void cercaPerDebitoreEsclugePosizioneNonPubblicata() {
-        PosizioneDebitoria pubblicata = new PosizioneDebitoria();
-        pubblicata.setIdApplicazione(idApplicazionePer("A2A-CERCA-PUBBLICAZIONE"));
-        pubblicata.setIdPosizioneDebitoria("pos-cp-pubblicata");
-        pubblicata.setIdDominio(1L);
-        pubblicata.setDescrizione("test");
-        pubblicata.addSoggettoDebitore(soggettoDiProva());
-        opzioneConPendenza(pubblicata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
-        service.crea(pubblicata);
-
+    @DisplayName("cercaPerDebitore trova comunque una posizione con dataPubblicazione futura — stessa "
+            + "decisione del lead, 2026-09-27, vedi trovaPerIdentificativoTrovaPosizioneAncheSeNonAncoraPubblicata")
+    void cercaPerDebitoreTrovaPosizioneAncheSeNonAncoraPubblicata() {
         PosizioneDebitoria nonPubblicata = new PosizioneDebitoria();
         nonPubblicata.setIdApplicazione(idApplicazionePer("A2A-CERCA-PUBBLICAZIONE"));
         nonPubblicata.setIdPosizioneDebitoria("pos-cp-non-pubblicata");
@@ -536,7 +505,7 @@ class PosizioneDebitoriaServiceTest {
         nonPubblicata.setDescrizione("test");
         nonPubblicata.setDataPubblicazione(LocalDate.now().plusDays(30));
         nonPubblicata.addSoggettoDebitore(soggettoDiProva());
-        opzioneConPendenza(nonPubblicata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+        opzioneConPendenza(nonPubblicata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         service.crea(nonPubblicata);
 
         PaginaRisultati<PosizioneDebitoria> risultato = service.cercaPerDebitore("A2A-CERCA-PUBBLICAZIONE",
@@ -544,12 +513,13 @@ class PosizioneDebitoriaServiceTest {
 
         assertThat(risultato.numeroRisultatiTotali()).isEqualTo(1);
         assertThat(risultato.risultati()).extracting(PosizioneDebitoria::getIdPosizioneDebitoria)
-                .containsExactly("pos-cp-pubblicata");
+                .containsExactly("pos-cp-non-pubblicata");
     }
 
     @Test
-    @DisplayName("cercaPendenze esclude le pendenze la cui posizione non e' ancora pubblicata")
-    void cercaPendenzeEsclugePendenzaDiPosizioneNonPubblicata() {
+    @DisplayName("cercaPendenze trova comunque le pendenze la cui posizione non e' ancora pubblicata — stessa "
+            + "decisione del lead, 2026-09-27, vedi trovaPerIdentificativoTrovaPosizioneAncheSeNonAncoraPubblicata")
+    void cercaPendenzeTrovaPendenzaAncheSePosizioneNonAncoraPubblicata() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(idApplicazionePer("A2A-CERCA-PENDENZE-PUBBLICAZIONE"));
         posizione.setIdPosizioneDebitoria("pos-cpp-non-pubblicata");
@@ -564,13 +534,12 @@ class PosizioneDebitoriaServiceTest {
         PaginaRisultati<Pendenza> risultato = service.cercaPendenze("A2A-CERCA-PENDENZE-PUBBLICAZIONE", numeroAvviso,
                 null, OffsetPageRequest.of(0, 10));
 
-        assertThat(risultato.numeroRisultatiTotali()).isZero();
+        assertThat(risultato.numeroRisultatiTotali()).isEqualTo(1);
     }
 
     @Test
     @DisplayName("cercaPendenze trova comunque una pendenza priva di opzionePagamento (creata da v2/migrazione, "
-            + "che non ha mai avuto il concetto di posizione/pubblicazione), indipendentemente da qualunque "
-            + "dataPubblicazione")
+            + "che non ha mai avuto il concetto di posizione/pubblicazione)")
     void cercaPendenzeTrovaPendenzaSenzaOpzionePagamento() {
         Long idApplicazione = idApplicazionePer("A2A-PENDENZA-V2");
 
