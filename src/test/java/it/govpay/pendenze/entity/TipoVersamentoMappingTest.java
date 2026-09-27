@@ -101,4 +101,59 @@ class TipoVersamentoMappingTest {
 
         assertThat(risolto).isEmpty();
     }
+
+    @Test
+    @DisplayName("getCodificaIuvEffettiva usa l'override per dominio se presente, altrimenti il default "
+            + "del catalogo — bug del lead, 2026-09-27: la prima versione non mappava affatto la codifica "
+            + "IUV, facendo fallire la generazione per i domini con un prefisso %(p)/%(t)")
+    void getCodificaIuvEffettivaUsaOverrideOppureDefault() {
+        TipoVersamento tipoVersamento = new TipoVersamento();
+        tipoVersamento.setCodTipoVersamento("IMU");
+        tipoVersamento.setDescrizione("Imposta Municipale Unica");
+        tipoVersamento.setAbilitato(true);
+        tipoVersamento.setCodificaIuv("9902");
+        em.persistAndFlush(tipoVersamento);
+
+        TipoVersamentoDominio senzaOverride = new TipoVersamentoDominio();
+        senzaOverride.setTipoVersamento(tipoVersamento);
+        senzaOverride.setIdDominio(1L);
+        em.persistAndFlush(senzaOverride);
+
+        TipoVersamentoDominio conOverride = new TipoVersamentoDominio();
+        conOverride.setTipoVersamento(tipoVersamento);
+        conOverride.setIdDominio(2L);
+        conOverride.setCodificaIuv("0099");
+        em.persistAndFlush(conOverride);
+
+        assertThat(senzaOverride.getCodificaIuvEffettiva()).isEqualTo("9902");
+        assertThat(conOverride.getCodificaIuvEffettiva()).isEqualTo("0099");
+    }
+
+    @Test
+    @DisplayName("findByIdFetchTipoVersamento risolve correttamente id e tipoVersamento associato "
+            + "in un'unica interrogazione (join fetch) — bug del lead, 2026-09-27: la sessione "
+            + "Hibernate resta aperta per l'intera durata di un test @DataJpaTest, quindi questo "
+            + "test da solo NON riproduce la LazyInitializationException reale (richiede una vera "
+            + "sessione chiusa, es. open-in-view=false fuori transazione — verificata a livello di "
+            + "integrazione in govpay-pendenze-api, PosizioneDebitoriaControllerTest): qui si "
+            + "verifica solo che il valore risolto sia corretto")
+    void findByIdFetchTipoVersamentoRisolveIlTipoVersamentoAssociato() {
+        TipoVersamento tipoVersamento = new TipoVersamento();
+        tipoVersamento.setCodTipoVersamento("TOSAP");
+        tipoVersamento.setDescrizione("Tassa occupazione spazi e aree pubbliche");
+        tipoVersamento.setAbilitato(true);
+        em.persistAndFlush(tipoVersamento);
+
+        TipoVersamentoDominio override = new TipoVersamentoDominio();
+        override.setTipoVersamento(tipoVersamento);
+        override.setIdDominio(1L);
+        em.persistAndFlush(override);
+        Long id = override.getId();
+        em.clear();
+
+        var risolto = tipoVersamentoDominioRepository.findByIdFetchTipoVersamento(id);
+
+        assertThat(risolto).isPresent();
+        assertThat(risolto.get().getTipoVersamento().getCodTipoVersamento()).isEqualTo("TOSAP");
+    }
 }

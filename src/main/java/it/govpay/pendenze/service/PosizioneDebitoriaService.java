@@ -219,7 +219,17 @@ public class PosizioneDebitoriaService {
         assegnaOValidaNavNotifica(posizione);
 
         try {
-            return posizioneDebitoriaRepository.save(posizione);
+            // saveAndFlush, non save (bug del lead, 2026-09-27): con id generato da
+            // SEQUENCE Hibernate puo' differire l'INSERT fisico oltre il ritorno di save(),
+            // fino al commit della transazione — che avviene FUORI da questo metodo (al
+            // ritorno di crea() al chiamante). La violazione del vincolo UNIQUE emergeva
+            // quindi dopo che questo try/catch era gia' uscito, propagandosi come
+            // DataIntegrityViolationException grezza fino al livello REST (500 anziche' 409)
+            // — la posizione restava comunque salvata (il commit va a buon fine se nessuno
+            // la intercetta), riproducibile anche solo ritentando la stessa richiesta, che
+            // riceveva invece 409 dal controllo existsBy... sopra. saveAndFlush forza
+            // l'INSERT dentro questo blocco, dove puo' essere intercettato.
+            return posizioneDebitoriaRepository.saveAndFlush(posizione);
         } catch (DataIntegrityViolationException e) {
             // Rete di sicurezza contro le creazioni concorrenti (bug del lead, 2026-09-26):
             // il controllo existsBy... sopra e' un check-then-act, non atomico — due richieste
@@ -229,10 +239,57 @@ public class PosizioneDebitoriaService {
             // corrispondere l'identita' pubblica al vincolo): qui se ne traduce la violazione
             // nella stessa eccezione del controllo esplicito, cosi' il chiamante vede sempre
             // RisorsaGiaEsistenteException e non un'eccezione di persistenza generica.
+            //
+            // Riconosce il vincolo specifico (bug del lead, 2026-09-27): tradurre QUALUNQUE
+            // DataIntegrityViolationException in "risorsa gia' esistente" e' scorretto — un
+            // altro vincolo violato (es. NOT NULL su una colonna non valorizzata, un bug
+            // diverso) verrebbe mascherato da un 409 fuorviante invece di propagarsi come
+            // l'errore che e' davvero.
+            if (!violaVincoloUnicitaIdentificativo(e)) {
+                throw e;
+            }
             throw new RisorsaGiaEsistenteException(
                     "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
                             + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
         }
+    }
+
+    /**
+     * Entrambi i vincoli UNIQUE reali su {@code documenti} che possono segnalare lo stesso
+     * duplicato pubblico ({@code idA2A}+{@code idPosizioneDebitoria}): {@code
+     * unique_documenti_applicazione} (cod_documento+id_applicazione, aggiunto in migrazione
+     * per l'identita' pubblica — vedi bug del 2026-09-26 sopra) e {@code unique_documenti_1}
+     * (cod_documento+id_applicazione+id_dominio, gia' presente nello schema legacy). Quando
+     * il duplicato ha anche lo stesso {@code id_dominio}, ENTRAMBI i vincoli sono violati
+     * dalla stessa riga — quale dei due il motore segnali dipende dall'ordine con cui
+     * valuta gli indici, non e' deterministico lato applicativo (bug del lead, 2026-09-27:
+     * riconoscere solo {@code unique_documenti_applicazione} lasciava questo caso — duplicato
+     * sullo stesso dominio, individuato solo al flush — propagarsi come 500 anziche' 409;
+     * riprodotto con uno spy su {@code existsBy...} per simulare la race condition).
+     */
+    private static final List<String> VINCOLI_UNICITA_IDENTIFICATIVO = List.of(
+            "unique_documenti_applicazione", "unique_documenti_1");
+
+    /**
+     * Riconosce se {@code e} e' dovuta specificamente a uno dei
+     * {@link #VINCOLI_UNICITA_IDENTIFICATIVO}, non a una qualunque violazione di integrita'.
+     * {@code getConstraintName()} (dal {@code org.hibernate.exception.ConstraintViolationException}
+     * sottostante) non e' sempre popolato da ogni driver/dialetto — fallback sul testo del
+     * messaggio, che in pratica lo riporta comunque (verificato su H2/PostgreSQL).
+     */
+    private boolean violaVincoloUnicitaIdentificativo(DataIntegrityViolationException e) {
+        Throwable causa = e.getCause();
+        String nomeVincolo = null;
+        if (causa instanceof org.hibernate.exception.ConstraintViolationException cve) {
+            nomeVincolo = cve.getConstraintName();
+        }
+        String daControllare = nomeVincolo != null ? nomeVincolo
+                : (causa != null ? causa.getMessage() : e.getMessage());
+        if (daControllare == null) {
+            return false;
+        }
+        String daControllareMinuscolo = daControllare.toLowerCase();
+        return VINCOLI_UNICITA_IDENTIFICATIVO.stream().anyMatch(daControllareMinuscolo::contains);
     }
 
     /**

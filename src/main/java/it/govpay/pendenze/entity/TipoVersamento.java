@@ -25,8 +25,13 @@ import jakarta.persistence.UniqueConstraint;
  * configurazione di stampa/notifica del BackOffice legacy (form BO/PagOffice, template
  * email/AppIO di promemoria, tracciati CSV) — nessun concetto che la v3 usi (ha il proprio
  * {@code notificaSend}/{@code dataPubblicazione}). Mappate solo {@link #codTipoVersamento}
- * (la chiave di risoluzione), {@link #descrizione} e {@link #abilitato}: le uniche
- * potenzialmente utili anche a un futuro endpoint di sola lettura di questa anagrafica.</p>
+ * (la chiave di risoluzione), {@link #descrizione}, {@link #abilitato} e
+ * {@link #codificaIuv}: le uniche potenzialmente utili anche a un futuro endpoint di sola
+ * lettura di questa anagrafica — {@link #codificaIuv} in piu' serve gia' ora, per il
+ * placeholder {@code %(p)}/{@code %(t)} del prefisso IUV di dominio (bug del lead,
+ * 2026-09-27: dimenticata nel primo giro, la generazione falliva per i domini con quel
+ * placeholder — vedi Javadoc di {@link TipoVersamentoDominio#getCodificaIuv()} per la
+ * semantica di override).</p>
  */
 @Entity
 @Table(name = "tipi_versamento", uniqueConstraints = @UniqueConstraint(
@@ -47,6 +52,15 @@ public class TipoVersamento {
 
     @Column(name = "abilitato", nullable = false)
     private boolean abilitato;
+
+    /**
+     * Codifica IUV del tipo pendenza (legacy: stesso valore risolve sia {@code %(p)} sia
+     * {@code %(t)}, alias storici — vedi Javadoc di
+     * {@link it.govpay.pendenze.iuv.GeneratoreIuvStandard}), nullable: non tutti i domini
+     * hanno un prefisso IUV che la richiede.
+     */
+    @Column(name = "codifica_iuv", length = 4)
+    private String codificaIuv;
 
     // ── Accessori ────────────────────────────────────────────────────────────
 
@@ -80,5 +94,13 @@ public class TipoVersamento {
 
     public void setAbilitato(boolean abilitato) {
         this.abilitato = abilitato;
+    }
+
+    public String getCodificaIuv() {
+        return codificaIuv;
+    }
+
+    public void setCodificaIuv(String codificaIuv) {
+        this.codificaIuv = codificaIuv;
     }
 }

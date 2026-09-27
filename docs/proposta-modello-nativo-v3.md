@@ -1090,6 +1090,75 @@ comportamento del legacy (`VersamentoUtils.toSingoloVersamentoModel`: se
 `codDominio` è assente sulla voce, usa comunque quello del versamento, non lo
 lascia indefinito).
 
+## 4 bug trovati dal lead in revisione di `govpay-pendenze-api` e corretti (2026-09-27)
+
+Revisione indipendente del primo endpoint (`POST /posizioni-debitorie/{idA2A}`),
+due dei quali hanno richiesto una correzione qui in libreria, non solo nel
+converter dell'API:
+
+1. **`TipoVersamento.codificaIuv` mancante**: la prima proiezione minimale di
+   §"Anagrafica TipoVersamento/TipoVersamentoDominio" sopra ometteva questa
+   colonna — presente in produzione sia su `tipi_versamento` (default) sia su
+   `tipi_vers_domini` (override per dominio) — necessaria a
+   `GeneratoreIuvStandard` per risolvere il placeholder `%(p)`/`%(t)` del
+   prefisso IUV di dominio. Senza, la creazione falliva per qualunque dominio
+   il cui prefisso usa quel placeholder. Aggiunta a entrambe le entità, con
+   `TipoVersamentoDominio.getCodificaIuvEffettiva()` che applica la stessa
+   semantica di override del legacy (valore del dominio se presente,
+   altrimenti quello del catalogo).
+2. **`LazyInitializationException` leggendo `TipoVersamento` fuori
+   transazione**: `TipoVersamentoDominioRepository.findByCodTipoVersamentoAndIdDominio`
+   usava `join` semplice, non `join fetch` — `getTipoVersamento()` restava un
+   proxy LAZY, inizializzabile solo mentre la sessione Hibernate di scrittura
+   è ancora aperta. Un consumatore che lo legge dopo che `crea()` è già
+   tornato (tipicamente per costruire una risposta REST, con
+   `open-in-view=false`) riceveva l'eccezione invece del valore — la
+   posizione restava comunque salvata, quindi un secondo tentativo riceveva
+   409, non l'esito atteso. Corretto entrambi i metodi di risoluzione
+   (`findByCodTipoVersamentoAndIdDominio` e il nuovo `findByIdFetchTipoVersamento`)
+   con `join fetch`. **Nota di metodo**: un test `@DataJpaTest` non
+   riproduce questa classe di bug da solo — la sessione Hibernate resta
+   aperta per l'intera durata del test, quindi un proxy LAZY si inizializza
+   comunque anche dopo `em.clear()`; la riproduzione reale richiede una vera
+   sessione chiusa (verificata a livello di integrazione in
+   `govpay-pendenze-api`, rimuovendo `@Transactional` dal test del
+   controller — vedi lì per il dettaglio).
+3. **Violazione del vincolo UNIQUE tradotta in 500, non 409**: `crea()`
+   usava `save()`, non `saveAndFlush()` — con id generato da `SEQUENCE`,
+   Hibernate può differire l'INSERT fisico oltre il ritorno di `save()`,
+   fino al commit della transazione, che avviene fuori dal metodo (al
+   ritorno di `crea()` al chiamante). La violazione del vincolo
+   `unique_documenti_applicazione` (creazioni concorrenti, che superano
+   entrambe il controllo preliminare `existsBy...` — vedi bug del
+   2026-09-26 sopra) emergeva quindi dopo che il `try/catch` era già uscito,
+   propagandosi grezza fino al livello REST. Corretto con `saveAndFlush()`.
+4. **Nello stesso giro, riconoscimento del vincolo specifico**: il
+   `catch (DataIntegrityViolationException e)` traduceva *qualunque*
+   violazione di integrità in `RisorsaGiaEsistenteException`, mascherando
+   con un 409 fuorviante un vincolo diverso (es. un bug che violasse
+   `unique_opzioni_pagamento_id_opzione`). Corretto: la traduzione avviene
+   solo se il vincolo violato è effettivamente
+   `unique_documenti_applicazione` (nome letto da
+   `ConstraintViolationException.getConstraintName()`, con fallback sul
+   testo del messaggio se il driver non lo popola); altrimenti l'eccezione
+   originale si propaga inalterata.
+
+**Secondo giro sullo stesso punto 4, bug del lead, 2026-09-27**: il
+riconoscimento copriva solo `unique_documenti_applicazione`, ma `documenti`
+ha anche `unique_documenti_1` (`cod_documento`+`id_applicazione`+`id_dominio`,
+già nello schema legacy prima della migrazione). Quando il duplicato rilevato
+solo al flush ha anche lo stesso `id_dominio` del preesistente, **entrambi** i
+vincoli sono violati dalla stessa riga — quale dei due il motore segnali non è
+deterministico lato applicativo (verificato: H2 in questo scenario segnala
+`unique_documenti_1`, non l'altro). Riconoscere solo il primo lasciava
+propagare un 500 in quel caso. Corretto riconoscendo entrambi i nomi.
+**Riprodotto con uno spy** (`@MockitoSpyBean` su `PosizioneDebitoriaRepository`,
+forzando `existsByIdApplicazioneAndIdPosizioneDebitoria` a restituire `false`
+anche col duplicato già presente) — l'unico modo deterministico di simulare a
+un solo thread la finestra di corsa fra il controllo preliminare e l'INSERT
+reale, verificato disattivando temporaneamente il fix e confermando che il
+test lo intercetta davvero (segnala `unique_documenti_1`, non tradotto).
+
 ## Stato dei test
 
-105 test totali, tutti verdi (`mvn clean test`).
+109 test totali, tutti verdi (`mvn clean test`).

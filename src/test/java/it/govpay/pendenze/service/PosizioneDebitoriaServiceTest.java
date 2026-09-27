@@ -11,12 +11,14 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import it.govpay.common.repository.DominioRepository;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -44,6 +46,7 @@ import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
+import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
 
 /**
  * Verifica {@link PosizioneDebitoriaService}, in particolare i tre difetti trovati in
@@ -67,6 +70,17 @@ class PosizioneDebitoriaServiceTest {
 
     @Autowired
     private PosizioneDebitoriaService service;
+
+    /**
+     * Spia sul bean reale (non un mock puro): usata solo per forzare
+     * {@code existsByIdApplicazioneAndIdPosizioneDebitoria} a restituire {@code false} in un
+     * singolo test, simulando la finestra di corsa fra il controllo preliminare e l'INSERT
+     * reale — l'unico modo deterministico di riprodurre una violazione del vincolo UNIQUE
+     * rilevata solo al flush, dato che in un test a singolo thread quel controllo la
+     * intercetterebbe sempre per primo.
+     */
+    @MockitoSpyBean
+    private PosizioneDebitoriaRepository posizioneDebitoriaRepository;
 
     private final Map<String, Long> applicazioni = new HashMap<>();
 
@@ -640,6 +654,74 @@ class PosizioneDebitoriaServiceTest {
         assertThatThrownBy(() -> service.crea(seconda))
                 .isInstanceOf(RisorsaGiaEsistenteException.class)
                 .hasMessageContaining("pos-duplicata");
+    }
+
+    @Test
+    @DisplayName("crea non traduce in RisorsaGiaEsistenteException la violazione di un vincolo UNIQUE diverso "
+            + "da quello sull'identificativo pubblico (bug del lead, 2026-09-27, doppio: (1) usando save() "
+            + "invece di saveAndFlush(), la violazione emergeva solo al commit fuori da questo metodo — "
+            + "questo test con id generato da SEQUENCE fallirebbe a rilevare alcuna eccezione qui se la "
+            + "regressione tornasse; (2) qualunque DataIntegrityViolationException veniva tradotta in "
+            + "\"risorsa gia' esistente\", mascherando un vincolo diverso con un 409 fuorviante)")
+    void creaNonTraduceLaViolazioneDiUnVincoloDiverso() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-ALTRO-VINCOLO"));
+        posizione.setIdPosizioneDebitoria("pos-altro-vincolo");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+
+        UUID idOpzioneRipetuto = UUID.randomUUID();
+        OpzionePagamento scelta = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        scelta.setIdOpzionePagamento(idOpzioneRipetuto);
+        OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "2");
+        opzioneConPendenza(alternativa, "3"); // seconda rata, minimo di 2 per PIANO_RATEALE
+        // Stesso UUID della prima opzione: viola unique_opzioni_pagamento_id_opzione, un
+        // vincolo diverso da quello sull'identificativo pubblico della posizione.
+        alternativa.setIdOpzionePagamento(idOpzioneRipetuto);
+
+        assertThatThrownBy(() -> service.crea(posizione))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+                .isNotInstanceOf(RisorsaGiaEsistenteException.class);
+    }
+
+    @Test
+    @DisplayName("crea traduce in RisorsaGiaEsistenteException anche quando il duplicato rilevato solo al "
+            + "flush ha lo stesso dominio del preesistente — bug del lead, 2026-09-27: in quel caso "
+            + "viola SIA unique_documenti_applicazione SIA unique_documenti_1 (gia' nello schema legacy, "
+            + "cod_documento+id_applicazione+id_dominio), e quale dei due il motore segnali non e' "
+            + "deterministico lato applicativo — riconoscere solo il primo lasciava propagare un 500 "
+            + "quando veniva segnalato il secondo. Simulata la race condition (existsBy... che non vede "
+            + "ancora il duplicato) con uno spy, l'unico modo deterministico di riprodurla a un solo "
+            + "thread — vedi Javadoc del campo")
+    void creaTraduceLaViolazioneAncheSuUniqueDocumenti1QuandoIlDominioECoincidente() {
+        Long idApplicazione = idApplicazionePer("A2A-RACE-STESSO-DOMINIO");
+
+        PosizioneDebitoria prima = new PosizioneDebitoria();
+        prima.setIdApplicazione(idApplicazione);
+        prima.setIdPosizioneDebitoria("pos-race-stesso-dominio");
+        prima.setIdDominio(1L);
+        prima.setDescrizione("test");
+        prima.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(prima, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        service.crea(prima);
+
+        PosizioneDebitoria seconda = new PosizioneDebitoria();
+        seconda.setIdApplicazione(idApplicazione);
+        seconda.setIdPosizioneDebitoria("pos-race-stesso-dominio"); // stesso idA2A+idPosizioneDebitoria
+        seconda.setIdDominio(1L); // stesso dominio della prima: viola anche unique_documenti_1
+        seconda.setDescrizione("test");
+        seconda.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+
+        // Forza il controllo preliminare a non vedere il duplicato gia' presente, simulando
+        // due richieste concorrenti che lo superano entrambe (vedi bug del 2026-09-26).
+        Mockito.doReturn(false).when(posizioneDebitoriaRepository)
+                .existsByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, "pos-race-stesso-dominio");
+
+        assertThatThrownBy(() -> service.crea(seconda))
+                .isInstanceOf(RisorsaGiaEsistenteException.class)
+                .hasMessageContaining("pos-race-stesso-dominio");
     }
 
     @Test
