@@ -131,7 +131,7 @@ class GeneratoreIuvStandardTest {
     void generaRisolveApplicazioneNelPrefisso() {
         ApplicazioneEntity applicazione = ApplicazioneEntity.builder()
                 .codApplicazione("A2A-APP").codApplicazioneIuv("007")
-                .autoIuv(true).firmaRicevuta("N").trusted(true).build();
+                .autoIuv(true).firmaRicevuta("N").trusted(true).idUtenza(1L).build();
         em.persistAndFlush(applicazione);
         DominioEntity dominio = dominioAuxDigit1("ENTE-PREFISSO-APP");
         dominio.setIuvPrefix("%(a)");

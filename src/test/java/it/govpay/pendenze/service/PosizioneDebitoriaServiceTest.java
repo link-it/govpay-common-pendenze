@@ -86,7 +86,8 @@ class PosizioneDebitoriaServiceTest {
     private Long idApplicazionePer(String codApplicazione) {
         return applicazioni.computeIfAbsent(codApplicazione, cod -> {
             ApplicazioneEntity applicazione = ApplicazioneEntity.builder()
-                    .codApplicazione(cod).autoIuv(true).firmaRicevuta("N").trusted(true).build();
+                    .codApplicazione(cod).autoIuv(true).firmaRicevuta("N").trusted(true)
+                    .idUtenza((long) (applicazioni.size() + 1)).build();
             em.persistAndFlush(applicazione);
             return applicazione.getId();
         });

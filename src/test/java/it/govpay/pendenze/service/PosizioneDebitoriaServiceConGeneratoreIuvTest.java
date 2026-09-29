@@ -57,7 +57,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
 
     private Long applicazionePersistita(String codApplicazione) {
         ApplicazioneEntity applicazione = ApplicazioneEntity.builder()
-                .codApplicazione(codApplicazione).autoIuv(true).firmaRicevuta("N").trusted(true).build();
+                .codApplicazione(codApplicazione).autoIuv(true).firmaRicevuta("N").trusted(true).idUtenza(1L).build();
         em.persistAndFlush(applicazione);
         return applicazione.getId();
     }

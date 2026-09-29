@@ -606,7 +606,9 @@ CREATE TABLE IF NOT EXISTS applicazioni (
     cod_connettore_integrazione VARCHAR(255),
     cod_applicazione_iuv VARCHAR(3),
     reg_exp VARCHAR(1024),
-    CONSTRAINT uk_applicazioni_cod UNIQUE (cod_applicazione)
+    id_utenza BIGINT NOT NULL,
+    CONSTRAINT uk_applicazioni_cod UNIQUE (cod_applicazione),
+    CONSTRAINT uk_applicazioni_id_utenza UNIQUE (id_utenza)
 );
 
 CREATE TABLE IF NOT EXISTS domini (
