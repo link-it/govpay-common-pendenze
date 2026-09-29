@@ -7,6 +7,10 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -24,6 +28,7 @@ import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
+import it.govpay.pendenze.exception.ModificaConcorrenteException;
 import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
@@ -62,6 +67,16 @@ public class PosizioneDebitoriaService {
     private final ApplicazioneRepository applicazioneRepository;
     private final Clock clock;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
+
+    /**
+     * Iniettato per campo, non da costruttore (a differenza degli altri collaboratori di
+     * questa classe): {@code @PersistenceContext} e' l'idioma standard JPA per
+     * {@link EntityManager}, non un normale bean Spring — usato solo da {@link #attiva}/
+     * {@link #annulla} per {@code entityManager.lock(..., OPTIMISTIC_FORCE_INCREMENT)} (vedi
+     * i loro Javadoc).
+     */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     /**
      * {@code generatoreIuvProvider} e' un {@link ObjectProvider}, non una dipendenza
@@ -211,6 +226,7 @@ public class PosizioneDebitoriaService {
                     }
                 }
 
+                verificaIdPendenzaNonDuplicato(posizione, pendenza);
                 assegnaIdentificativiPagamento(posizione, pendenza);
             }
         }
@@ -244,12 +260,19 @@ public class PosizioneDebitoriaService {
             // altro vincolo violato (es. NOT NULL su una colonna non valorizzata, un bug
             // diverso) verrebbe mascherato da un 409 fuorviante invece di propagarsi come
             // l'errore che e' davvero.
-            if (!violaVincoloUnicitaIdentificativo(e)) {
-                throw e;
+            if (violaVincolo(e, VINCOLI_UNICITA_IDENTIFICATIVO)) {
+                throw new RisorsaGiaEsistenteException(
+                        "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
+                                + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
             }
-            throw new RisorsaGiaEsistenteException(
-                    "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
-                            + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
+            // Stessa rete di sicurezza, stessa motivazione, per il duplicato di idPendenza
+            // (bug del lead, 2026-09-29: il controllo proattivo verificaIdPendenzaNonDuplicato
+            // sopra e' anch'esso un check-then-act, non atomico).
+            if (violaVincolo(e, VINCOLO_UNICITA_ID_PENDENZA)) {
+                throw new RisorsaGiaEsistenteException(
+                        "una pendenza di questa richiesta ha un idPendenza gia' usato da questa applicazione");
+            }
+            throw e;
         }
     }
 
@@ -270,13 +293,25 @@ public class PosizioneDebitoriaService {
             "unique_documenti_applicazione", "unique_documenti_1");
 
     /**
-     * Riconosce se {@code e} e' dovuta specificamente a uno dei
-     * {@link #VINCOLI_UNICITA_IDENTIFICATIVO}, non a una qualunque violazione di integrita'.
-     * {@code getConstraintName()} (dal {@code org.hibernate.exception.ConstraintViolationException}
-     * sottostante) non e' sempre popolato da ogni driver/dialetto — fallback sul testo del
-     * messaggio, che in pratica lo riporta comunque (verificato su H2/PostgreSQL).
+     * Vincolo UNIQUE reale su {@code versamenti} ({@code cod_versamento_ente, id_applicazione}):
+     * {@code idPendenza} e' univoco per applicazione, non per posizione (bug del lead,
+     * 2026-09-29: riusare un idPendenza gia' esistente della stessa applicazione falliva con
+     * 500, nessuna traduzione in una risposta applicativa).
      */
-    private boolean violaVincoloUnicitaIdentificativo(DataIntegrityViolationException e) {
+    private static final String VINCOLO_UNICITA_ID_PENDENZA = "unique_versamenti_1";
+
+    /**
+     * Riconosce se {@code e} e' dovuta specificamente a uno dei vincoli indicati, non a una
+     * qualunque violazione di integrita'. {@code getConstraintName()} (dal
+     * {@code org.hibernate.exception.ConstraintViolationException} sottostante) non e' sempre
+     * popolato da ogni driver/dialetto — fallback sul testo del messaggio, che in pratica lo
+     * riporta comunque (verificato su H2/PostgreSQL).
+     */
+    private boolean violaVincolo(DataIntegrityViolationException e, String... nomiVincoli) {
+        return violaVincolo(e, List.of(nomiVincoli));
+    }
+
+    private boolean violaVincolo(DataIntegrityViolationException e, List<String> nomiVincoli) {
         Throwable causa = e.getCause();
         String nomeVincolo = null;
         if (causa instanceof org.hibernate.exception.ConstraintViolationException cve) {
@@ -288,7 +323,7 @@ public class PosizioneDebitoriaService {
             return false;
         }
         String daControllareMinuscolo = daControllare.toLowerCase();
-        return VINCOLI_UNICITA_IDENTIFICATIVO.stream().anyMatch(daControllareMinuscolo::contains);
+        return nomiVincoli.stream().anyMatch(daControllareMinuscolo::contains);
     }
 
     /**
@@ -359,6 +394,23 @@ public class PosizioneDebitoriaService {
                                     + "] gia' usato da un'altra pendenza dello stesso dominio ["
                                     + esistente.getIdPendenza() + "]");
                 });
+    }
+
+    /**
+     * {@code idPendenza} e' univoco per applicazione, non per posizione (vedi Javadoc di
+     * {@link PendenzaRepository#existsByIdApplicazioneAndIdPendenza}) — bug del lead,
+     * 2026-09-29: riusare l'idPendenza di una pendenza gia' esistente della stessa
+     * applicazione (anche di un'ALTRA posizione) falliva con 500 (violazione del vincolo
+     * UNIQUE {@code unique_versamenti_1} mai tradotta), non con una risposta applicativa.
+     * Controllo proattivo — la rete di sicurezza reattiva contro la finestra di corsa e' nel
+     * {@code catch} di {@link #crea}/{@link #aggiungiOpzionePagamento}.
+     */
+    private void verificaIdPendenzaNonDuplicato(PosizioneDebitoria posizione, Pendenza pendenza) {
+        if (pendenzaRepository.existsByIdApplicazioneAndIdPendenza(posizione.getIdApplicazione(),
+                pendenza.getIdPendenza())) {
+            throw new RisorsaGiaEsistenteException("esiste gia' una pendenza con idPendenza ["
+                    + pendenza.getIdPendenza() + "] per questa applicazione");
+        }
     }
 
     private IdentificativiPagamento generaIdentificativi(PosizioneDebitoria posizione, Pendenza pendenza) {
@@ -495,7 +547,179 @@ public class PosizioneDebitoriaService {
             }
         }
 
-        return posizioneDebitoriaRepository.save(posizione);
+        try {
+            // saveAndFlush, non save — stesso motivo di crea()/aggiungiOpzionePagamento: da
+            // quando PosizioneDebitoria ha un @Version (bug del lead, 2026-09-29, vedi
+            // Javadoc del campo), un aggiornamento concorrente sulla stessa posizione (es.
+            // un'attivazione o un'altra PATCH) puo' far fallire il salvataggio con un
+            // conflitto di lock ottimistico — va intercettato qui, non lasciato propagare
+            // grezzo fino al livello REST.
+            return posizioneDebitoriaRepository.saveAndFlush(posizione);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            throw new ModificaConcorrenteException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] e' stata modificata concorrentemente: riprovare");
+        }
+    }
+
+    /**
+     * Aggiunge una nuova opzione di pagamento a una posizione debitoria esistente
+     * ({@code POST .../posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}/opzioni-pagamento}
+     * dello YAML v3). A differenza di {@link #aggiorna} (che muta l'aggregato gestito senza
+     * restituire nulla di nuovo) qui il chiamante deve costruire l'opzione stessa — da cui
+     * {@link Function}, non {@link Consumer}: la costruzione (conversione DTO→entita',
+     * risoluzione di {@code idTipoPendenza}/tributo/IBAN) e' a carico del chiamante, che ha
+     * bisogno di {@code posizione.getIdDominio()} per farlo correttamente (stesso principio
+     * di {@link #aggiorna}: questo servizio non conosce i DTO REST del chiamante).
+     *
+     * <p><b>Ordine delle operazioni non banale, bug trovato scrivendo i test</b>: gli
+     * identificativi di pagamento (numero avviso/IUV, incluso l'eventuale
+     * {@link #assegnaIdentificativiPagamento} che interroga il DB per unicita' —
+     * {@link #verificaNumeroAvvisoNonDuplicato}) vengono assegnati alla nuova opzione MENTRE
+     * e' ancora un oggetto autonomo, PRIMA di collegarla con
+     * {@link PosizioneDebitoria#addOpzionePagamento} all'aggregato {@code posizione}, che qui
+     * e' gia' un'entita' JPA gestita (caricata dal DB, a differenza di {@link #crea} dove
+     * l'intero aggregato e' ancora transient fino al {@code save} finale). Se si collegasse
+     * prima: una successiva query JPQL nella stessa sessione (es. proprio quella di
+     * {@code verificaNumeroAvvisoNonDuplicato}, o quella interna a un {@link GeneratoreIuv})
+     * innesca l'auto-flush di Hibernate, che scrive l'INSERT gia' pendente della nuova pendenza
+     * (cascata dalla collezione CASCADE.ALL di {@code posizione}) PRIMA che la query stessa
+     * venga eseguita — la query la trova quindi gia' su DB e la segnala come "duplicata di se
+     * stessa". Al contrario, {@link ValidatorePosizioneDebitoria#valida} e {@code numeroRata}/
+     * {@code indice} (assegnati qui direttamente sulla nuova opzione, non con
+     * {@link #assegnaIndici} che opererebbe sull'intera posizione senza bisogno — l'ordinamento
+     * e' comunque scoped per-opzione) sono puro Java, nessuna query: possono girare prima o
+     * dopo l'aggancio senza rischio, e qui girano DOPO (serve la nuova opzione gia' collegata
+     * per rivalidare l'aggregato completo, es. {@code numeroAvviso} duplicato con opzioni
+     * gia' esistenti).</p>
+     *
+     * <p>Contropartita accettata di questo ordine: se la rivalidazione fallisce DOPO che un
+     * identificativo e' stato generato da {@link GeneratoreIuv} (progressivo consumato), quel
+     * valore resta "bucato" — stesso comportamento accettato altrove in questa libreria per i
+     * progressivi pagoPA (mai pensati per essere densi/riusabili).</p>
+     *
+     * <p><b>Tre controlli aggiuntivi, bug del lead, 2026-09-29</b>:</p>
+     * <ul>
+     * <li>rifiuta se la posizione ha gia' un'opzione {@code ATTIVATA} (pagamento gia'
+     * eseguito): un'alternativa aggiunta dopo quel momento non sarebbe mai passata per
+     * l'annullamento automatico che scatta quando un'opzione si attiva (vedi Javadoc di
+     * {@code StatoOpzionePagamento});</li>
+     * <li>protezione dalla corsa fra questo metodo e {@link #attiva}/{@link #annulla} sulla
+     * stessa posizione (il controllo sopra da solo legge uno snapshot, non basta): grazie a
+     * {@link PosizioneDebitoria#getVersione()} (lock ottimistico), se un'attivazione
+     * concorrente committa DOPO che questo metodo ha gia' superato il controllo ma PRIMA del
+     * suo commit, il {@code saveAndFlush} fallisce con un conflitto di versione, tradotto in
+     * {@link ModificaConcorrenteException} invece di lasciare un'alternativa orfana mai
+     * annullata;</li>
+     * <li>{@code idPendenza} duplicato (gia' usato da un'altra pendenza della stessa
+     * applicazione, anche di un'altra posizione) — {@link #verificaIdPendenzaNonDuplicato}
+     * (proattivo) + traduzione di {@code unique_versamenti_1} nel {@code catch} (reattivo,
+     * stessa coppia di reti di sicurezza di {@link #crea}).</li>
+     * </ul>
+     *
+     * @param idA2A                identificativo del gestionale responsabile
+     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param costruisciOpzione    costruisce la nuova opzione (con le sue pendenze/voci) a
+     *                             partire dalla posizione risolta, NON ancora collegata
+     *                             all'aggregato
+     * @return la nuova opzione di pagamento, persistita
+     * @throws RisorsaNonTrovataException        se non esiste una posizione con questa chiave
+     * @throws TransizioneStatoNonAmmessaException se la posizione ha gia' un'opzione ATTIVATA
+     * @throws ValidazioneNonSuperataException   se l'aggregato risultante non rispetta i
+     *                                            vincoli semantici (stessi di {@link #crea})
+     * @throws RisorsaGiaEsistenteException      se una pendenza della nuova opzione ha un
+     *                                            {@code idPendenza} gia' usato da questa
+     *                                            applicazione
+     * @throws ModificaConcorrenteException      se la posizione e' stata modificata
+     *                                            concorrentemente prima del commit
+     */
+    public OpzionePagamento aggiungiOpzionePagamento(String idA2A, String idPosizioneDebitoria,
+            java.util.function.Function<PosizioneDebitoria, OpzionePagamento> costruisciOpzione) {
+        PosizioneDebitoria posizione = risolviIdApplicazione(idA2A)
+                .flatMap(idApplicazione -> posizioneDebitoriaRepository
+                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria))
+                .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
+                        + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
+
+        // Bug del lead, 2026-09-29: un'alternativa aggiunta dopo che un'altra opzione e' gia'
+        // ATTIVATA (pagamento gia' eseguito) contraddice la semantica dello YAML v3 — quando
+        // un'opzione si attiva, tutte le altre DISPONIBILI vengono annullate automaticamente
+        // perche' "non piu' applicabili" (vedi Javadoc di StatoOpzionePagamento): una nuova
+        // alternativa creata DOPO quel momento sarebbe la stessa situazione, mai passata da
+        // quell'annullamento automatico perche' non esisteva ancora. Controllo puramente in
+        // memoria sulla collezione gia' caricata, nessuna query aggiuntiva.
+        boolean esisteGiaUnaAttivata = posizione.getOpzioniPagamento().stream()
+                .anyMatch(o -> o.getStato() == StatoOpzionePagamento.ATTIVATA);
+        if (esisteGiaUnaAttivata) {
+            throw new TransizioneStatoNonAmmessaException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] ha gia' un'opzione di pagamento ATTIVATA (pagamento gia' eseguito): non e' piu' "
+                    + "possibile aggiungere alternative");
+        }
+
+        OpzionePagamento nuovaOpzione = costruisciOpzione.apply(posizione);
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+
+        if (nuovaOpzione.getIdOpzionePagamento() == null) {
+            nuovaOpzione.setIdOpzionePagamento(UUID.randomUUID());
+        }
+        if (nuovaOpzione.getStato() == null) {
+            nuovaOpzione.setStato(StatoOpzionePagamento.DISPONIBILE);
+        }
+        nuovaOpzione.setDataCreazione(adesso);
+        nuovaOpzione.setDataUltimoAggiornamento(adesso);
+
+        int numeroRata = 1;
+        for (Pendenza pendenza : nuovaOpzione.getPendenze()) {
+            pendenza.setNumeroRata(numeroRata++);
+            pendenza.setDataCreazione(adesso);
+            pendenza.setDataUltimoAggiornamento(adesso);
+            pendenza.setDataUltimaModificaAca(adesso);
+            // Stesso principio di crea(): IUV/NAV sono univoci per dominio, la pendenza deve
+            // portare lo stesso dominio della posizione.
+            pendenza.setIdDominio(posizione.getIdDominio());
+
+            int indice = 1;
+            for (VocePendenza voce : pendenza.getVoci()) {
+                voce.setIndice(indice++);
+                if (voce.getIdDominio() == null) {
+                    voce.setIdDominio(posizione.getIdDominio());
+                }
+            }
+
+            // Ancora una pendenza autonoma, non collegata a "posizione" (entita' gestita):
+            // vedi Javadoc del metodo sul perche' l'ordine e' importante.
+            verificaIdPendenzaNonDuplicato(posizione, pendenza);
+            assegnaIdentificativiPagamento(posizione, pendenza);
+        }
+
+        posizione.addOpzionePagamento(nuovaOpzione);
+
+        ValidatorePosizioneDebitoria.valida(posizione);
+
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+
+        try {
+            // saveAndFlush, non save — stessa ragione di crea() (intercettare qui la
+            // violazione del vincolo invece di lasciarla propagare grezza al commit fuori da
+            // questo metodo) per DUE reti di sicurezza reattive, entrambe bug del lead,
+            // 2026-09-29: il duplicato di idPendenza (controllo proattivo sopra, ma
+            // check-then-act) e il conflitto di lock ottimistico sulla posizione (il
+            // controllo "nessuna opzione ATTIVATA" sopra legge uno snapshot che
+            // un'attivazione concorrente puo' rendere obsoleto prima del commit — vedi
+            // Javadoc di {@code PosizioneDebitoria#getVersione()}).
+            posizioneDebitoriaRepository.saveAndFlush(posizione);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            throw new ModificaConcorrenteException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] e' stata modificata concorrentemente (es. un pagamento appena registrato): riprovare");
+        } catch (DataIntegrityViolationException e) {
+            if (violaVincolo(e, VINCOLO_UNICITA_ID_PENDENZA)) {
+                throw new RisorsaGiaEsistenteException(
+                        "la nuova opzione ha una pendenza con idPendenza gia' usato da questa applicazione");
+            }
+            throw e;
+        }
+        return nuovaOpzione;
     }
 
     /**
@@ -673,6 +897,32 @@ public class PosizioneDebitoriaService {
      * esecuzione. Il chiamante deve gestire l'eccezione (tipicamente: rileggere lo stato
      * attuale e decidere di conseguenza), non ignorarla.</p>
      *
+     * <p><b>Nota per il futuro chiamante reale</b> (bug del lead, 2026-09-29, verificato con
+     * una prova a due transazioni sovrapposte: il conflitto viene rilevato correttamente,
+     * l'operazione perdente va in eccezione): questo metodo NON cattura ne' traduce il
+     * conflitto di lock ottimistico, lo lascia propagare grezzo
+     * ({@code ObjectOptimisticLockingFailureException}) — corretto per un endpoint REST
+     * sincrono (dove il livello REST puo' tradurlo in 409 e il client puo' decidere se
+     * riprovare, vedi {@code ProblemExceptionHandler} in govpay-pendenze-api), ma SBAGLIATO
+     * per il futuro processo che registrera' i pagamenti reali (es. a fronte di una notifica
+     * pagoPA): quel chiamante non ha un client interattivo a cui delegare la decisione — deve
+     * invece rileggere l'aggregato e rieseguire l'intera transazione applicativa (non solo
+     * questa chiamata), con un numero limitato di tentativi, prima di arrendersi in modo
+     * osservabile (es. un evento di errore). Non implementato qui: nessun chiamante reale
+     * esiste ancora per cui progettarlo concretamente.</p>
+     *
+     * <p><b>Lock esplicito sulla posizione</b> (bug del lead, 2026-09-29, suggerimento del
+     * lead per la robustezza): {@code LockModeType.OPTIMISTIC_FORCE_INCREMENT} su
+     * {@code opzione.getPosizioneDebitoria()} forza l'incremento di
+     * {@link PosizioneDebitoria#getVersione()} a questo commit, indipendentemente da quali
+     * campi propri della posizione vengano toccati. Senza questa richiesta esplicita,
+     * l'incremento sarebbe dipeso implicitamente dal fatto che {@link #marcaModificaAca}
+     * scrive {@code posizione.dataUltimaModificaAca} — un accoppiamento fragile fra due
+     * concern non correlati (marcatura ACA vs. controllo di concorrenza): se in futuro
+     * quella scrittura cambiasse o sparisse, la protezione sulla posizione smetterebbe di
+     * funzionare in silenzio. Protegge {@link PosizioneDebitoriaService#aggiungiOpzionePagamento}
+     * dall'aggiungere un'alternativa DISPONIBILE in corsa con un'attivazione qui.</p>
+     *
      * @param idOpzionePagamento identificativo dell'opzione che risulta pagata
      * @return l'opzione appena attivata
      * @throws RisorsaNonTrovataException        se l'opzione non esiste
@@ -685,6 +935,7 @@ public class PosizioneDebitoriaService {
                     "l'opzione di pagamento [" + idOpzionePagamento + "] non e' DISPONIBILE (stato attuale: "
                             + opzione.getStato() + "): non puo' essere attivata");
         }
+        entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         opzione.setStato(StatoOpzionePagamento.ATTIVATA);
@@ -709,6 +960,11 @@ public class PosizioneDebitoriaService {
      * di un'opzione gia' {@code ATTIVATA}, perche' corrisponde a un pagamento gia'
      * eseguito (semantica dello YAML v3).
      *
+     * <p>Stesso lock esplicito di {@link #attiva(UUID)} sulla posizione — vedi il suo
+     * Javadoc — tranne quando il metodo e' idempotente (opzione gia' {@code ANNULLATA}):
+     * in quel caso non c'e' alcuna mutazione, quindi nessun bisogno di forzare un
+     * incremento di versione.</p>
+     *
      * @param idOpzionePagamento identificativo dell'opzione da annullare
      * @return l'opzione annullata
      * @throws RisorsaNonTrovataException        se l'opzione non esiste
@@ -725,6 +981,7 @@ public class PosizioneDebitoriaService {
                     "l'opzione di pagamento [" + idOpzionePagamento
                             + "] e' ATTIVATA: corrisponde a un pagamento gia' eseguito, non puo' essere annullata");
         }
+        entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         opzione.setStato(StatoOpzionePagamento.ANNULLATA);

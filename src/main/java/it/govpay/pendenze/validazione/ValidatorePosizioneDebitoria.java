@@ -49,6 +49,27 @@ public final class ValidatorePosizioneDebitoria {
         }
         validaSpeseNotificaEnotificaSend(posizione);
         validaNumeroAvvisoNonDuplicatoNellAggregato(posizione);
+        validaIdPendenzaNonDuplicatoNellAggregato(posizione);
+    }
+
+    /**
+     * Come {@link #validaNumeroAvvisoNonDuplicatoNellAggregato}, stessa motivazione: il
+     * controllo del servizio contro il DB
+     * ({@code PosizioneDebitoriaService#verificaIdPendenzaNonDuplicato}) confronta ogni
+     * pendenza contro le righe gia' persistite, non contro le altre pendenze della stessa
+     * richiesta ancora in memoria (bug gemello, stesso pattern, 2026-09-29).
+     */
+    private static void validaIdPendenzaNonDuplicatoNellAggregato(PosizioneDebitoria posizione) {
+        Set<String> idPendenze = new HashSet<>();
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                if (!idPendenze.add(pendenza.getIdPendenza())) {
+                    throw new ValidazioneNonSuperataException(
+                            "piu' pendenze della stessa richiesta hanno lo stesso idPendenza ["
+                                    + pendenza.getIdPendenza() + "]");
+                }
+            }
+        }
     }
 
     /**

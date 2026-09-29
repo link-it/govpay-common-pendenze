@@ -317,6 +317,7 @@ CREATE TABLE IF NOT EXISTS documenti
 	data_ultima_comunicazione_aca TIMESTAMP,
 	data_creazione TIMESTAMP NOT NULL,
 	data_ultimo_aggiornamento TIMESTAMP NOT NULL,
+	versione BIGINT NOT NULL DEFAULT 0,
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_documenti') NOT NULL,
 	id_dominio BIGINT NOT NULL,

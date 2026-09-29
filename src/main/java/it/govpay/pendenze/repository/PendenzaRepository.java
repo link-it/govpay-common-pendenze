@@ -28,6 +28,18 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
     Optional<Pendenza> findByIdDominioAndNumeroAvviso(Long idDominio, String numeroAvviso);
 
     /**
+     * {@code idPendenza} e' univoco per applicazione, non per posizione (vincolo reale
+     * {@code unique_versamenti_1} su {@code cod_versamento_ente, id_applicazione}): due
+     * posizioni debitorie diverse della stessa applicazione non possono avere una pendenza
+     * con lo stesso {@code idPendenza}.
+     *
+     * @param idApplicazione applicazione proprietaria
+     * @param idPendenza     identificativo della pendenza nel gestionale
+     * @return {@code true} se esiste gia' una pendenza con questa chiave
+     */
+    boolean existsByIdApplicazioneAndIdPendenza(Long idApplicazione, String idPendenza);
+
+    /**
      * @param idDominio dominio creditore
      * @param iuv       Identificativo Univoco di Versamento
      * @return la pendenza, se esiste

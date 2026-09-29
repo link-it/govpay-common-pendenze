@@ -428,6 +428,178 @@ class PosizioneDebitoriaServiceTest {
                 .hasMessageContaining("navNotifica");
     }
 
+    @Test
+    @DisplayName("aggiungiOpzionePagamento aggiunge una nuova opzione all'aggregato esistente, "
+            + "assegna id/stato/timestamp/ACA solo alla nuova opzione")
+    void aggiungiOpzionePagamentoAggiungeENonToccaLeEsistenti() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        azzeraMarcatureAca(posizione);
+        em.flush();
+        em.clear();
+
+        OpzionePagamento nuova = service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(),
+                p -> nuovaOpzioneStandalone(p.getIdApplicazione(), TipologiaOpzionePagamento.SOLUZIONE_UNICA, "nuova"));
+
+        assertThat(nuova.getIdOpzionePagamento()).isNotNull();
+        assertThat(nuova.getStato()).isEqualTo(StatoOpzionePagamento.DISPONIBILE);
+        assertThat(nuova.getDataCreazione()).isNotNull();
+        assertThat(nuova.getPendenze().get(0).getDataUltimaModificaAca()).isNotNull();
+        assertThat(nuova.getPendenze().get(0).getIdDominio()).isEqualTo(posizione.getIdDominio());
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
+        assertThat(riletta.getOpzioniPagamento()).hasSize(2);
+        assertThat(riletta.getDataUltimaModificaAca()).isNotNull();
+        // La marcatura ACA azzerata sopra sulla pendenza GIA' esistente non viene ritoccata
+        // dall'aggiunta di una nuova opzione (solo quella nuova ne ha bisogno).
+        Pendenza pendenzaEsistente = riletta.getOpzioniPagamento().stream()
+                .filter(o -> !o.getIdOpzionePagamento().equals(nuova.getIdOpzionePagamento()))
+                .findFirst().orElseThrow()
+                .getPendenze().get(0);
+        assertThat(pendenzaEsistente.getDataUltimaModificaAca()).isNull();
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento assegna numeroRata/indice alla nuova opzione in base "
+            + "all'ordine delle sue liste, senza toccare quelli delle opzioni esistenti")
+    void aggiungiOpzionePagamentoAssegnaIndici() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        OpzionePagamento nuova = service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(),
+                p -> nuovaOpzioneStandalone(p.getIdApplicazione(), TipologiaOpzionePagamento.SOLUZIONE_UNICA, "nuova"));
+
+        assertThat(nuova.getPendenze().get(0).getNumeroRata()).isEqualTo(1);
+        assertThat(nuova.getPendenze().get(0).getVoci().get(0).getIndice()).isEqualTo(1);
+        assertThat(posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroRata()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento solleva RisorsaNonTrovataException per una posizione inesistente")
+    void aggiungiOpzionePagamentoRisorsaInesistente() {
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento("A2A-INESISTENTE", "pos-inesistente",
+                p -> nuovaOpzioneStandalone(p.getIdApplicazione(), TipologiaOpzionePagamento.SOLUZIONE_UNICA, "x")))
+                .isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento rivalida l'intero aggregato: rifiuta un numeroAvviso "
+            + "duplicato tra la nuova opzione e una gia' esistente")
+    void aggiungiOpzionePagamentoRifiutaNumeroAvvisoDuplicato() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String numeroAvvisoEsistente = posizione.getOpzioniPagamento().get(0).getPendenze().get(0)
+                .getNumeroAvviso();
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(),
+                p -> {
+                    OpzionePagamento opzione = nuovaOpzioneStandalone(p.getIdApplicazione(),
+                            TipologiaOpzionePagamento.SOLUZIONE_UNICA, "duplicata");
+                    opzione.getPendenze().get(0).setNumeroAvviso(numeroAvvisoEsistente);
+                    opzione.getPendenze().get(0).setIuv(numeroAvvisoEsistente);
+                    return opzione;
+                }))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("numeroAvviso");
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento rifiuta se la posizione ha gia' un'opzione ATTIVATA "
+            + "(pagamento gia' eseguito): un'alternativa aggiunta dopo non sarebbe mai passata "
+            + "per l'annullamento automatico")
+    void aggiungiOpzionePagamentoRifiutaSeEsisteGiaUnaOpzioneAttivata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID idOpzioneEsistente = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.attiva(idOpzioneEsistente);
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(),
+                p -> nuovaOpzioneStandalone(p.getIdApplicazione(), TipologiaOpzionePagamento.SOLUZIONE_UNICA,
+                        "dopo-attivazione")))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class)
+                .hasMessageContaining("ATTIVATA");
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento rifiuta con RisorsaGiaEsistenteException (non 500) un "
+            + "idPendenza gia' usato da un'altra pendenza della stessa applicazione, anche di "
+            + "un'altra posizione")
+    void aggiungiOpzionePagamentoRifiutaIdPendenzaGiaUsatoDaAltraPosizione() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String idPendenzaEsistente = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getIdPendenza();
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(),
+                p -> {
+                    OpzionePagamento opzione = nuovaOpzioneStandalone(p.getIdApplicazione(),
+                            TipologiaOpzionePagamento.SOLUZIONE_UNICA, "id-duplicato");
+                    opzione.getPendenze().get(0).setIdPendenza(idPendenzaEsistente);
+                    return opzione;
+                }))
+                .isInstanceOf(RisorsaGiaEsistenteException.class)
+                .hasMessageContaining(idPendenzaEsistente);
+    }
+
+    @Test
+    @DisplayName("crea rifiuta con RisorsaGiaEsistenteException (non 500) un idPendenza gia' "
+            + "usato da un'altra posizione della stessa applicazione")
+    void creaRifiutaIdPendenzaGiaUsatoDaAltraPosizione() {
+        PosizioneDebitoria prima = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String idPendenzaEsistente = prima.getOpzioniPagamento().get(0).getPendenze().get(0).getIdPendenza();
+
+        PosizioneDebitoria seconda = new PosizioneDebitoria();
+        seconda.setIdApplicazione(prima.getIdApplicazione());
+        seconda.setIdPosizioneDebitoria("pos-id-pendenza-duplicato");
+        seconda.setIdDominio(1L);
+        seconda.setDescrizione("test");
+        seconda.addSoggettoDebitore(soggettoDiProva());
+        OpzionePagamento opzione = opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "altra");
+        opzione.getPendenze().get(0).setIdPendenza(idPendenzaEsistente);
+
+        assertThatThrownBy(() -> service.crea(seconda))
+                .isInstanceOf(RisorsaGiaEsistenteException.class)
+                .hasMessageContaining("idPendenza");
+    }
+
+    /**
+     * Opzione autonoma, NON ancora collegata a nessuna posizione (a differenza di
+     * {@link #opzioneConPendenza(PosizioneDebitoria, TipologiaOpzionePagamento, String)}): il
+     * chiamante di {@code aggiungiOpzionePagamento} costruisce l'opzione dentro la funzione
+     * passata al servizio, prima che sia collegata all'aggregato reale.
+     */
+    private OpzionePagamento nuovaOpzioneStandalone(Long idApplicazione, TipologiaOpzionePagamento tipologia,
+            String suffisso) {
+        OpzionePagamento opzione = new OpzionePagamento();
+        opzione.setTipologia(tipologia);
+
+        Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(idApplicazione);
+        pendenza.setIdPendenza("pendenza-" + suffisso);
+        pendenza.setIdTipoPendenza(1L);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        String cifraUnica = String.valueOf((Math.abs(suffisso.hashCode()) % 9) + 1);
+        pendenza.setNumeroAvviso("4000000000000000" + cifraUnica);
+        pendenza.setIuv("4000000000000000" + cifraUnica);
+        pendenza.setSrcIuv(pendenza.getIuv());
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
+        opzione.addPendenza(pendenza);
+
+        VocePendenza voce = new VocePendenza();
+        voce.setIdVocePendenza("voce-" + suffisso);
+        voce.setImporto(10.00);
+        voce.setDescrizione("test");
+        voce.setStato(StatoVocePendenza.NON_ESEGUITO);
+        voce.setIdTributo(42L);
+        pendenza.addVocePendenza(voce);
+
+        return opzione;
+    }
+
     private String codApplicazioneDi(PosizioneDebitoria posizione) {
         return applicazioni.entrySet().stream()
                 .filter(e -> e.getValue().equals(posizione.getIdApplicazione()))

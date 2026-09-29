@@ -18,6 +18,7 @@ import jakarta.persistence.OrderBy;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 
 /**
  * Posizione debitoria: radice dell'aggregato pendenza, mappata sulla tabella legacy
@@ -71,6 +72,27 @@ public class PosizioneDebitoria {
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_documenti")
     @Column(name = "id")
     private Long id;
+
+    /**
+     * Colonna aggiunta: concetto assente in {@code documenti} legacy. Lock ottimistico —
+     * stessa tecnica gia' usata su {@link OpzionePagamento#getVersione()} per il bug di
+     * concorrenza trovato in revisione su {@code attiva}/{@code annulla} — ora estesa alla
+     * posizione stessa (bug del lead, 2026-09-29): senza un {@code @Version} qui,
+     * {@code PosizioneDebitoriaService#aggiungiOpzionePagamento} e {@code #attiva}/{@code #annulla}
+     * possono correre in parallelo sulla stessa posizione senza che nessuno dei due si accorga
+     * delle modifiche dell'altro — una nuova opzione DISPONIBILE puo' essere aggiunta subito
+     * dopo che un'altra e' stata ATTIVATA (pagamento gia' eseguito), senza che l'aggiunta veda
+     * quell'attivazione. {@code attiva}/{@code annulla} forzano esplicitamente l'incremento
+     * con {@code entityManager.lock(posizione, LockModeType.OPTIMISTIC_FORCE_INCREMENT)}
+     * (suggerimento del lead, 2026-09-29, per non dipendere implicitamente dal fatto che
+     * tocchino anche {@code dataUltimaModificaAca} — un accoppiamento fragile fra la
+     * marcatura ACA e il controllo di concorrenza, vedi il loro Javadoc);
+     * {@code aggiungiOpzionePagamento}/{@code aggiorna} non ne hanno bisogno: mutano gia'
+     * direttamente campi propri della posizione, che Hibernate rileva da solo.
+     */
+    @Version
+    @Column(name = "versione", nullable = false)
+    private long versione;
 
     /** {@code idPosizioneDebitoria} dello YAML v3. */
     @Column(name = "cod_documento", nullable = false, length = 35)
@@ -217,6 +239,10 @@ public class PosizioneDebitoria {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public long getVersione() {
+        return versione;
     }
 
     public String getIdPosizioneDebitoria() {

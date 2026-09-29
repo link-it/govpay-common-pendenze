@@ -37,6 +37,11 @@ ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_comunicazione_aca TIM
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_creazione TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultimo_aggiornamento TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
 
+-- Lock ottimistico senza questa colonna, aggiungere un'opzione di pagamento e
+-- attivarne un'altra sulla stessa posizione possono correre in parallelo
+-- senza che nessuno dei due veda le modifiche dell'altro.
+ALTER TABLE documenti ADD COLUMN IF NOT EXISTS versione BIGINT NOT NULL DEFAULT 0;
+
 -- Unicita' della posizione per applicativo, anche tra domini diversi.
 -- La creazione fallisce se esistono duplicati: risolverli prima di riprovare.
 -- Diagnostica:
