@@ -19,8 +19,11 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 
+import it.govpay.common.entity.TipoContabilita;
+import it.govpay.common.entity.TipoContabilitaConverter;
 import it.govpay.pendenze.model.DettaglioContabile;
 import it.govpay.pendenze.model.DettaglioContabileConverter;
 import it.govpay.pendenze.model.StatoVocePendenza;
@@ -37,12 +40,22 @@ import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
  * {@link StatoVocePendenza#ANOMALO} e' solo v3, stesso residuo accettato di
  * {@code StatoPendenza.ESEGUITO_ALTRO_CANALE}.</p>
  *
- * <p><b>Colonne aggiunte</b> (concetti assenti nel legacy, che usa FK verso anagrafiche
- * separate — {@code id_tributo}/{@code id_iban_accredito}/{@code id_iban_appoggio} — invece
- * di codici inline): {@link #tipoRiferimento} (il discriminatore RIFERIMENTO_ENTRATA/
- * ENTRATA/BOLLO non esiste affatto nel legacy), {@link #codEntrata}, {@link #ibanAccredito},
- * {@link #ibanAppoggio}, {@link #tassonomia}. {@link #tipoBollo}/{@link #hashDocumento}/
- * {@link #provinciaResidenza} invece coincidono esattamente con colonne legacy reali.</p>
+ * <p><b>Nessuna colonna propria aggiunta per RIFERIMENTO_ENTRATA/ENTRATA/tassonomia</b>
+ * (decisione del lead, 2026-09-28, corregge un primo giro che aveva aggiunto
+ * {@code cod_entrata}/{@code iban_accredito_v3}/{@code iban_appoggio_v3}/{@code tassonomia_v3}):
+ * {@code codEntrata} corrisponde a {@code tipi_tributo.cod_tributo}, e gli IBAN di
+ * {@code ENTRATA} sono IBAN censiti in anagrafica (v2 li referenzia gia' cosi') — si riusano
+ * quindi le FK piatte legacy reali {@link #idTributo}/{@link #idIbanAccredito}/
+ * {@link #idIbanAppoggio} (verso {@code tributi}/{@code iban_accredito} di govpay-common,
+ * M4: nessuna relazione JPA), risolte dal chiamante (mapper di {@code govpay-pendenze-api})
+ * a partire dai codici testuali della richiesta. {@link #tipoBollo}/{@link #hashDocumento}/
+ * {@link #provinciaResidenza} coincidono esattamente con colonne legacy reali.</p>
+ *
+ * <p><b>{@link #getTipoRiferimento()}</b> (RIFERIMENTO_ENTRATA/ENTRATA/BOLLO) e
+ * <b>{@link #getTassonomia()}</b> non sono colonne: si derivano da quali altre colonne sono
+ * valorizzate — stesso comportamento di v2, che non ha mai avuto ne' un discriminatore ne'
+ * una colonna tassonomia propria (v2 combina {@code tipo_contabilita}/{@code codice_contabilita}
+ * a runtime). Vedi Javadoc dei rispettivi metodi.</p>
  *
  * <p>{@link #dettaglioContabile} riusa {@code contabilita} (colonna legacy, gia' JSON —
  * vedi {@code ContabilitaConverter} legacy): il formato non si sovrappone su nessuna
@@ -105,33 +118,49 @@ public class VocePendenza {
     private StatoVocePendenza stato;
 
     /**
-     * Colonna aggiunta: il discriminatore RIFERIMENTO_ENTRATA/ENTRATA/BOLLO non esiste nel
-     * legacy. Nullable sul DB (decisione del lead, 2026-09-26, in vista della migrazione
-     * di un DB v2 esistente): le voci storiche non hanno un valore sensato da retro-
-     * assegnare — l'obbligatorietà per le voci create da v3 resta una validazione
-     * puramente applicativa (campo obbligatorio dello YAML v3), non un vincolo DB, stesso
-     * principio gia' dichiarato nel Javadoc di {@link it.govpay.pendenze.validazione.ValidatorePosizioneDebitoria}
-     * per i campi strutturali.
+     * FK piatta legacy reale (M4) verso {@code tributi.id} di govpay-common — non verso
+     * {@code tipi_tributo.id}: {@code codEntrata} della richiesta REST (stesso namespace di
+     * {@code tipi_tributo.cod_tributo}, catalogo globale) va risolto dal chiamante prima
+     * verso il {@code TipoTributoEntity} globale, poi verso il {@code TributoEntity} di
+     * QUESTO dominio (override/configurazione IBAN e contabilita' per dominio) — stesso
+     * schema a due livelli gia' usato per {@code idTipoPendenza}/{@code idTipoVersamento}
+     * di {@link Pendenza}. Solo {@code RIFERIMENTO_ENTRATA}.
      */
-    @Column(name = "tipo_riferimento", length = 35)
-    @Enumerated(EnumType.STRING)
-    private TipoRiferimentoVocePendenza tipoRiferimento;
+    @Column(name = "id_tributo")
+    private Long idTributo;
 
-    /** Colonna aggiunta. Solo {@code RIFERIMENTO_ENTRATA}. */
-    @Column(name = "cod_entrata", length = 35)
-    private String codEntrata;
+    /**
+     * FK piatta legacy reale (M4) verso {@code iban_accredito.id} di govpay-common: l'IBAN
+     * di {@code ENTRATA} e' sempre un IBAN censito in anagrafica (v2 lo referenzia gia'
+     * cosi', mai come stringa libera) — risolto dal chiamante a partire dal codice IBAN
+     * della richiesta. Solo {@code ENTRATA}.
+     */
+    @Column(name = "id_iban_accredito")
+    private Long idIbanAccredito;
 
-    /** Colonna aggiunta. Solo {@code ENTRATA}. */
-    @Column(name = "iban_accredito_v3", length = 35)
-    private String ibanAccredito;
+    /** Come {@link #idIbanAccredito}, per l'IBAN di appoggio. Solo {@code ENTRATA}. */
+    @Column(name = "id_iban_appoggio")
+    private Long idIbanAppoggio;
 
-    /** Colonna aggiunta. Solo {@code ENTRATA}. */
-    @Column(name = "iban_appoggio_v3", length = 35)
-    private String ibanAppoggio;
+    /**
+     * Colonna legacy reale, stesso nome (nullable: nessun valore sensato da retro-assegnare
+     * alle voci storiche v2, stesso principio gia' visto per altri campi opzionali di
+     * quest'entita'). {@code ENTRATA} e {@code BOLLO} (non {@code RIFERIMENTO_ENTRATA}) —
+     * componente numerica di {@link #getTassonomia()}/{@link #setTassonomia(String)}, mai
+     * letta/scritta direttamente da chi consuma questa entita' dall'esterno.
+     */
+    @Convert(converter = TipoContabilitaConverter.class)
+    @Column(name = "tipo_contabilita", length = 1)
+    private TipoContabilita tipoContabilita;
 
-    /** Colonna aggiunta. {@code ENTRATA} e {@code BOLLO} (non {@code RIFERIMENTO_ENTRATA}). */
-    @Column(name = "tassonomia_v3", length = 35)
-    private String tassonomia;
+    /**
+     * Colonna legacy reale, stesso nome. Componente testuale libera di
+     * {@link #getTassonomia()}/{@link #setTassonomia(String)} — puo' contenere a sua volta
+     * il carattere {@code /}, per questo lo split in {@link #setTassonomia(String)} avviene
+     * solo sulla prima occorrenza.
+     */
+    @Column(name = "codice_contabilita", length = 255)
+    private String codiceContabilita;
 
     /** Colonna legacy reale, stesso nome. Solo {@code BOLLO}. */
     @Column(name = "tipo_bollo", length = 2)
@@ -220,44 +249,108 @@ public class VocePendenza {
         this.stato = stato;
     }
 
+    /**
+     * Derivato, non una colonna (decisione del lead, 2026-09-28: v2 non ha mai avuto questo
+     * discriminatore, lo deduce da quali colonne sono valorizzate — vedi nota di classe):
+     * {@code BOLLO} se {@link #tipoBollo} e' valorizzato, altrimenti {@code RIFERIMENTO_ENTRATA}
+     * se {@link #idTributo} e' valorizzato, altrimenti {@code ENTRATA} se
+     * {@link #idIbanAccredito} e' valorizzato, altrimenti {@code null} (nessuna delle tre
+     * forme riconoscibile — dato storico incompleto).
+     */
+    @Transient
     public TipoRiferimentoVocePendenza getTipoRiferimento() {
-        return tipoRiferimento;
+        if (tipoBollo != null) {
+            return TipoRiferimentoVocePendenza.BOLLO;
+        }
+        if (idTributo != null) {
+            return TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA;
+        }
+        if (idIbanAccredito != null) {
+            return TipoRiferimentoVocePendenza.ENTRATA;
+        }
+        return null;
     }
 
-    public void setTipoRiferimento(TipoRiferimentoVocePendenza tipoRiferimento) {
-        this.tipoRiferimento = tipoRiferimento;
+    public Long getIdTributo() {
+        return idTributo;
     }
 
-    public String getCodEntrata() {
-        return codEntrata;
+    public void setIdTributo(Long idTributo) {
+        this.idTributo = idTributo;
     }
 
-    public void setCodEntrata(String codEntrata) {
-        this.codEntrata = codEntrata;
+    public Long getIdIbanAccredito() {
+        return idIbanAccredito;
     }
 
-    public String getIbanAccredito() {
-        return ibanAccredito;
+    public void setIdIbanAccredito(Long idIbanAccredito) {
+        this.idIbanAccredito = idIbanAccredito;
     }
 
-    public void setIbanAccredito(String ibanAccredito) {
-        this.ibanAccredito = ibanAccredito;
+    public Long getIdIbanAppoggio() {
+        return idIbanAppoggio;
     }
 
-    public String getIbanAppoggio() {
-        return ibanAppoggio;
+    public void setIdIbanAppoggio(Long idIbanAppoggio) {
+        this.idIbanAppoggio = idIbanAppoggio;
     }
 
-    public void setIbanAppoggio(String ibanAppoggio) {
-        this.ibanAppoggio = ibanAppoggio;
+    public TipoContabilita getTipoContabilita() {
+        return tipoContabilita;
     }
 
+    public void setTipoContabilita(TipoContabilita tipoContabilita) {
+        this.tipoContabilita = tipoContabilita;
+    }
+
+    public String getCodiceContabilita() {
+        return codiceContabilita;
+    }
+
+    public void setCodiceContabilita(String codiceContabilita) {
+        this.codiceContabilita = codiceContabilita;
+    }
+
+    /**
+     * Derivato, non una colonna (decisione del lead, 2026-09-28: v2 concatena
+     * {@code tipo_contabilita}/{@code codice_contabilita} a runtime, non ha mai avuto una
+     * colonna tassonomia propria — vedi nota di classe): {@code null} se
+     * {@link #tipoContabilita}/{@link #codiceContabilita} non sono entrambi valorizzati,
+     * altrimenti {@code tipoContabilita.getCodifica() + "/" + codiceContabilita}.
+     */
+    @Transient
     public String getTassonomia() {
-        return tassonomia;
+        if (tipoContabilita == null || codiceContabilita == null) {
+            return null;
+        }
+        return tipoContabilita.getCodifica() + "/" + codiceContabilita;
     }
 
+    /**
+     * Spacchetta {@code tassonomia} nelle due colonne legacy che la compongono davvero —
+     * vedi {@link #getTassonomia()}. Lo split avviene sulla <b>prima</b> occorrenza di
+     * {@code /}: {@link #tipoContabilita} e' sempre una singola cifra numerica, mentre
+     * {@link #codiceContabilita} e' testo libero che puo' contenere a sua volta {@code /}
+     * (decisione del lead, 2026-09-28) — splittare sull'ultima occorrenza, o senza limite,
+     * tronca erroneamente {@code codiceContabilita} sul primo {@code /} che contiene.
+     *
+     * @param tassonomia {@code null} azzera entrambi i campi
+     * @throws IllegalArgumentException se {@code tassonomia} non contiene {@code /}
+     */
     public void setTassonomia(String tassonomia) {
-        this.tassonomia = tassonomia;
+        if (tassonomia == null) {
+            this.tipoContabilita = null;
+            this.codiceContabilita = null;
+            return;
+        }
+        int separatore = tassonomia.indexOf('/');
+        if (separatore < 0) {
+            throw new IllegalArgumentException(
+                    "tassonomia [" + tassonomia + "] non e' nel formato atteso tipoContabilita/codiceContabilita");
+        }
+        String codificaTipoContabilita = tassonomia.substring(0, separatore);
+        this.tipoContabilita = TipoContabilita.daCodifica(codificaTipoContabilita);
+        this.codiceContabilita = tassonomia.substring(separatore + 1);
     }
 
     public String getTipoBollo() {

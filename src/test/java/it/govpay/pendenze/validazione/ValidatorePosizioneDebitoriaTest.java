@@ -17,7 +17,6 @@ import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.DettaglioContabile;
 import it.govpay.pendenze.model.StatoVocePendenza;
-import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 
@@ -128,8 +127,7 @@ class ValidatorePosizioneDebitoriaTest {
         seconda.setDescrizione("test");
         seconda.setIndice(2);
         seconda.setStato(StatoVocePendenza.NON_ESEGUITO);
-        seconda.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        seconda.setCodEntrata("SRV-1");
+        seconda.setIdTributo(42L);
         pendenza.addVocePendenza(seconda);
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
@@ -164,7 +162,10 @@ class ValidatorePosizioneDebitoriaTest {
     void dettaglioContabileNonAmmessoPerBollo() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
         VocePendenza voce = primaVoce(posizione);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.BOLLO);
+        // getTipoRiferimento() e' derivato: per farla apparire BOLLO serve tipoBollo
+        // valorizzato (e idTributo azzerato, altrimenti resterebbe un fixture ambiguo).
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
         voce.setDettaglioContabile(List.of(new DettaglioContabile.SpeseNotifica(BigDecimal.ONE)));
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
@@ -302,8 +303,7 @@ class ValidatorePosizioneDebitoriaTest {
             voce.setDescrizione("test");
             voce.setIndice(1);
             voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-            voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-            voce.setCodEntrata("SRV-1");
+            voce.setIdTributo(42L);
             pendenza.addVocePendenza(voce);
         }
 

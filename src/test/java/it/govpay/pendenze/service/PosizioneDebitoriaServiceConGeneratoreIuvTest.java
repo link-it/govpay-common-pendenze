@@ -29,7 +29,6 @@ import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoVocePendenza;
-import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.spi.GeneratoreIuv;
@@ -100,8 +99,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-1");
+        voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
         service.crea(posizione);
@@ -148,8 +146,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-1");
+        voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
         service.crea(posizione);
@@ -196,8 +193,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-1");
+        voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
         service.crea(posizione);

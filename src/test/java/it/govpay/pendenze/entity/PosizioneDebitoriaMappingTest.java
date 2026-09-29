@@ -97,9 +97,9 @@ class PosizioneDebitoriaMappingTest {
         assertThat(pendenzaLetta.getVoci()).hasSize(1);
         VocePendenza voceLetta = pendenzaLetta.getVoci().get(0);
         assertThat(voceLetta.getTipoRiferimento()).isEqualTo(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        assertThat(voceLetta.getCodEntrata()).isEqualTo("SRV-12345");
+        assertThat(voceLetta.getIdTributo()).isEqualTo(42L);
         assertThat(voceLetta.getIdDominio()).isEqualTo(99L);
-        assertThat(voceLetta.getIbanAccredito()).isNull();
+        assertThat(voceLetta.getIdIbanAccredito()).isNull();
         assertThat(voceLetta.getDettaglioContabile()).isEmpty();
     }
 
@@ -219,7 +219,6 @@ class PosizioneDebitoriaMappingTest {
         pendenza.setDebitoreAnagrafica("Mario Rossi");
         pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
         pendenza.setStato(StatoPendenza.NON_ESEGUITO);
-        pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         pendenza.setDataCreazione(ADESSO);
         pendenza.setDataUltimoAggiornamento(ADESSO);
         return pendenza;
@@ -236,8 +235,7 @@ class PosizioneDebitoriaMappingTest {
         voce.setDescrizione("Sanzione CdS n. abc00000");
         voce.setIndice(indice);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-12345");
+        voce.setIdTributo(42L);
         return voce;
     }
 }

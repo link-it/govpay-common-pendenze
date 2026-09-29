@@ -15,7 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.common.repository.ApplicazioneRepository;
+import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
+import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
@@ -193,9 +195,6 @@ public class PosizioneDebitoriaService {
                 pendenza.setDataCreazione(adesso);
                 pendenza.setDataUltimoAggiornamento(adesso);
                 pendenza.setDataUltimaModificaAca(adesso);
-                if (pendenza.getDataCaricamento() == null) {
-                    pendenza.setDataCaricamento(adesso.toLocalDate());
-                }
                 // IUV/NAV sono univoci per dominio, non globalmente: la pendenza deve
                 // portare lo stesso dominio della posizione per poter far rispettare
                 // quel vincolo (unique_pendenze_numero_avviso/iuv su (id_dominio, ...)).
@@ -483,6 +482,11 @@ public class PosizioneDebitoriaService {
      * solo — coerente con lo YAML). Senza {@code idDominio} puo' restituire piu' risultati,
      * perche' lo stesso numero avviso puo' esistere legittimamente su domini diversi (M13).
      *
+     * <p>Esclude le righe con {@code opzionePagamento} {@code NULL} (create da v2) gia' nella
+     * query del repository, non con un filtro qui sopra — vedi Javadoc di
+     * {@link PendenzaRepository#findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}
+     * per il perche' (un filtro dopo aver gia' paginato romperebbe {@code numRisultati}).</p>
+     *
      * @param idA2A        identificativo del gestionale responsabile
      * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA
      * @param idDominio    dominio creditore, o {@code null} per non filtrare per dominio
@@ -498,9 +502,10 @@ public class PosizioneDebitoriaService {
         }
         Long idApplicazione = idApplicazioneOpt.get();
         Page<Pendenza> pagina = idDominio == null
-                ? pendenzaRepository.findByIdApplicazioneAndNumeroAvviso(idApplicazione, numeroAvviso, pageable)
-                : pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndIdDominio(idApplicazione, numeroAvviso,
-                        idDominio, pageable);
+                ? pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull(idApplicazione,
+                        numeroAvviso, pageable)
+                : pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndIdDominioAndOpzionePagamentoIsNotNull(
+                        idApplicazione, numeroAvviso, idDominio, pageable);
         return paginaDa(pagina, pageable);
     }
 
@@ -514,6 +519,97 @@ public class PosizioneDebitoriaService {
     private <T> PaginaRisultati<T> paginaDa(Page<T> pagina, Pageable pageable) {
         return new PaginaRisultati<>(pagina.getContent(), pageable.getOffset(), pageable.getPageSize(),
                 pagina.getTotalElements());
+    }
+
+    /**
+     * Come {@link #cercaPerDebitore}, ma senza {@code COUNT(*)} (paginazione a offset con
+     * {@code total=false}): richiede al repository {@code limit + 1} righe per determinare
+     * l'esistenza di una pagina successiva, senza calcolare il totale.
+     */
+    @Transactional(readOnly = true)
+    public PaginaSenzaConteggio<PosizioneDebitoria> cercaPerDebitoreSenzaConteggio(String idA2A, String idDebitore,
+            Pageable pageable) {
+        Optional<Long> idApplicazione = risolviIdApplicazione(idA2A);
+        if (idApplicazione.isEmpty()) {
+            return new PaginaSenzaConteggio<>(List.of(), false);
+        }
+        Pageable pageablePiuUno = OffsetPageRequest.of(pageable.getOffset(), pageable.getPageSize() + 1,
+                pageable.getSort());
+        List<PosizioneDebitoria> grezzi = posizioneDebitoriaRepository
+                .findAllDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(idApplicazione.get(), idDebitore,
+                        pageablePiuUno);
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
+    }
+
+    /**
+     * Paginazione a cursore (keyset) per le posizioni debitorie di un debitore, ordinamento
+     * fisso {@code dataCreazione DESC, id DESC} — vedi Javadoc di
+     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndSoggettiDebitori_IdentificativoDaCursore}.
+     *
+     * @param cursorDataCreazione {@code dataCreazione} dell'ultimo elemento della pagina
+     *                            precedente, o {@code null} alla prima pagina
+     * @param cursorId            {@code id} dell'ultimo elemento della pagina precedente, o
+     *                            {@code null} alla prima pagina
+     */
+    @Transactional(readOnly = true)
+    public PaginaSenzaConteggio<PosizioneDebitoria> cercaPerDebitoreDaCursore(String idA2A, String idDebitore,
+            OffsetDateTime cursorDataCreazione, Long cursorId, int limit) {
+        Optional<Long> idApplicazione = risolviIdApplicazione(idA2A);
+        if (idApplicazione.isEmpty()) {
+            return new PaginaSenzaConteggio<>(List.of(), false);
+        }
+        List<PosizioneDebitoria> grezzi = posizioneDebitoriaRepository
+                .findByIdApplicazioneAndSoggettiDebitori_IdentificativoDaCursore(idApplicazione.get(), idDebitore,
+                        cursorDataCreazione, cursorId, OffsetPageRequest.of(0, limit + 1));
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, limit);
+    }
+
+    /**
+     * Come {@link #cercaPendenze}, ma senza {@code COUNT(*)} (paginazione a offset con
+     * {@code total=false}) — vedi Javadoc di {@link #cercaPerDebitoreSenzaConteggio} per il
+     * meccanismo. Per questo endpoint il {@code COUNT} sarebbe comunque economico per
+     * costruzione (IUV/NAV univoci per dominio, M13): la modalita' e' offerta per uniformita'
+     * con {@code findPosizioniDebitorie} e con lo standard di paginazione condiviso con
+     * govpay-console-api, non per necessita' di performance qui.
+     */
+    @Transactional(readOnly = true)
+    public PaginaSenzaConteggio<Pendenza> cercaPendenzeSenzaConteggio(String idA2A, String numeroAvviso,
+            Long idDominio, Pageable pageable) {
+        Optional<Long> idApplicazioneOpt = risolviIdApplicazione(idA2A);
+        if (idApplicazioneOpt.isEmpty()) {
+            return new PaginaSenzaConteggio<>(List.of(), false);
+        }
+        Long idApplicazione = idApplicazioneOpt.get();
+        Pageable pageablePiuUno = OffsetPageRequest.of(pageable.getOffset(), pageable.getPageSize() + 1,
+                pageable.getSort());
+        List<Pendenza> grezzi = idDominio == null
+                ? pendenzaRepository.findAllByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull(
+                        idApplicazione, numeroAvviso, pageablePiuUno)
+                : pendenzaRepository.findAllByIdApplicazioneAndNumeroAvvisoAndIdDominioAndOpzionePagamentoIsNotNull(
+                        idApplicazione, numeroAvviso, idDominio, pageablePiuUno);
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
+    }
+
+    /**
+     * Paginazione a cursore (keyset) per le pendenze di un numero avviso, ordinamento fisso
+     * {@code dataCreazione DESC, id DESC} — vedi Javadoc di
+     * {@link #cercaPerDebitoreDaCursore}.
+     */
+    @Transactional(readOnly = true)
+    public PaginaSenzaConteggio<Pendenza> cercaPendenzeDaCursore(String idA2A, String numeroAvviso, Long idDominio,
+            OffsetDateTime cursorDataCreazione, Long cursorId, int limit) {
+        Optional<Long> idApplicazioneOpt = risolviIdApplicazione(idA2A);
+        if (idApplicazioneOpt.isEmpty()) {
+            return new PaginaSenzaConteggio<>(List.of(), false);
+        }
+        Long idApplicazione = idApplicazioneOpt.get();
+        Pageable pageable = OffsetPageRequest.of(0, limit + 1);
+        List<Pendenza> grezzi = idDominio == null
+                ? pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoDaCursore(idApplicazione, numeroAvviso,
+                        cursorDataCreazione, cursorId, pageable)
+                : pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndIdDominioDaCursore(idApplicazione,
+                        numeroAvviso, idDominio, cursorDataCreazione, cursorId, pageable);
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, limit);
     }
 
     /**

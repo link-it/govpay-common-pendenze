@@ -69,17 +69,18 @@
 --     ("VEDERE_SOGGETTI_DEBITORI"/"Vedere tabella soggetti_debitori"); il
 --     nullable debitore_tipo resta indefinito.
 --
--- tipi_versamento/tipi_vers_domini: anagrafica legacy reale (FK obbligatoria
--- da versamenti), come UnitaOperativa non ancora su govpay-common (decisione
--- del lead, 2026-09-26) — modellata qui via JPA (TipoVersamento/
--- TipoVersamentoDominio) per risolvere idTipoPendenza (codice) negli ID
--- numerici richiesti da Pendenza. Proiezione MINIMALE, non piena fedelta'
--- (deciso dopo aver verificato la DDL reale): la vera tabella di produzione ha
--- ~55 colonne bo_*/pag_*/avv_*/trac_csv_* (form e notifiche del BackOffice
--- legacy) che questa libreria non usa mai — vedi Javadoc di classe di
--- TipoVersamento. id_dominio su tipi_vers_domini resta M4 (FK piatta Long,
--- nessuna relazione JPA verso l'anagrafica esterna, nessuna FK reale qui
--- sotto), stesso principio gia' applicato sopra a domini/applicazioni.
+-- tipi_versamento/tipi_vers_domini/uo/iban_accredito/tributi/tipi_tributo:
+-- anagrafica legacy reale, non piu' modellata da entita' proprie di questa
+-- libreria (decisione del lead, 2026-09-28, dopo govpay-common#9): usiamo
+-- direttamente TipoVersamentoEntity/TipoVersamentoDominioEntity/
+-- UnitaOperativaEntity/IbanAccreditoEntity/TributoEntity/TipoTributoEntity di
+-- govpay-common, che le mappano a piena fedelta' (tutte le colonne del DDL,
+-- non piu' una proiezione minimale). Queste 6 tabelle qui sotto sono percio'
+-- DDL reale copiato verbatim da gov_pay.sql, non piu' derivato da entita' di
+-- questa libreria — necessarie comunque in questo schema perche' i test che
+-- dichiarano @EntityScan su it.govpay.common.entity (es.
+-- PosizioneDebitoriaServiceTest) validano l'intero pacchetto, incluse le
+-- entita' non ancora usate da nessun repository di QUESTA libreria.
 -- ---------------------------------------------------------------------------
 
 CREATE SEQUENCE IF NOT EXISTS seq_documenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
@@ -90,23 +91,126 @@ CREATE SEQUENCE IF NOT EXISTS seq_soggetti_debitori start 1 increment 1 maxvalue
 CREATE SEQUENCE IF NOT EXISTS seq_tipi_versamento start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS seq_tipi_vers_domini start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 
--- Proiezione minimale, modellata via JPA (TipoVersamento) — vedi nota di testata.
+-- DDL reale (gov_pay.sql), mappato a piena fedelta' da TipoVersamentoEntity/
+-- TipoVersamentoDominioEntity di govpay-common — vedi nota di testata.
 CREATE TABLE IF NOT EXISTS tipi_versamento
 (
 	cod_tipo_versamento VARCHAR(35) NOT NULL,
 	descrizione VARCHAR(255) NOT NULL,
 	codifica_iuv VARCHAR(4),
+	paga_terzi BOOLEAN NOT NULL DEFAULT false,
 	abilitato BOOLEAN NOT NULL,
+	bo_form_tipo VARCHAR(35),
+	bo_form_definizione TEXT,
+	bo_validazione_def TEXT,
+	bo_trasformazione_tipo VARCHAR(35),
+	bo_trasformazione_def TEXT,
+	bo_cod_applicazione VARCHAR(35),
+	bo_abilitato BOOLEAN NOT NULL DEFAULT false,
+	pag_form_tipo VARCHAR(35),
+	pag_form_definizione TEXT,
+	pag_form_impaginazione TEXT,
+	pag_validazione_def TEXT,
+	pag_trasformazione_tipo VARCHAR(35),
+	pag_trasformazione_def TEXT,
+	pag_cod_applicazione VARCHAR(35),
+	pag_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_mail_prom_avv_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_mail_prom_avv_pdf BOOLEAN,
+	avv_mail_prom_avv_tipo VARCHAR(35),
+	avv_mail_prom_avv_oggetto TEXT,
+	avv_mail_prom_avv_messaggio TEXT,
+	avv_mail_prom_ric_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_mail_prom_ric_pdf BOOLEAN,
+	avv_mail_prom_ric_tipo VARCHAR(35),
+	avv_mail_prom_ric_oggetto TEXT,
+	avv_mail_prom_ric_messaggio TEXT,
+	avv_mail_prom_ric_eseguiti BOOLEAN,
+	avv_mail_prom_scad_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_mail_prom_scad_preavviso INT,
+	avv_mail_prom_scad_tipo VARCHAR(35),
+	avv_mail_prom_scad_oggetto TEXT,
+	avv_mail_prom_scad_messaggio TEXT,
+	visualizzazione_definizione TEXT,
+	trac_csv_tipo VARCHAR(35),
+	trac_csv_header_risposta TEXT,
+	trac_csv_template_richiesta TEXT,
+	trac_csv_template_risposta TEXT,
+	avv_app_io_prom_avv_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_app_io_prom_avv_tipo VARCHAR(35),
+	avv_app_io_prom_avv_oggetto TEXT,
+	avv_app_io_prom_avv_messaggio TEXT,
+	avv_app_io_prom_ric_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_app_io_prom_ric_tipo VARCHAR(35),
+	avv_app_io_prom_ric_oggetto TEXT,
+	avv_app_io_prom_ric_messaggio TEXT,
+	avv_app_io_prom_ric_eseguiti BOOLEAN,
+	avv_app_io_prom_scad_abilitato BOOLEAN NOT NULL DEFAULT false,
+	avv_app_io_prom_scad_preavviso INT,
+	avv_app_io_prom_scad_tipo VARCHAR(35),
+	avv_app_io_prom_scad_oggetto TEXT,
+	avv_app_io_prom_scad_messaggio TEXT,
 	id BIGINT DEFAULT nextval('seq_tipi_versamento') NOT NULL,
 	CONSTRAINT unique_tipi_versamento_1 UNIQUE (cod_tipo_versamento),
 	CONSTRAINT pk_tipi_versamento PRIMARY KEY (id)
 );
 
--- Proiezione minimale, modellata via JPA (TipoVersamentoDominio) — vedi nota di testata.
 CREATE TABLE IF NOT EXISTS tipi_vers_domini
 (
 	codifica_iuv VARCHAR(4),
+	paga_terzi BOOLEAN,
 	abilitato BOOLEAN,
+	bo_form_tipo VARCHAR(35),
+	bo_form_definizione TEXT,
+	bo_validazione_def TEXT,
+	bo_trasformazione_tipo VARCHAR(35),
+	bo_trasformazione_def TEXT,
+	bo_cod_applicazione VARCHAR(35),
+	bo_abilitato BOOLEAN,
+	pag_form_tipo VARCHAR(35),
+	pag_form_definizione TEXT,
+	pag_form_impaginazione TEXT,
+	pag_validazione_def TEXT,
+	pag_trasformazione_tipo VARCHAR(35),
+	pag_trasformazione_def TEXT,
+	pag_cod_applicazione VARCHAR(35),
+	pag_abilitato BOOLEAN,
+	avv_mail_prom_avv_abilitato BOOLEAN,
+	avv_mail_prom_avv_pdf BOOLEAN,
+	avv_mail_prom_avv_tipo VARCHAR(35),
+	avv_mail_prom_avv_oggetto TEXT,
+	avv_mail_prom_avv_messaggio TEXT,
+	avv_mail_prom_ric_abilitato BOOLEAN,
+	avv_mail_prom_ric_pdf BOOLEAN,
+	avv_mail_prom_ric_tipo VARCHAR(35),
+	avv_mail_prom_ric_oggetto TEXT,
+	avv_mail_prom_ric_messaggio TEXT,
+	avv_mail_prom_ric_eseguiti BOOLEAN,
+	avv_mail_prom_scad_abilitato BOOLEAN,
+	avv_mail_prom_scad_preavviso INT,
+	avv_mail_prom_scad_tipo VARCHAR(35),
+	avv_mail_prom_scad_oggetto TEXT,
+	avv_mail_prom_scad_messaggio TEXT,
+	visualizzazione_definizione TEXT,
+	trac_csv_tipo VARCHAR(35),
+	trac_csv_header_risposta TEXT,
+	trac_csv_template_richiesta TEXT,
+	trac_csv_template_risposta TEXT,
+	app_io_api_key VARCHAR(255),
+	avv_app_io_prom_avv_abilitato BOOLEAN,
+	avv_app_io_prom_avv_tipo VARCHAR(35),
+	avv_app_io_prom_avv_oggetto TEXT,
+	avv_app_io_prom_avv_messaggio TEXT,
+	avv_app_io_prom_ric_abilitato BOOLEAN,
+	avv_app_io_prom_ric_tipo VARCHAR(35),
+	avv_app_io_prom_ric_oggetto TEXT,
+	avv_app_io_prom_ric_messaggio TEXT,
+	avv_app_io_prom_ric_eseguiti BOOLEAN,
+	avv_app_io_prom_scad_abilitato BOOLEAN,
+	avv_app_io_prom_scad_preavviso INT,
+	avv_app_io_prom_scad_tipo VARCHAR(35),
+	avv_app_io_prom_scad_oggetto TEXT,
+	avv_app_io_prom_scad_messaggio TEXT,
 	id BIGINT DEFAULT nextval('seq_tipi_vers_domini') NOT NULL,
 	id_dominio BIGINT NOT NULL,
 	id_tipo_versamento BIGINT NOT NULL,
@@ -115,10 +219,8 @@ CREATE TABLE IF NOT EXISTS tipi_vers_domini
 	CONSTRAINT pk_tipi_vers_domini PRIMARY KEY (id)
 );
 
--- Anagrafica unita' operativa (tabella legacy reale "uo"), non ancora su
--- govpay-common insieme ad Applicazione/Dominio (decisione del lead,
--- 2026-09-26) — vedi Javadoc di classe di UnitaOperativa. Nessuna FK reale
--- verso domini (M4, coerente con documenti/versamenti).
+-- Anagrafica unita' operativa (tabella legacy reale "uo"), mappata a piena
+-- fedelta' da UnitaOperativaEntity di govpay-common — vedi nota di testata.
 CREATE SEQUENCE IF NOT EXISTS seq_uo start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 
 CREATE TABLE IF NOT EXISTS uo
@@ -146,6 +248,61 @@ CREATE TABLE IF NOT EXISTS uo
 	CONSTRAINT unique_uo_1 UNIQUE (cod_uo, id_dominio),
 	-- fk/pk keys constraints
 	CONSTRAINT pk_uo PRIMARY KEY (id)
+);
+
+-- Anagrafica IBAN/tributi (tabelle legacy reali "iban_accredito"/"tipi_tributo"/
+-- "tributi"), mappate a piena fedelta' da IbanAccreditoEntity/TipoTributoEntity/
+-- TributoEntity di govpay-common — non ancora usate da nessun repository di
+-- QUESTA libreria (arriveranno con la risoluzione di VocePendenza.idTributo/
+-- idIbanAccredito/idIbanAppoggio), ma gia' necessarie qui per lo stesso motivo
+-- di uo/tipi_versamento (vedi nota di testata).
+CREATE SEQUENCE IF NOT EXISTS seq_iban_accredito start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS iban_accredito
+(
+	cod_iban VARCHAR(255) NOT NULL,
+	bic_accredito VARCHAR(255),
+	postale BOOLEAN NOT NULL,
+	abilitato BOOLEAN NOT NULL,
+	descrizione VARCHAR(255),
+	intestatario VARCHAR(255),
+	aut_stampa_poste VARCHAR(255),
+	id BIGINT DEFAULT nextval('seq_iban_accredito') NOT NULL,
+	id_dominio BIGINT NOT NULL,
+	CONSTRAINT unique_iban_accredito_1 UNIQUE (cod_iban, id_dominio),
+	CONSTRAINT pk_iban_accredito PRIMARY KEY (id)
+);
+
+CREATE SEQUENCE IF NOT EXISTS seq_tipi_tributo start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS tipi_tributo
+(
+	cod_tributo VARCHAR(255) NOT NULL,
+	descrizione VARCHAR(255),
+	tipo_contabilita VARCHAR(1),
+	cod_contabilita VARCHAR(255),
+	id BIGINT DEFAULT nextval('seq_tipi_tributo') NOT NULL,
+	CONSTRAINT unique_tipi_tributo_1 UNIQUE (cod_tributo),
+	CONSTRAINT pk_tipi_tributo PRIMARY KEY (id)
+);
+
+CREATE SEQUENCE IF NOT EXISTS seq_tributi start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS tributi
+(
+	abilitato BOOLEAN NOT NULL,
+	tipo_contabilita VARCHAR(1),
+	codice_contabilita VARCHAR(255),
+	id BIGINT DEFAULT nextval('seq_tributi') NOT NULL,
+	id_dominio BIGINT NOT NULL,
+	id_iban_accredito BIGINT,
+	id_iban_appoggio BIGINT,
+	id_tipo_tributo BIGINT NOT NULL,
+	CONSTRAINT unique_tributi_1 UNIQUE (id_dominio, id_tipo_tributo),
+	CONSTRAINT fk_trb_id_iban_accredito FOREIGN KEY (id_iban_accredito) REFERENCES iban_accredito(id),
+	CONSTRAINT fk_trb_id_iban_appoggio FOREIGN KEY (id_iban_appoggio) REFERENCES iban_accredito(id),
+	CONSTRAINT fk_trb_id_tipo_tributo FOREIGN KEY (id_tipo_tributo) REFERENCES tipi_tributo(id),
+	CONSTRAINT pk_tributi PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS documenti
@@ -231,10 +388,6 @@ CREATE TABLE IF NOT EXISTS versamenti
 	descrizione_stato VARCHAR(255),
 	aggiornabile BOOLEAN NOT NULL,
 	data_creazione TIMESTAMP NOT NULL,
-	-- Colonna aggiunta: "data di emissione della pendenza" (YAML v3), concetto distinto
-	-- da data_creazione (timestamp tecnico di scrittura della riga) e senza equivalente
-	-- nel legacy, che ha solo quest'ultima.
-	data_caricamento DATE NOT NULL,
 	data_validita TIMESTAMP,
 	data_scadenza TIMESTAMP,
 	data_ora_ultimo_aggiornamento TIMESTAMP NOT NULL,
@@ -308,20 +461,15 @@ CREATE TABLE IF NOT EXISTS singoli_versamenti
 	cod_singolo_versamento_ente VARCHAR(70) NOT NULL,
 	stato_singolo_versamento VARCHAR(35) NOT NULL,
 	importo_singolo_versamento DOUBLE PRECISION NOT NULL,
-	-- Colonne aggiunte: il legacy classifica queste cose con FK verso anagrafiche
-	-- separate (id_tributo/id_iban_accredito/id_iban_appoggio), non con codici inline;
-	-- il discriminatore tipo_riferimento non esiste affatto nel legacy. Nullable: per le
-	-- voci storiche v2 non c'e' un valore sensato da retro-assegnare, l'obbligatorieta'
-	-- per le voci v3 e' solo applicativa (vedi Javadoc di VocePendenza.tipoRiferimento).
-	tipo_riferimento VARCHAR(35),
-	cod_entrata VARCHAR(35),
-	iban_accredito_v3 VARCHAR(35),
-	iban_appoggio_v3 VARCHAR(35),
-	tassonomia_v3 VARCHAR(35),
-	-- Colonne legacy reali, stesso nome:
+	-- Colonne legacy reali, stesso nome: nessuna colonna aggiunta per
+	-- RIFERIMENTO_ENTRATA/ENTRATA/tassonomia (decisione del lead, 2026-09-28) —
+	-- vedi nota di classe di VocePendenza. tipo_riferimento non esiste ne' e'
+	-- mai esistito nel legacy: e' derivato, non una colonna.
 	tipo_bollo VARCHAR(2),
 	hash_documento VARCHAR(70),
 	provincia_residenza VARCHAR(2),
+	tipo_contabilita VARCHAR(1),
+	codice_contabilita VARCHAR(255),
 	descrizione VARCHAR(256),
 	indice_dati INT NOT NULL,
 	contabilita TEXT,
@@ -329,6 +477,9 @@ CREATE TABLE IF NOT EXISTS singoli_versamenti
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_singoli_versamenti') NOT NULL,
 	id_versamento BIGINT NOT NULL,
+	id_tributo BIGINT,
+	id_iban_accredito BIGINT,
+	id_iban_appoggio BIGINT,
 	-- Colonna legacy reale, stesso nome: dominio creditore di questa voce, se
 	-- diverso da quello della pendenza/posizione (multi-beneficiario pagoPA) —
 	-- mai mappata finora, ripristinata il 2026-09-26 (vedi Javadoc di

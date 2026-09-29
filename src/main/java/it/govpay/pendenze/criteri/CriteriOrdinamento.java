@@ -10,8 +10,8 @@ import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 
 /**
  * Analizza il parametro di query {@code sort} nel formato usato dallo YAML v3 (elenco
- * separato da virgole di nomi di campo, ciascuno preceduto opzionalmente da {@code +}
- * ascendente o {@code -} discendente — es. {@code +dataCreazione,-importo}).
+ * separato da virgole di coppie {@code campo:asc} o {@code campo:desc} — es.
+ * {@code dataCreazione:asc,importo:desc}).
  *
  * <p>Nessun campo e' ordinabile per default: il chiamante fornisce una mappa esplicita da
  * nome esterno (quello nell'URL) a percorso JPA effettivo — cosi' l'endpoint decide quali
@@ -30,8 +30,9 @@ public final class CriteriOrdinamento {
      * @param campiOrdinabili nomi esterni ammessi, ciascuno mappato al percorso JPA (es.
      *                        {@code "dataCreazione"} o {@code "opzionePagamento.tipologia"})
      * @return l'ordinamento risultante, {@link Sort#unsorted()} se {@code sort} e' assente
-     * @throws ValidazioneNonSuperataException se un token nomina un campo non presente in
-     *                                          {@code campiOrdinabili}
+     * @throws ValidazioneNonSuperataException se un token e' malformato, ha una direzione
+     *                                          non riconosciuta, o nomina un campo non
+     *                                          presente in {@code campiOrdinabili}
      */
     public static Sort parse(String sort, Map<String, String> campiOrdinabili) {
         if (sort == null || sort.isBlank()) {
@@ -45,13 +46,24 @@ public final class CriteriOrdinamento {
                 continue;
             }
 
-            Sort.Direction direzione = Sort.Direction.ASC;
-            String nomeCampo = pulito;
-            if (pulito.startsWith("+")) {
-                nomeCampo = pulito.substring(1);
-            } else if (pulito.startsWith("-")) {
+            int separatore = pulito.indexOf(':');
+            if (separatore <= 0 || separatore == pulito.length() - 1) {
+                throw new ValidazioneNonSuperataException(
+                        "criterio di ordinamento [" + pulito + "] malformato: formato atteso "
+                                + "\"campo:asc\" o \"campo:desc\"");
+            }
+            String nomeCampo = pulito.substring(0, separatore);
+            String direzioneToken = pulito.substring(separatore + 1);
+
+            Sort.Direction direzione;
+            if ("asc".equalsIgnoreCase(direzioneToken)) {
+                direzione = Sort.Direction.ASC;
+            } else if ("desc".equalsIgnoreCase(direzioneToken)) {
                 direzione = Sort.Direction.DESC;
-                nomeCampo = pulito.substring(1);
+            } else {
+                throw new ValidazioneNonSuperataException(
+                        "direzione di ordinamento [" + direzioneToken + "] non riconosciuta per il campo ["
+                                + nomeCampo + "]: ammessi \"asc\"/\"desc\"");
             }
 
             String percorso = campiOrdinabili.get(nomeCampo);

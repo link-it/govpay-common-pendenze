@@ -11,8 +11,3 @@ ALTER TABLE versamenti ADD CONSTRAINT fk_vrs_id_opzione_pagamento
 -- (1-based) — inequivocabile "questo versamento e' stato inserito dalla v2",
 -- a differenza di un piu' plausibile ma ambiguo "1".
 ALTER TABLE versamenti ADD COLUMN IF NOT EXISTS numero_rata INT NOT NULL DEFAULT -1;
-
--- Sentinella 1970-01-01, stesso principio di documenti.data_creazione: nessun
--- equivalente v2 sensato da cui derivare "data di emissione della pendenza"
--- per le righe esistenti.
-ALTER TABLE versamenti ADD COLUMN IF NOT EXISTS data_caricamento DATE NOT NULL DEFAULT '1970-01-01';

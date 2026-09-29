@@ -42,7 +42,6 @@ import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoRendicontazione;
 import it.govpay.pendenze.model.StatoVocePendenza;
-import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.RicevutaElenco;
@@ -306,7 +305,6 @@ class RicevutaRendicontazioneServiceTest {
         pendenza.setSrcIuv(pendenza.getIuv());
         pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
         pendenza.setStato(StatoPendenza.NON_ESEGUITO);
-        pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         pendenza.setDataCreazione(ADESSO);
         pendenza.setDataUltimoAggiornamento(ADESSO);
         opzione.addPendenza(pendenza);
@@ -317,8 +315,7 @@ class RicevutaRendicontazioneServiceTest {
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-1");
+        voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
         em.persistAndFlush(posizione);

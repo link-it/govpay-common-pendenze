@@ -43,7 +43,6 @@ import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoVocePendenza;
-import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
@@ -538,9 +537,13 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("cercaPendenze trova comunque una pendenza priva di opzionePagamento (creata da v2/migrazione, "
-            + "che non ha mai avuto il concetto di posizione/pubblicazione)")
-    void cercaPendenzeTrovaPendenzaSenzaOpzionePagamento() {
+    @DisplayName("cercaPendenze esclude una pendenza priva di opzionePagamento (creata da v2/migrazione) sia dai "
+            + "risultati sia dal conteggio — bug del lead, 2026-09-28: un primo tentativo la faceva trovare da "
+            + "cercaPendenze e la filtrava solo nel controller REST, DOPO che la Page era gia' stata paginata e "
+            + "contata dal DB. Con dati misti questo produceva pagine incomplete o numRisultati disallineato dal "
+            + "numero di elementi restituiti (es. numRisultati: 1, risultati: [] con una sola pendenza v2 in "
+            + "pagina) — il filtro deve stare nella query, non dopo")
+    void cercaPendenzeEscludeLaPendenzaSenzaOpzionePagamentoDaRisultatiENumeroTotale() {
         Long idApplicazione = idApplicazionePer("A2A-PENDENZA-V2");
 
         Pendenza pendenzaV2 = new Pendenza();
@@ -551,7 +554,6 @@ class PosizioneDebitoriaServiceTest {
         pendenzaV2.setIdTipoVersamento(1L);
         pendenzaV2.setImporto(10.00);
         pendenzaV2.setNumeroAvviso("300000000000000v2");
-        pendenzaV2.setDataCaricamento(LocalDate.of(2020, 1, 1));
         pendenzaV2.setDataCreazione(java.time.OffsetDateTime.now());
         pendenzaV2.setDataUltimoAggiornamento(java.time.OffsetDateTime.now());
         em.persistAndFlush(pendenzaV2);
@@ -559,8 +561,8 @@ class PosizioneDebitoriaServiceTest {
         PaginaRisultati<Pendenza> risultato = service.cercaPendenze("A2A-PENDENZA-V2", "300000000000000v2", null,
                 OffsetPageRequest.of(0, 10));
 
-        assertThat(risultato.numeroRisultatiTotali()).isEqualTo(1);
-        assertThat(risultato.risultati().get(0).getIdPendenza()).isEqualTo("pendenza-v2");
+        assertThat(risultato.numeroRisultatiTotali()).isEqualTo(0);
+        assertThat(risultato.risultati()).isEmpty();
     }
 
     @Test
@@ -721,7 +723,6 @@ class PosizioneDebitoriaServiceTest {
         pendenza.setImporto(10.00);
         pendenza.setNumeroAvviso("300000000000000077");
         pendenza.setIuv("300000000000000077");
-        pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         opzione.addPendenza(pendenza);
 
         pendenza.addVocePendenza(voceDiProva("voce-senza-campi-debitore", 10.00));
@@ -742,8 +743,7 @@ class PosizioneDebitoriaServiceTest {
         voce.setImporto(importo);
         voce.setDescrizione("test");
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-1");
+        voce.setIdTributo(42L);
         return voce;
     }
 
@@ -807,7 +807,6 @@ class PosizioneDebitoriaServiceTest {
         pendenza.setDebitoreAnagrafica("Mario Rossi");
         pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
         pendenza.setStato(StatoPendenza.NON_ESEGUITO);
-        pendenza.setDataCaricamento(LocalDate.of(2026, 7, 29));
         opzione.addPendenza(pendenza);
 
         VocePendenza voce = new VocePendenza();
@@ -816,8 +815,7 @@ class PosizioneDebitoriaServiceTest {
         voce.setDescrizione("test");
         voce.setIndice(1);
         voce.setStato(StatoVocePendenza.NON_ESEGUITO);
-        voce.setTipoRiferimento(TipoRiferimentoVocePendenza.RIFERIMENTO_ENTRATA);
-        voce.setCodEntrata("SRV-1");
+        voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
         return pendenza;

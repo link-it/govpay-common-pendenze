@@ -38,8 +38,14 @@ import it.govpay.pendenze.model.StatoPendenza;
  * nullable — {@code NULL} per ogni riga creata da v2, che non conosce questo concetto),
  * {@link #numeroRata} ({@code cod_rata} resta per la sola compatibilita' di lettura v2,
  * v3 lo lascia sempre {@code NULL} sulle proprie righe — vedi Javadoc di
- * {@link #numeroRata}), {@link #dataCaricamento} (concetto YAML v3 — "data di emissione
- * della pendenza" — distinto da {@link #dataCreazione}, senza equivalente legacy).</p>
+ * {@link #numeroRata}).</p>
+ *
+ * <p><b>{@code dataCaricamento} dello YAML v3</b> ("data di emissione della pendenza") non
+ * e' una colonna propria (decisione del lead, 2026-09-28, su richiesta esplicita: evitare
+ * l'aggiunta di una colonna quando {@link #dataCreazione} può coprire lo stesso bisogno) —
+ * chi mappa la risposta REST lo valorizza da {@link #dataCreazione}{@code .toLocalDate()}.
+ * Non e' quindi più possibile per il chiamante dichiarare una data di emissione diversa dal
+ * momento tecnico di creazione della riga (limite noto e accettato di questa decisione).</p>
  *
  * <p><b>Due FK per il tipo pendenza</b> ({@link #idTipoPendenza}/{@link #idTipoVersamento}):
  * il legacy ha due livelli, {@code tipi_versamento} (catalogo astratto, es. "IMU") e
@@ -211,10 +217,6 @@ public class Pendenza {
     /** {@code TIMESTAMP} in produzione (come {@code data_validita}/{@code data_scadenza} sotto), non DATE. */
     @Column(name = "data_pagamento")
     private OffsetDateTime dataPagamento;
-
-    /** Colonna aggiunta: "data di emissione della pendenza" (YAML v3) — vedi nota di classe. */
-    @Column(name = "data_caricamento", nullable = false)
-    private LocalDate dataCaricamento;
 
     @Column(name = "data_validita")
     private OffsetDateTime dataValidita;
@@ -479,14 +481,6 @@ public class Pendenza {
 
     public void setDataPagamento(OffsetDateTime dataPagamento) {
         this.dataPagamento = dataPagamento;
-    }
-
-    public LocalDate getDataCaricamento() {
-        return dataCaricamento;
-    }
-
-    public void setDataCaricamento(LocalDate dataCaricamento) {
-        this.dataCaricamento = dataCaricamento;
     }
 
     public OffsetDateTime getDataValidita() {
