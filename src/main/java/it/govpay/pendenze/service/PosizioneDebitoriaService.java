@@ -997,6 +997,40 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Come {@link #annulla(UUID)}, ma per il percorso REST
+     * ({@code PATCH .../posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}/opzioni-pagamento/{idOpzionePagamento}}
+     * dello YAML v3), dove {@code idOpzionePagamento} arriva dal path insieme a
+     * {@code idA2A}/{@code idPosizioneDebitoria}: verifica che l'opzione appartenga davvero a
+     * QUELLA posizione/applicazione prima di annullarla — altrimenti un chiamante autenticato
+     * come applicazione "A" potrebbe annullare un'opzione dell'applicazione "B" semplicemente
+     * indovinandone lo UUID (che non e' altrimenti legato a nessun controllo di appartenenza).
+     * {@link #annulla(UUID)} resta il metodo di base (pensato per un futuro chiamante interno,
+     * es. il processo di registrazione pagamenti, che conosce solo l'UUID dell'opzione).
+     *
+     * @param idA2A                identificativo del gestionale responsabile
+     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param idOpzionePagamento   identificativo dell'opzione da annullare
+     * @return l'opzione annullata
+     * @throws RisorsaNonTrovataException          se l'opzione non esiste, o esiste ma non
+     *                                              appartiene a questa posizione/applicazione
+     *                                              (stesso trattamento: nessuna delle due
+     *                                              informazioni va rivelata a un chiamante non
+     *                                              autorizzato su quell'opzione)
+     * @throws TransizioneStatoNonAmmessaException se l'opzione e' {@code ATTIVATA}
+     */
+    public OpzionePagamento annulla(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento) {
+        OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
+        PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
+        boolean appartiene = idPosizioneDebitoria.equals(posizione.getIdPosizioneDebitoria())
+                && idA2A.equals(risolviIdA2A(posizione.getIdApplicazione()));
+        if (!appartiene) {
+            throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
+                    + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
+        }
+        return annulla(idOpzionePagamento);
+    }
+
+    /**
      * Marca come modificati ai fini ACA sia la posizione debitoria sia tutte le pendenze
      * dell'opzione appena transitata: senza questo, il batch ACA (che si basa su
      * {@code dataUltimaModificaAca > dataUltimaComunicazioneAca}, vedi

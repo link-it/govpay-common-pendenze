@@ -347,6 +347,72 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("annulla(idA2A, idPosizioneDebitoria, idOpzionePagamento) annulla l'opzione se "
+            + "appartiene davvero a quella posizione/applicazione")
+    void annullaScopedFunzionaSeLidentitaCorrisponde() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+
+        OpzionePagamento risultato = service.annulla(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), id);
+
+        assertThat(risultato.getStato()).isEqualTo(StatoOpzionePagamento.ANNULLATA);
+    }
+
+    @Test
+    @DisplayName("annulla(idA2A, idPosizioneDebitoria, idOpzionePagamento) rifiuta con "
+            + "RisorsaNonTrovataException (non annulla nulla) se l'opzione esiste ma appartiene "
+            + "a un'ALTRA posizione/applicazione — un'applicazione non deve poter annullare "
+            + "un'opzione di un'altra indovinandone lo UUID")
+    void annullaScopedRifiutaSeLopzioneNonAppartieneAQuestaPosizione() {
+        PosizioneDebitoria posizioneA = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        // Non posizioneConUnaOpzione() una seconda volta: userebbe lo stesso idDominio (1L) e
+        // lo stesso suffisso fisso "1" per la pendenza, collidendo su numeroAvviso con
+        // posizioneA gia' creata (stesso identico bug di isolamento che avrebbe
+        // attivaAnnullaLeAlternativeEMarcaAca se non costruisse le sue opzioni a mano).
+        PosizioneDebitoria posizioneB = new PosizioneDebitoria();
+        posizioneB.setIdApplicazione(idApplicazionePer("A2A-" + UUID.randomUUID().toString().substring(0, 8)));
+        posizioneB.setIdPosizioneDebitoria("pos-" + UUID.randomUUID().toString().substring(0, 8));
+        posizioneB.setIdDominio(2L);
+        posizioneB.setDescrizione("test");
+        posizioneB.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizioneB, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "b");
+        posizioneB = service.crea(posizioneB);
+        UUID idOpzioneB = posizioneB.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+
+        assertThatThrownBy(() -> service.annulla(codApplicazioneDi(posizioneA),
+                posizioneA.getIdPosizioneDebitoria(), idOpzioneB))
+                .isInstanceOf(RisorsaNonTrovataException.class);
+
+        OpzionePagamento opzioneBRiletta = service.attiva(idOpzioneB); // ancora DISPONIBILE: attiva() non la rifiuta
+        assertThat(opzioneBRiletta.getStato()).isEqualTo(StatoOpzionePagamento.ATTIVATA);
+    }
+
+    @Test
+    @DisplayName("annulla(idA2A, idPosizioneDebitoria, idOpzionePagamento) rifiuta con "
+            + "RisorsaNonTrovataException un'opzione inesistente")
+    void annullaScopedRifiutaOpzioneInesistente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        assertThatThrownBy(() -> service.annulla(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), UUID.randomUUID()))
+                .isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
+    @DisplayName("annulla(idA2A, idPosizioneDebitoria, idOpzionePagamento) rifiuta un'opzione gia' ATTIVATA")
+    void annullaScopedRifiutaOpzioneAttivata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.attiva(id);
+
+        assertThatThrownBy(() -> service.annulla(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), id))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
     @DisplayName("aggiorna applica la mutazione, rivalida e marca ACA su posizione e pendenze")
     void aggiornaApplicaMutazioneEMarcaAca() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
