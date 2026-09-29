@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -451,6 +452,50 @@ public class PosizioneDebitoriaService {
         return risolviIdApplicazione(idA2A)
                 .flatMap(idApplicazione -> posizioneDebitoriaRepository
                         .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria));
+    }
+
+    /**
+     * Aggiorna una posizione debitoria esistente ({@code PATCH .../posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}}
+     * dello YAML v3): non conosce la sintassi JSON Patch (RFC 6902) del chiamante — quella
+     * traduzione e' a carico del chiamante stesso, che riceve l'aggregato gestito e vi
+     * applica le mutazioni (es. {@code descrizione}, {@code soggettiDebitori} tramite
+     * {@link PosizioneDebitoria#sostituisciSoggettiDebitori}) prima che questo metodo
+     * rivalidi l'aggregato e lo persista. Le opzioni di pagamento non si toccano qui (vedi
+     * Javadoc dello YAML: {@code POST}/{@code PATCH .../opzioni-pagamento} dedicati).
+     *
+     * @param idA2A              identificativo del gestionale responsabile
+     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param applicaModifiche   muta l'aggregato gestito prima della rivalidazione
+     * @return la posizione aggiornata
+     * @throws RisorsaNonTrovataException      se non esiste una posizione con questa chiave
+     * @throws ValidazioneNonSuperataException se l'aggregato risultante non rispetta i
+     *                                          vincoli semantici (stessi di {@link #crea},
+     *                                          inclusi quelli su {@code navNotifica}/
+     *                                          {@code notificaSend})
+     */
+    public PosizioneDebitoria aggiorna(String idA2A, String idPosizioneDebitoria,
+            Consumer<PosizioneDebitoria> applicaModifiche) {
+        PosizioneDebitoria posizione = risolviIdApplicazione(idA2A)
+                .flatMap(idApplicazione -> posizioneDebitoriaRepository
+                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria))
+                .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
+                        + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
+
+        applicaModifiche.accept(posizione);
+
+        ValidatorePosizioneDebitoria.valida(posizione);
+        assegnaOValidaNavNotifica(posizione);
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                pendenza.setDataUltimaModificaAca(adesso);
+            }
+        }
+
+        return posizioneDebitoriaRepository.save(posizione);
     }
 
     /**

@@ -162,6 +162,42 @@ public class PosizioneDebitoria {
     }
 
     /**
+     * Sostituisce l'intero elenco dei soggetti debitori (PATCH), mantenendo coerente il
+     * lato inverso della relazione.
+     *
+     * <p><b>Aggiunge prima i nuovi, rimuove dopo i vecchi</b> — mai il contrario. {@code ordine}
+     * ha un vincolo {@code UNIQUE(id_documento, ordine)}: se si rimuovessero prima i vecchi
+     * (es. via {@code clear()}) e poi si aggiungessero i nuovi con lo stesso {@code ordine}
+     * (0-based, quindi tipicamente sovrapposto), Hibernate potrebbe eseguire l'{@code INSERT}
+     * dei nuovi prima del {@code DELETE} (orphan removal) dei vecchi nello stesso flush —
+     * viola il vincolo anche se lo stato finale sarebbe valido (riprodotto: sostituire un
+     * solo soggetto con un altro, stesso {@code ordine=0}, senza un flush intermedio fra le
+     * due fasi). Aggiungendo prima i nuovi con {@code ordine} strettamente maggiore del
+     * massimo attuale (mai collidente con le righe esistenti), ne' l'{@code INSERT} ne' la
+     * successiva {@code DELETE} possono mai violare il vincolo, qualunque sia l'ordine con
+     * cui Hibernate le esegue nel flush — non serve alcun flush intermedio.</p>
+     *
+     * <p>Conseguenza: {@code ordine} cresce monotonicamente nel tempo, non torna a
+     * azzerarsi a ogni sostituzione (dopo una PATCH, i soggetti sopravvissuti non hanno piu'
+     * necessariamente {@code ordine} 0-based). Non e' un problema: l'unico uso di questo
+     * campo e' come chiave di ordinamento ({@code @OrderBy("ordine ASC")} sopra) — nessun
+     * codice ne legge il valore assoluto, solo l'ordine relativo fra i soggetti conta.</p>
+     *
+     * @param nuovi nuovo elenco di soggetti debitori, non nullo (puo' essere vuoto: la
+     *              validazione "almeno un soggetto" e' a carico del chiamante)
+     */
+    public void sostituisciSoggettiDebitori(List<SoggettoDebitore> nuovi) {
+        Objects.requireNonNull(nuovi, "i soggetti debitori non possono essere null");
+        List<SoggettoDebitore> vecchi = new ArrayList<>(soggettiDebitori);
+        int ordine = vecchi.stream().mapToInt(SoggettoDebitore::getOrdine).max().orElse(-1) + 1;
+        for (SoggettoDebitore soggetto : nuovi) {
+            soggetto.setOrdine(ordine++);
+            addSoggettoDebitore(soggetto);
+        }
+        soggettiDebitori.removeAll(vecchi);
+    }
+
+    /**
      * Aggiunge un'opzione di pagamento mantenendo coerente il lato inverso della
      * relazione.
      *

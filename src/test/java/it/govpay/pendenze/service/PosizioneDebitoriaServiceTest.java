@@ -346,6 +346,95 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("aggiorna applica la mutazione, rivalida e marca ACA su posizione e pendenze")
+    void aggiornaApplicaMutazioneEMarcaAca() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        azzeraMarcatureAca(posizione);
+        em.flush();
+        em.clear();
+
+        PosizioneDebitoria aggiornata = service.aggiorna(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                p -> p.setDescrizione("nuova descrizione"));
+
+        assertThat(aggiornata.getDescrizione()).isEqualTo("nuova descrizione");
+        assertThat(aggiornata.getDataUltimoAggiornamento()).isNotNull();
+        assertThat(aggiornata.getDataUltimaModificaAca()).isNotNull();
+        assertThat(aggiornata.getOpzioniPagamento().get(0).getPendenze().get(0).getDataUltimaModificaAca())
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("aggiorna solleva RisorsaNonTrovataException per una posizione inesistente")
+    void aggiornaRisorsaInesistente() {
+        assertThatThrownBy(() -> service.aggiorna("A2A-INESISTENTE", "pos-inesistente", p -> {
+        })).isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiorna rivalida l'aggregato: rifiuta uno svuotamento di soggettiDebitori")
+    void aggiornaRifiutaSoggettiDebitoriVuoti() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        assertThatThrownBy(() -> service.aggiorna(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                p -> p.sostituisciSoggettiDebitori(java.util.List.of())))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("soggetto debitore");
+    }
+
+    @Test
+    @DisplayName("aggiorna sostituisce soggettiDebitori: il vecchio soggetto e' rimosso (orphanRemoval), "
+            + "il nuovo ha ordine assegnato in base alla posizione nella lista")
+    void aggiornaSostituisceSoggettiDebitori() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        service.aggiorna(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                p -> p.sostituisciSoggettiDebitori(java.util.List.of(soggettoDiProva2(), soggettoDiProva())));
+        em.flush();
+        em.clear();
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
+        assertThat(riletta.getSoggettiDebitori()).hasSize(2);
+        assertThat(riletta.getSoggettiDebitori().get(0).getIdentificativo())
+                .isEqualTo(soggettoDiProva2().getIdentificativo());
+        assertThat(riletta.getSoggettiDebitori().get(1).getIdentificativo())
+                .isEqualTo(soggettoDiProva().getIdentificativo());
+    }
+
+    @Test
+    @DisplayName("aggiorna assegna automaticamente navNotifica se il patch attiva notificaSend "
+            + "senza specificarlo esplicitamente (stessa regola di crea)")
+    void aggiornaAssegnaNavNotificaAutomaticamente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String numeroAvviso = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso();
+
+        PosizioneDebitoria aggiornata = service.aggiorna(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                p -> p.setNotificaSend(true));
+
+        assertThat(aggiornata.getNavNotifica()).isEqualTo(numeroAvviso);
+    }
+
+    @Test
+    @DisplayName("aggiorna rifiuta un navNotifica che non corrisponde al numeroAvviso di alcuna pendenza")
+    void aggiornaRifiutaNavNotificaNonCorrispondente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        assertThatThrownBy(() -> service.aggiorna(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                p -> p.setNavNotifica("999999999999999999")))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("navNotifica");
+    }
+
+    private String codApplicazioneDi(PosizioneDebitoria posizione) {
+        return applicazioni.entrySet().stream()
+                .filter(e -> e.getValue().equals(posizione.getIdApplicazione()))
+                .map(Map.Entry::getKey)
+                .findFirst().orElseThrow();
+    }
+
+    @Test
     @DisplayName("cercaPerDebitore trova tutte le posizioni dello stesso gestionale con quel soggetto, "
             + "non solo quelle in cui e' il primo debitore")
     void cercaPerDebitoreTrovaLePosizioniConQuelSoggetto() {
