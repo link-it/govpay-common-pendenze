@@ -18,15 +18,14 @@ import it.govpay.pendenze.model.TipoSoggetto;
 
 /**
  * Soggetto obbligato al pagamento di una {@link PosizioneDebitoria} ("debitore in
- * solido"), mappato sulla tabella nuova {@code soggetti_debitori} (decisione del lead,
- * 2026-09-25: TUTTI i debitori vivono qui, incluso il primo — il debitore appartiene
- * logicamente al documento, non al singolo versamento legacy).
+ * solido"), mappato sulla tabella nuova {@code soggetti_debitori}: TUTTI i debitori
+ * vivono qui, incluso il primo — il debitore appartiene logicamente al documento, non
+ * al singolo versamento legacy.
  *
  * <p>{@link #ordine} e' la sola fonte di verita' su "chi e' il soggetto pagatore": il
  * primo (ordine 0), per convenzione dello YAML v3 (righe 1484-1494), essendo il Nodo dei
  * Pagamenti vincolato a un solo soggetto pagatore per avviso. <b>Non</b> viene sincronizzato
- * su {@code versamenti.debitore_*} (decisione del lead, 2026-09-26, dopo un tentativo
- * intermedio di sincronizzarlo davvero, poi scartato): questa lista resta modificabile dopo
+ * su {@code versamenti.debitore_*}: questa lista resta modificabile dopo
  * la creazione (aggiornamento via PATCH, sviluppo successivo), e tenere allineate quelle
  * colonne a ogni modifica sarebbe complessita' pura — {@code soggetti_debitori} e' l'unica
  * fonte di verita' per v3, quelle colonne restano un placeholder per la sola compatibilita'

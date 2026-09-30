@@ -20,8 +20,7 @@ import it.govpay.pendenze.model.StatoRendicontazione;
 /**
  * Occorrenza di pagamento di una {@link Pendenza} all'interno di un flusso di
  * rendicontazione pagoPA (schema {@code Rendicontazione} dello YAML v3), mappata sulla
- * tabella legacy {@code rendicontazioni} (decisione del lead, 2026-09-25, fase 2: riuso
- * diretto).
+ * tabella legacy {@code rendicontazioni}: riuso diretto.
  *
  * <p><b>Non ha una colonna {@code id_pendenza}</b> (correzione rispetto a una prima
  * ipotesi): il legacy correla la rendicontazione alla pendenza solo tramite
@@ -30,10 +29,9 @@ import it.govpay.pendenze.model.StatoRendicontazione;
  * risoluzione verso una {@link Pendenza} specifica resta a carico del chiamante, vedi
  * {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}.</p>
  *
- * <p><b>Fuori dall'aggregato {@link PosizioneDebitoria}</b> (decisione del lead,
- * 2026-09-24): stesso principio del vecchio "dettaglio pendenza" da evitare (centinaia
- * di query per una singola lettura) — risorsa indipendente, interrogata solo su
- * richiesta esplicita.</p>
+ * <p><b>Fuori dall'aggregato {@link PosizioneDebitoria}</b>: stesso principio del
+ * vecchio "dettaglio pendenza" da evitare (centinaia di query per una singola
+ * lettura) — risorsa indipendente, interrogata solo su richiesta esplicita.</p>
  *
  * <p><b>{@link #importoPagato}/{@link #esito}/{@link #data} sono nullable</b>, fedeli
  * alla colonna legacy reale (a differenza di una prima ipotesi che li dava tutti

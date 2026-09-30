@@ -19,13 +19,12 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
 
     /**
      * Cerca per la chiave logica (applicazione + identificativo della posizione). {@code idA2A}
-     * (parametro pubblico del servizio) e' risolto in {@code idApplicazione} dal chiamante
-     * (decisione del lead, 2026-09-25: {@code idA2A} non e' piu' una colonna propria di
+     * (parametro pubblico del servizio) e' risolto in {@code idApplicazione} dal chiamante:
+     * {@code idA2A} non e' piu' una colonna propria di
      * {@code PosizioneDebitoria} da quando e' mappata su {@code documenti} — coincide con
-     * {@code Applicazione.codApplicazione}).
+     * {@code Applicazione.codApplicazione}.
      *
-     * <p><b>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()}</b> (decisione del
-     * lead, 2026-09-27, dopo un tentativo intermedio di filtrare poi scartato — non riaprire
+     * <p><b>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()}</b> (non riaprire
      * senza rileggere §24/§27 di {@code proposta-modello-nativo-v3.md}): lo YAML v3 dice che una
      * posizione non ancora pubblicata "si comporta come se non esistesse per qualsiasi
      * ricerca/pagamento <i>esterno</i>... resta invece sempre visibile e gestibile per

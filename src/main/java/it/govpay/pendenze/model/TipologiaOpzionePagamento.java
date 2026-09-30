@@ -10,16 +10,15 @@ package it.govpay.pendenze.model;
  * {@link #richiedeGiorni()}) e per la cardinalita' ammessa dell'elenco pendenze (validata
  * in applicazione, non a livello di schema).</p>
  *
- * <p><b>{@link #SOLUZIONE_UNICA} senza limite di pendenze</b> (deciso dal lead,
- * 2026-09-22, in aggiornamento allo YAML v3 che oggi impone ancora
- * {@code maxItems: 1}): un dovuto con piu' di 5 voci richiede piu' di un avviso di
- * pagamento (ogni {@code Pendenza} ammette al massimo 5 {@code VocePendenza}), quindi piu'
- * di una pendenza anche per un pagamento concettualmente "in un'unica soluzione" —
- * cambia solo il layout di stampa, non la logica: la posizione risulta pagata quando
- * tutte le sue pendenze sono pagate, esattamente come {@link #PIANO_RATEALE}. Le due
- * tipologie con termine ({@link #SOLUZIONE_UNICA_ENTRO}/{@link #SOLUZIONE_UNICA_OLTRE})
- * restano invece a esattamente 1 pendenza: confermato dal lead (2026-09-24) che non è
- * previsto che ammettano più pendenze come {@code SOLUZIONE_UNICA}.</p>
+ * <p><b>{@link #SOLUZIONE_UNICA} senza limite di pendenze</b>: un dovuto con piu' di 5
+ * voci richiede piu' di un avviso di pagamento (ogni {@code Pendenza} ammette al
+ * massimo 5 {@code VocePendenza}), quindi piu' di una pendenza anche per un pagamento
+ * concettualmente "in un'unica soluzione" — cambia solo il layout di stampa, non la
+ * logica: la posizione risulta pagata quando tutte le sue pendenze sono pagate,
+ * esattamente come {@link #PIANO_RATEALE}. Le due tipologie con termine
+ * ({@link #SOLUZIONE_UNICA_ENTRO}/{@link #SOLUZIONE_UNICA_OLTRE}) restano invece a
+ * esattamente 1 pendenza: non è previsto che ammettano più pendenze come
+ * {@code SOLUZIONE_UNICA}.</p>
  */
 public enum TipologiaOpzionePagamento {
     PIANO_RATEALE,

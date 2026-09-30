@@ -30,9 +30,9 @@ import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
 
 /**
- * Voce di pendenza: mappata sulla tabella legacy {@code singoli_versamenti} (decisione
- * del lead, 2026-09-25 — riuso possibile perche' {@link Pendenza} e' ora {@code versamenti}:
- * {@code id_versamento} punta sempre a una riga vera, non serve piu' una tabella nuova).
+ * Voce di pendenza: mappata sulla tabella legacy {@code singoli_versamenti} — riuso
+ * possibile perche' {@link Pendenza} e' ora {@code versamenti}:
+ * {@code id_versamento} punta sempre a una riga vera, non serve piu' una tabella nuova.
  *
  * <p><b>Stato gia' allineato</b>: {@link StatoVocePendenza#NON_ESEGUITO}/{@code ESEGUITO}
  * coincidono per stringa con {@code StatoSingoloVersamento} legacy (2 soli valori) — nessun
@@ -40,9 +40,7 @@ import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
  * {@link StatoVocePendenza#ANOMALO} e' solo v3, stesso residuo accettato di
  * {@code StatoPendenza.ESEGUITO_ALTRO_CANALE}.</p>
  *
- * <p><b>Nessuna colonna propria aggiunta per RIFERIMENTO_ENTRATA/ENTRATA/tassonomia</b>
- * (decisione del lead, 2026-09-28, corregge un primo giro che aveva aggiunto
- * {@code cod_entrata}/{@code iban_accredito_v3}/{@code iban_appoggio_v3}/{@code tassonomia_v3}):
+ * <p><b>Nessuna colonna propria aggiunta per RIFERIMENTO_ENTRATA/ENTRATA/tassonomia</b>:
  * {@code codEntrata} corrisponde a {@code tipi_tributo.cod_tributo}, e gli IBAN di
  * {@code ENTRATA} sono IBAN censiti in anagrafica (v2 li referenzia gia' cosi') — si riusano
  * quindi le FK piatte legacy reali {@link #idTributo}/{@link #idIbanAccredito}/
@@ -60,12 +58,12 @@ import it.govpay.pendenze.model.TipoRiferimentoVocePendenza;
  * <p>{@link #dettaglioContabile} riusa {@code contabilita} (colonna legacy, gia' JSON —
  * vedi {@code ContabilitaConverter} legacy): il formato non si sovrappone su nessuna
  * chiave con quello vecchio (Contabilita/QuotaContabilita ha {@code quote}/
- * {@code proprietaCustom}, {@code DettaglioContabile} ha {@code tipo}) — decisione del
- * lead, 2026-09-25, la compatibilita' si gestisce a livello applicativo (ragioneria v3),
+ * {@code proprietaCustom}, {@code DettaglioContabile} ha {@code tipo}) — la
+ * compatibilita' si gestisce a livello applicativo (ragioneria v3),
  * non con una colonna separata.</p>
  *
  * <p>{@link #idDominio} e' invece una colonna legacy reale rimasta fuori dalla mappatura
- * iniziale (multi-beneficiario pagoPA), ripristinata il 2026-09-26 — vedi Javadoc del
+ * iniziale (multi-beneficiario pagoPA) — vedi Javadoc del
  * campo.</p>
  */
 @Entity
@@ -101,8 +99,7 @@ public class VocePendenza {
      * multi-beneficiario pagoPA: un avviso con voci destinate a enti creditori diversi).
      * Colonna legacy reale ({@code singoli_versamenti.id_dominio}, FK verso {@code domini}),
      * mai mappata finora — stessa causa di omissione gia' vista per
-     * {@code PosizioneDebitoria.dataPubblicazione} (individuata e corretta dal lead,
-     * 2026-09-26). A differenza di li', qui {@code NULL} non basta a significare "eredita
+     * {@code PosizioneDebitoria.dataPubblicazione}. A differenza di li', qui {@code NULL} non basta a significare "eredita
      * dal padre": {@link it.govpay.pendenze.service.PosizioneDebitoriaService#crea} la
      * materializza sempre esplicitamente al valore della posizione se il chiamante non
      * indica un override — stesso principio gia' in uso per {@link Pendenza#getIdDominio()}
@@ -250,7 +247,7 @@ public class VocePendenza {
     }
 
     /**
-     * Derivato, non una colonna (decisione del lead, 2026-09-28: v2 non ha mai avuto questo
+     * Derivato, non una colonna (v2 non ha mai avuto questo
      * discriminatore, lo deduce da quali colonne sono valorizzate — vedi nota di classe):
      * {@code BOLLO} se {@link #tipoBollo} e' valorizzato, altrimenti {@code RIFERIMENTO_ENTRATA}
      * se {@link #idTributo} e' valorizzato, altrimenti {@code ENTRATA} se
@@ -312,7 +309,7 @@ public class VocePendenza {
     }
 
     /**
-     * Derivato, non una colonna (decisione del lead, 2026-09-28: v2 concatena
+     * Derivato, non una colonna (v2 concatena
      * {@code tipo_contabilita}/{@code codice_contabilita} a runtime, non ha mai avuto una
      * colonna tassonomia propria — vedi nota di classe): {@code null} se
      * {@link #tipoContabilita}/{@link #codiceContabilita} non sono entrambi valorizzati,
@@ -331,7 +328,7 @@ public class VocePendenza {
      * vedi {@link #getTassonomia()}. Lo split avviene sulla <b>prima</b> occorrenza di
      * {@code /}: {@link #tipoContabilita} e' sempre una singola cifra numerica, mentre
      * {@link #codiceContabilita} e' testo libero che puo' contenere a sua volta {@code /}
-     * (decisione del lead, 2026-09-28) — splittare sull'ultima occorrenza, o senza limite,
+     * — splittare sull'ultima occorrenza, o senza limite,
      * tronca erroneamente {@code codiceContabilita} sul primo {@code /} che contiene.
      *
      * @param tassonomia {@code null} azzera entrambi i campi

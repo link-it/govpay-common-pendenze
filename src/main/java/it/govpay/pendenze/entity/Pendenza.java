@@ -28,9 +28,9 @@ import it.govpay.pendenze.model.StatoPagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 
 /**
- * Pendenza (rata): mappata sulla tabella legacy {@code versamenti} (decisione del lead,
- * 2026-09-25: riuso diretto invece di una tabella v3 separata — vedi
- * {@code proposta-modello-nativo-v3.md} §17). Questa e' l'entita' con la mappatura piu'
+ * Pendenza (rata): mappata sulla tabella legacy {@code versamenti} — riuso diretto
+ * invece di una tabella v3 separata, vedi {@code proposta-modello-nativo-v3.md} §17.
+ * Questa e' l'entita' con la mappatura piu'
  * estesa dell'intero riuso: {@code versamenti} ha ~50 colonne rilevanti, non le ~15 della
  * precedente {@code pendenze} nativa.
  *
@@ -41,9 +41,8 @@ import it.govpay.pendenze.model.StatoPendenza;
  * {@link #numeroRata}).</p>
  *
  * <p><b>{@code dataCaricamento} dello YAML v3</b> ("data di emissione della pendenza") non
- * e' una colonna propria (decisione del lead, 2026-09-28, su richiesta esplicita: evitare
- * l'aggiunta di una colonna quando {@link #dataCreazione} può coprire lo stesso bisogno) —
- * chi mappa la risposta REST lo valorizza da {@link #dataCreazione}{@code .toLocalDate()}.
+ * e' una colonna propria: {@link #dataCreazione} copre lo stesso bisogno, evitando una
+ * colonna ridondante — chi mappa la risposta REST lo valorizza da {@link #dataCreazione}{@code .toLocalDate()}.
  * Non e' quindi più possibile per il chiamante dichiarare una data di emissione diversa dal
  * momento tecnico di creazione della riga (limite noto e accettato di questa decisione).</p>
  *
@@ -51,16 +50,15 @@ import it.govpay.pendenze.model.StatoPendenza;
  * il legacy ha due livelli, {@code tipi_versamento} (catalogo astratto, es. "IMU") e
  * {@code tipi_vers_domini} (istanza/override per dominio) — {@code versamenti.id_tipo_versamento}
  * e' una denormalizzazione di comodo di quanto gia' risolvibile da
- * {@code tipi_vers_domini.id_tipo_versamento}, non un'informazione indipendente. Decisione
- * del lead, 2026-09-25: per semplicita' della libreria, e' il chiamante a fornire
+ * {@code tipi_vers_domini.id_tipo_versamento}, non un'informazione indipendente. Per
+ * semplicita' della libreria e' il chiamante a fornire
  * entrambi gli ID (M4 puro, nessuna query di questa libreria verso l'anagrafica esterna,
  * nemmeno per derivare il secondo dal primo).</p>
  *
- * <p><b>Debitore denormalizzato: placeholder fissi, non sincronizzati</b> (decisione del lead,
- * 2026-09-26, dopo un tentativo intermedio di sincronizzarli davvero, poi scartato):
+ * <p><b>Debitore denormalizzato: placeholder fissi, non sincronizzati</b>:
  * {@link #debitoreTipo}/{@link #debitoreIdentificativo}/{@link #debitoreAnagrafica}/
  * {@link #srcDebitoreIdentificativo} restano {@code NOT NULL} in produzione (tranne
- * {@code debitoreTipo}, nullable — lasciato indefinito). Verificato che il motore di
+ * {@code debitoreTipo}, nullable — lasciato indefinito). Il motore di
  * pagamento legacy (attivazione RPT verso il Nodo, {@code CtPaymentPABuilder.buildSoggettoPagatore};
  * stampa dell'avviso PDF, {@code AvvisoPagamentoUtils.impostaAnagraficaDebitore}) legge
  * queste colonne direttamente — ma quella pipeline e' essa stessa parte di cio' che verra'
@@ -191,7 +189,7 @@ public class Pendenza {
     @Enumerated(EnumType.STRING)
     private StatoPagamento statoPagamento = StatoPagamento.NON_PAGATO;
 
-    /** Sempre {@code "DOVUTO"}: v3 carica solo pendenze DOVUTO (decisione del lead). */
+    /** Sempre {@code "DOVUTO"}: v3 carica solo pendenze DOVUTO. */
     @Column(name = "tipo", nullable = false, length = 35)
     private String tipo = "DOVUTO";
 

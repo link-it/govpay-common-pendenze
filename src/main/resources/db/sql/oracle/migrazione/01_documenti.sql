@@ -1,10 +1,19 @@
 -- ---------------------------------------------------------------------------
 -- Migrazione di un DB GovPay v2 esistente alla struttura v3 (api-pendenze-v3).
 --
--- Ambito: solo PostgreSQL (nessun altro dialetto e' stato verificato in questa
--- analisi). Script a se stanti, NON parte della catena di patch versionate del
--- core GovPay (src/main/resources/db/sql/<dialetto>/patch) — vanno eseguiti a
--- parte su un DB esistente, in ordine di numerazione (01..05), una sola volta.
+-- Dialetto: Oracle — traduzione NON verificata contro un'istanza reale
+-- (solo il dialetto postgresql, sorella di questa cartella, e' stato
+-- verificato: e' quello su cui girano i test dei moduli
+-- govpay-common-pendenze/govpay-pendenze-api). Sintassi allineata ai pattern
+-- gia' in uso nei patch del core per Oracle (vedi
+-- src/main/resources/db/sql/oracle/patch/3.9.sql e 3.10.0.sql): ALTER TABLE
+-- senza la parola chiave COLUMN, NUMBER al posto di BOOLEAN/BIGINT/INT.
+--
+-- Script a se stanti, NON parte della catena di patch versionate del core
+-- GovPay — vanno eseguiti a parte su un DB esistente, in ordine di
+-- numerazione (01..04), una sola volta. Oracle non supporta "ADD COLUMN IF
+-- NOT EXISTS": se uno script va rieseguito, va reso manualmente idempotente
+-- o verificato a mano prima di rilanciarlo.
 --
 -- Convenzione dei valori sentinella: dove serve un default per righe v2 gia'
 -- esistenti su colonne NOT NULL nuove, si usa un valore ovviamente non
@@ -19,28 +28,30 @@
 -- docs/proposta-modello-nativo-v3.md).
 -- ---------------------------------------------------------------------------
 
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS id_unita_operativa BIGINT;
+ALTER TABLE documenti ADD id_unita_operativa NUMBER;
 
 -- Nullable, nessuna sentinella necessaria: NULL significa "pubblicata subito"
 -- (semantica dello YAML v3), che e' esattamente il significato corretto anche
 -- per le righe v2 esistenti (v2 non ha mai avuto questo concetto).
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_pubblicazione DATE;
+ALTER TABLE documenti ADD data_pubblicazione DATE;
 
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS notifica_send BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS nav_notifica VARCHAR(18);
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_modifica_aca TIMESTAMP;
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_comunicazione_aca TIMESTAMP;
+-- Booleano rappresentato come NUMBER (0/1), come da convenzione del core per
+-- Oracle (vedi es. utenze.abilitato, tipi_versamento.autorizzazione_*_star).
+ALTER TABLE documenti ADD notifica_send NUMBER DEFAULT 0 NOT NULL;
+ALTER TABLE documenti ADD nav_notifica VARCHAR2(18);
+ALTER TABLE documenti ADD data_ultima_modifica_aca TIMESTAMP;
+ALTER TABLE documenti ADD data_ultima_comunicazione_aca TIMESTAMP;
 
 -- Sentinella 1970-01-01: nessun equivalente v2 da cui derivare queste due date
 -- per i documenti esistenti (v2 usa documenti/id_documento per l'avviso
 -- cumulativo, ma non traccia una propria data di creazione/aggiornamento).
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_creazione TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultimo_aggiornamento TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
+ALTER TABLE documenti ADD data_creazione TIMESTAMP DEFAULT TO_TIMESTAMP('1970-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS') NOT NULL;
+ALTER TABLE documenti ADD data_ultimo_aggiornamento TIMESTAMP DEFAULT TO_TIMESTAMP('1970-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS') NOT NULL;
 
 -- Lock ottimistico senza questa colonna, aggiungere un'opzione di pagamento e
 -- attivarne un'altra sulla stessa posizione possono correre in parallelo
 -- senza che nessuno dei due veda le modifiche dell'altro.
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS versione BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE documenti ADD versione NUMBER DEFAULT 0 NOT NULL;
 
 -- Unicita' della posizione per applicativo, anche tra domini diversi.
 -- La creazione fallisce se esistono duplicati: risolverli prima di riprovare.

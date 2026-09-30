@@ -822,6 +822,30 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("trovaPendenzaPerIdentificativo trova la pendenza per idPendenza+idA2A")
+    void trovaPendenzaPerIdentificativoTrovaLaPendenza() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String idPendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getIdPendenza();
+
+        java.util.Optional<Pendenza> trovata = service.trovaPendenzaPerIdentificativo(codApplicazioneDi(posizione),
+                idPendenza);
+
+        assertThat(trovata).isPresent();
+        assertThat(trovata.get().getIdPendenza()).isEqualTo(idPendenza);
+    }
+
+    @Test
+    @DisplayName("trovaPendenzaPerIdentificativo non trova nulla per idA2A inesistente o idPendenza sbagliato")
+    void trovaPendenzaPerIdentificativoNonTrovaSeIdentificativoSbagliato() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String idPendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getIdPendenza();
+
+        assertThat(service.trovaPendenzaPerIdentificativo("A2A-INESISTENTE", idPendenza)).isEmpty();
+        assertThat(service.trovaPendenzaPerIdentificativo(codApplicazioneDi(posizione), "pendenza-inesistente"))
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("cercaPerDebitore trova comunque una posizione con dataPubblicazione futura — stessa "
             + "decisione del lead, 2026-09-27, vedi trovaPerIdentificativoTrovaPosizioneAncheSeNonAncoraPubblicata")
     void cercaPerDebitoreTrovaPosizioneAncheSeNonAncoraPubblicata() {
@@ -891,6 +915,29 @@ class PosizioneDebitoriaServiceTest {
 
         assertThat(risultato.numeroRisultatiTotali()).isEqualTo(0);
         assertThat(risultato.risultati()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("trovaPendenzaPerIdentificativo esclude una pendenza priva di opzionePagamento "
+            + "(v2/migrazione) — bug gemello di cercaPendenze, stessa causa: il mapper della REST "
+            + "API non sa rappresentarla (IllegalStateException, tradotta in 500); deve valere "
+            + "come non trovata (404), non un errore interno")
+    void trovaPendenzaPerIdentificativoEsclideLaPendenzaSenzaOpzionePagamento() {
+        Long idApplicazione = idApplicazionePer("A2A-PENDENZA-V2-GET");
+
+        Pendenza pendenzaV2 = new Pendenza();
+        pendenzaV2.setIdApplicazione(idApplicazione);
+        pendenzaV2.setIdDominio(1L);
+        pendenzaV2.setIdPendenza("pendenza-v2-get");
+        pendenzaV2.setIdTipoPendenza(1L);
+        pendenzaV2.setIdTipoVersamento(1L);
+        pendenzaV2.setImporto(10.00);
+        pendenzaV2.setNumeroAvviso("300000000000000v3");
+        pendenzaV2.setDataCreazione(java.time.OffsetDateTime.now());
+        pendenzaV2.setDataUltimoAggiornamento(java.time.OffsetDateTime.now());
+        em.persistAndFlush(pendenzaV2);
+
+        assertThat(service.trovaPendenzaPerIdentificativo("A2A-PENDENZA-V2-GET", "pendenza-v2-get")).isEmpty();
     }
 
     @Test

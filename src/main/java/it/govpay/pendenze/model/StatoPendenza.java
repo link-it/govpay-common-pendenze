@@ -3,9 +3,9 @@ package it.govpay.pendenze.model;
 /**
  * Stato persistito di una {@code Pendenza}.
  *
- * <p>Valori allineati esattamente a {@code StatoVersamento} del legacy, tutti e 8
- * (decisione del lead, 2026-09-25: sono i valori legacy quelli validi, lo YAML v3 va
- * corretto di conseguenza — non un converter di traduzione) — necessario perche'
+ * <p>Valori allineati esattamente a {@code StatoVersamento} del legacy, tutti e 8 (sono
+ * i valori legacy quelli validi, lo YAML v3 va corretto di conseguenza — non un
+ * converter di traduzione): necessario perche'
  * {@code Pendenza} e' ora mappata sulla stessa colonna {@code versamenti.stato_versamento}:
  * un valore grammaticalmente "in italiano corretto per pendenza" (es.
  * {@code NON_ESEGUITA} invece di {@code NON_ESEGUITO}) non e' una costante valida di
@@ -15,12 +15,12 @@ package it.govpay.pendenze.model;
  * enum deve poter leggere senza eccezioni qualunque valore vi compaia, anche uno che v3
  * stesso non scrive mai.</p>
  *
- * <p><b>Follow-up sullo YAML v3</b> (fuori da questo repo, decisione del lead,
- * 2026-09-25): aggiungere {@link #ESEGUITO_SENZA_RPT} allo schema {@code StatoPendenza} —
- * non e' solo una stranezza legacy da tollerare in lettura, e' uno stato che una pendenza
- * v3 puo' raggiungere davvero (rendicontazione che conferma il pagamento senza che l'RPT
- * sia mai stata vista, stesso caso di {@code pagamenti.stato=PAGATO_SENZA_RPT} gia' noto
- * dal punto 6 su ricevute/rendicontazioni). {@link #ESEGUITO_ALTRO_CANALE} resta invece
+ * <p><b>Follow-up sullo YAML v3</b> (fuori da questo repo): aggiungere
+ * {@link #ESEGUITO_SENZA_RPT} allo schema {@code StatoPendenza} — non e' solo una
+ * stranezza legacy da tollerare in lettura, e' uno stato che una pendenza v3 puo'
+ * raggiungere davvero (rendicontazione che conferma il pagamento senza che l'RPT sia
+ * mai stata vista, stesso caso di {@code pagamenti.stato=PAGATO_SENZA_RPT} nella
+ * gestione di ricevute/rendicontazioni). {@link #ESEGUITO_ALTRO_CANALE} resta invece
  * solo tollerato in lettura, non ancora confermato per l'esposizione in API.</p>
  *
  * <p>Lo schema {@code StatoPendenza} dello YAML v3 elenca inoltre {@code SCADUTA}, che

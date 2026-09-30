@@ -17,8 +17,8 @@ public interface RendicontazioneRepository extends JpaRepository<Rendicontazione
      * Elenco delle rendicontazioni di una pendenza
      * ({@code GET /pendenze/{idA2A}/{idPendenza}/rendicontazioni} dello YAML v3), a
      * partire dallo IUV (vedi Javadoc di {@link Rendicontazione} sull'assenza di
-     * {@code id_pendenza} nel legacy {@code rendicontazioni}) **e dal dominio** (bug del
-     * lead, 2026-09-26): lo IUV e' univoco solo per dominio, non globalmente (stesso
+     * {@code id_pendenza} nel legacy {@code rendicontazioni}) **e dal dominio**: lo IUV e'
+     * univoco solo per dominio, non globalmente (stesso
      * principio di {@code Pendenza} — vedi la nota su IUV/NAV) — senza questo filtro, due
      * enti con lo stesso IUV vedrebbero anche le rendicontazioni reciproche. Il filtro passa
      * per {@code flusso.codDominio} (unica colonna dominio disponibile su questo gruppo di
@@ -28,8 +28,8 @@ public interface RendicontazioneRepository extends JpaRepository<Rendicontazione
      * <p>{@code flusso} è a {@code fetch = LAZY} sull'entità (vedi {@link Rendicontazione}), ma
      * lo YAML v3 espone i dati di testata del flusso insieme a ogni rendicontazione elencata:
      * senza un caricamento esplicito, leggere {@code getFlusso()} dopo il ritorno dal servizio
-     * (fuori dalla transazione di lettura) genera {@code LazyInitializationException} (bug del
-     * lead, 2026-09-24). L'{@link EntityGraph} lo carica con un fetch join nella stessa query,
+     * (fuori dalla transazione di lettura) genera {@code LazyInitializationException}.
+     * L'{@link EntityGraph} lo carica con un fetch join nella stessa query,
      * senza tornare a un fetch eager permanente sull'entità (che affetterebbe anche i casi in
      * cui il flusso non serve).</p>
      *

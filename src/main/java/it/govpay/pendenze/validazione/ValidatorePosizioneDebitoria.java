@@ -57,7 +57,7 @@ public final class ValidatorePosizioneDebitoria {
      * controllo del servizio contro il DB
      * ({@code PosizioneDebitoriaService#verificaIdPendenzaNonDuplicato}) confronta ogni
      * pendenza contro le righe gia' persistite, non contro le altre pendenze della stessa
-     * richiesta ancora in memoria (bug gemello, stesso pattern, 2026-09-29).
+     * richiesta ancora in memoria.
      */
     private static void validaIdPendenzaNonDuplicatoNellAggregato(PosizioneDebitoria posizione) {
         Set<String> idPendenze = new HashSet<>();
@@ -74,7 +74,7 @@ public final class ValidatorePosizioneDebitoria {
 
     /**
      * Rifiuta due pendenze dello stesso {@code numeroAvviso} gia' all'interno dello stesso
-     * aggregato in ingresso (bug del lead, 2026-09-26): il controllo del servizio contro il
+     * aggregato in ingresso: il controllo del servizio contro il
      * DB ({@code PosizioneDebitoriaService#verificaNumeroAvvisoNonDuplicato}) confronta ogni
      * pendenza contro le righe gia' persistite, non contro le altre pendenze della stessa
      * richiesta ancora in memoria — due pendenze duplicate nella stessa richiesta superano

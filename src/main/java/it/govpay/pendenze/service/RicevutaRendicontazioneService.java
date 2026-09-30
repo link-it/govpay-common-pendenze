@@ -29,15 +29,15 @@ import it.govpay.pendenze.repository.RptRepository;
  * {@link Rpt}).</p>
  *
  * <p>Servizio separato da {@link PosizioneDebitoriaService} apposta: {@link Rpt}/
- * {@link Rendicontazione} sono fuori dall'aggregato {@code PosizioneDebitoria} (decisione del
- * lead, 2026-09-24, per non ripetere il problema del vecchio "dettaglio pendenza" — centinaia
- * di query per una singola lettura).</p>
+ * {@link Rendicontazione} sono fuori dall'aggregato {@code PosizioneDebitoria}, per non
+ * ripetere il problema del vecchio "dettaglio pendenza" — centinaia di query per una
+ * singola lettura.</p>
  *
  * <p><b>Le letture di {@link Rpt} usano direttamente {@code idPendenza}</b> ({@code Rpt.idVersamento}
  * e' una FK piatta reale verso {@code versamenti} — vedi Javadoc di classe di {@link Rpt}),
  * mentre {@link Rendicontazione} non ha alcuna FK verso la pendenza (ne' diretta ne' fisica:
  * {@code rendicontazioni} non ha una colonna del genere) e va risolta per {@code iuv}
- * <b>e per dominio</b> (bug del lead, 2026-09-26): lo IUV e' univoco solo per dominio, non
+ * <b>e per dominio</b>: lo IUV e' univoco solo per dominio, non
  * globalmente — senza il filtro sul dominio, due enti con lo stesso IUV vedrebbero anche le
  * rendicontazioni reciproche (vedi Javadoc di
  * {@link it.govpay.pendenze.repository.RendicontazioneRepository#findByIuvAndFlusso_CodDominio}).

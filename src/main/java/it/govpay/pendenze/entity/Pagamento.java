@@ -21,11 +21,10 @@ import it.govpay.pendenze.model.TipoPagamento;
 
 /**
  * Occorrenza di pagamento riscontrata da pagoPA per una singola voce, mappata sulla
- * tabella legacy {@code pagamenti} (decisione del lead, 2026-09-25, fase 2: riuso
- * diretto).
+ * tabella legacy {@code pagamenti} (riuso diretto).
  *
- * <p><b>Unica fonte dello IUR per lo YAML v3 "Ricevuta"</b> (decisione del lead,
- * 2026-09-25): {@code rpt} non ha una colonna {@code iur} — la chiave naturale di
+ * <p><b>Unica fonte dello IUR per lo YAML v3 "Ricevuta"</b>: {@code rpt} non ha una
+ * colonna {@code iur} — la chiave naturale di
  * {@link Rpt} e' {@code (iuv, ccp, cod_dominio)}. Per ora la risoluzione
  * IUR&#8594;ricevuta di {@code GET .../ricevute/{iur}} usa direttamente
  * {@link #getIur()}, senza risolvere anche {@code cod_dominio} (vedi Javadoc di

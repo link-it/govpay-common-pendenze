@@ -22,12 +22,12 @@ import jakarta.persistence.Version;
 
 /**
  * Posizione debitoria: radice dell'aggregato pendenza, mappata sulla tabella legacy
- * {@code documenti} (decisione del lead, 2026-09-25: riuso diretto invece di uno schema
+ * {@code documenti} (riuso diretto invece di uno schema
  * v3 separato, per minimizzare la differenza strutturale da v2 e ridurre al minimo la
  * migrazione dati — vedi {@code proposta-modello-nativo-v3.md} §17).
  *
  * <p><b>{@code idA2A} non e' una colonna</b>: e' esattamente
- * {@code Applicazione.codApplicazione} (confermato dal lead, 2026-09-24) — questa entita'
+ * {@code Applicazione.codApplicazione} — questa entita'
  * espone solo {@link #idApplicazione}, FK piatta verso l'anagrafica esterna di
  * govpay-common (M4: nessuna relazione JPA). La risoluzione idA2A &#8596; idApplicazione
  * e' compito del chiamante (repository/service), non di questa entita'.</p>
@@ -39,20 +39,18 @@ import jakarta.persistence.Version;
  * inizialmente stimate (mancava di considerare unita' operativa/nav-notifica/ACA, propri
  * solo di questa libreria). {@link #dataPubblicazione} era gia' nel primissimo disegno
  * (§3.1 di {@code proposta-modello-nativo-v3.md}), persa durante il pivot al riuso delle
- * tabelle legacy (§17) e ripristinata il 2026-09-26.</p>
+ * tabelle legacy (§17) e ripristinata successivamente.</p>
  *
  * <p><b>{@link #soggettiDebitori} punta a {@code soggetti_debitori}</b>, tabella nuova che
- * contiene TUTTI i debitori, incluso il primo (decisione del lead, 2026-09-25, corregge una
- * proposta precedente che teneva il primo solo su {@code versamenti.debitore_*}): il
+ * contiene TUTTI i debitori, incluso il primo: il
  * debitore appartiene logicamente al documento, non al singolo versamento. Il primo soggetto
- * (ordine 0) NON viene sincronizzato su {@code versamenti.debitore_*} (decisione del lead,
- * 2026-09-26, dopo un tentativo intermedio di sincronizzarlo davvero, poi scartato: quella
+ * (ordine 0) NON viene sincronizzato su {@code versamenti.debitore_*} (quella
  * lista resta modificabile dopo la creazione, tenerli allineati nel tempo sarebbe complessita'
  * pura) — quelle colonne restano {@code NOT NULL} in produzione ma valorizzate con placeholder
  * fissi, vedi Javadoc di {@link Pendenza}.</p>
  *
  * <p><b>{@code unique_documenti_applicazione}</b> ({@code cod_documento}+{@code id_applicazione},
- * senza {@code id_dominio}): vincolo aggiunto in migrazione (decisione del lead, 2026-09-26)
+ * senza {@code id_dominio}): vincolo aggiunto in migrazione
  * per far corrispondere l'identita' pubblica di {@code idPosizioneDebitoria} (chiavata solo su
  * {@code idA2A}+{@code idPosizioneDebitoria} nello YAML v3) al vincolo DB reale — senza,
  * {@link it.govpay.pendenze.repository.PosizioneDebitoriaRepository#findByIdApplicazioneAndIdPosizioneDebitoria}
@@ -75,18 +73,18 @@ public class PosizioneDebitoria {
 
     /**
      * Colonna aggiunta: concetto assente in {@code documenti} legacy. Lock ottimistico —
-     * stessa tecnica gia' usata su {@link OpzionePagamento#getVersione()} per il bug di
-     * concorrenza trovato in revisione su {@code attiva}/{@code annulla} — ora estesa alla
-     * posizione stessa (bug del lead, 2026-09-29): senza un {@code @Version} qui,
+     * stessa tecnica gia' usata su {@link OpzionePagamento#getVersione()} per proteggere
+     * {@code attiva}/{@code annulla} dalla concorrenza — ora estesa alla
+     * posizione stessa: senza un {@code @Version} qui,
      * {@code PosizioneDebitoriaService#aggiungiOpzionePagamento} e {@code #attiva}/{@code #annulla}
      * possono correre in parallelo sulla stessa posizione senza che nessuno dei due si accorga
      * delle modifiche dell'altro — una nuova opzione DISPONIBILE puo' essere aggiunta subito
      * dopo che un'altra e' stata ATTIVATA (pagamento gia' eseguito), senza che l'aggiunta veda
      * quell'attivazione. {@code attiva}/{@code annulla} forzano esplicitamente l'incremento
-     * con {@code entityManager.lock(posizione, LockModeType.OPTIMISTIC_FORCE_INCREMENT)}
-     * (suggerimento del lead, 2026-09-29, per non dipendere implicitamente dal fatto che
+     * con {@code entityManager.lock(posizione, LockModeType.OPTIMISTIC_FORCE_INCREMENT)}, per
+     * non dipendere implicitamente dal fatto che
      * tocchino anche {@code dataUltimaModificaAca} — un accoppiamento fragile fra la
-     * marcatura ACA e il controllo di concorrenza, vedi il loro Javadoc);
+     * marcatura ACA e il controllo di concorrenza, vedi il loro Javadoc;
      * {@code aggiungiOpzionePagamento}/{@code aggiorna} non ne hanno bisogno: mutano gia'
      * direttamente campi propri della posizione, che Hibernate rileva da solo.
      */
@@ -117,11 +115,10 @@ public class PosizioneDebitoria {
      * quale la posizione (e tutte le sue pendenze) diventa visibile e pagabile — {@code NULL}
      * significa "pubblicata subito" (semantica dello YAML v3). Presente nel primissimo
      * disegno di questa entità (§3.1 di {@code proposta-modello-nativo-v3.md}), persa
-     * durante il pivot al riuso delle tabelle legacy (§17) e ripristinata il 2026-09-26.
+     * durante il pivot al riuso delle tabelle legacy (§17) e ripristinata successivamente.
      *
-     * <p><b>Non e' un filtro di lettura di questa libreria</b> (decisione del lead,
-     * 2026-09-27, dopo un tentativo intermedio poi scartato — non riaprire senza rileggere
-     * §24/§27 del documento): "diventa visibile" nello YAML v3 significa "per ricerca/
+     * <p><b>Non e' un filtro di lettura di questa libreria</b> (non riaprire senza
+     * rileggere §24/§27 del documento): "diventa visibile" nello YAML v3 significa "per ricerca/
      * pagamento esterno (Nodo dei Pagamenti)... resta invece sempre visibile e gestibile per
      * l'applicazione che l'ha creata" — e ogni chiamante di
      * {@code PosizioneDebitoriaService#trovaPerIdentificativo}/{@code cercaPerDebitore} e'

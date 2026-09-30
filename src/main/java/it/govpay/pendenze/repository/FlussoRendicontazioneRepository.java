@@ -19,8 +19,8 @@ public interface FlussoRendicontazioneRepository extends JpaRepository<FlussoRen
      * nuovo flusso per decidere se crearne la prima revisione o marcare questa come obsoleta e
      * inserirne una successiva.
      *
-     * <p>Per {@code codDominio}, non {@code idDominio} (decisione del lead, 2026-09-26):
-     * verificato che {@code FrBD} (e tutto il resto del business layer legacy su
+     * <p>Per {@code codDominio}, non {@code idDominio}:
+     * {@code FrBD} (e tutto il resto del business layer legacy su
      * {@code fr}/{@code rpt}/{@code pagamenti}) cerca sempre per codice del dominio, mai per
      * id numerico — vedi Javadoc di classe di {@link FlussoRendicontazione}.</p>
      *

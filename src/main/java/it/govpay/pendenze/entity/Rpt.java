@@ -13,11 +13,10 @@ import jakarta.persistence.UniqueConstraint;
 
 /**
  * Ricevuta di pagamento telematica (RPT/RT) pagoPA, mappata sulla tabella legacy
- * {@code rpt} (decisione del lead, 2026-09-25: riuso diretto, stesso principio gia'
- * applicato al resto dell'aggregato).
+ * {@code rpt}: riuso diretto, stesso principio gia' applicato al resto
+ * dell'aggregato.
  *
- * <p><b>{@link #iur} e' fisicamente la colonna {@code ccp}</b> (correzione del lead,
- * 2026-09-26, verificata nel business layer legacy): {@code ccp} ("codice contesto
+ * <p><b>{@link #iur} e' fisicamente la colonna {@code ccp}</b>: {@code ccp} ("codice contesto
  * pagamento") e' la nomenclatura SANP storica dello stesso identificativo che le
  * specifiche piu' recenti del Nodo dei Pagamenti chiamano {@code receiptId} — nel
  * legacy i due nomi convivono sulla stessa colonna fisica (`RicevuteConverter.setIdRicevuta(rpt.getCcp())`,
@@ -30,8 +29,7 @@ import jakarta.persistence.UniqueConstraint;
  * (ipotesi precedente, errata, abbandonata) — vedi
  * {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}.</p>
  *
- * <p><b>Fuori dall'aggregato {@link PosizioneDebitoria}</b> (decisione del lead,
- * 2026-09-24): {@link #idVersamento} e' una FK piatta, non una relazione JPA verso
+ * <p><b>Fuori dall'aggregato {@link PosizioneDebitoria}</b>: {@link #idVersamento} e' una FK piatta, non una relazione JPA verso
  * {@link Pendenza} — anche se in produzione {@code rpt.id_versamento} ha un vincolo FK
  * reale, per non ripetere il problema del vecchio "dettaglio pendenza" (centinaia di
  * query per una singola lettura).</p>

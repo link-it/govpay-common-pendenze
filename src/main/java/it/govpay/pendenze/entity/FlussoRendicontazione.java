@@ -17,16 +17,15 @@ import it.govpay.pendenze.model.StatoFlussoRendicontazione;
 
 /**
  * Dati di testata di un flusso di rendicontazione pagoPA (schema {@code FlussoRendicontazione}
- * dello YAML v3), mappata sulla tabella legacy {@code fr} (decisione del lead,
- * 2026-09-25, fase 2: riuso diretto, stesso principio gia' applicato al resto
- * dell'aggregato).
+ * dello YAML v3), mappata sulla tabella legacy {@code fr}: riuso diretto, stesso
+ * principio gia' applicato al resto dell'aggregato.
  *
  * <p>{@link #idDominio} e' una FK piatta verso l'anagrafica di govpay-common (M4:
  * nessuna relazione JPA verso l'esterno dell'aggregato) — in produzione {@code fr.id_dominio}
  * ha un vincolo FK reale verso {@code domini(id)}, qui omesso per coerenza con
  * {@code documenti}/{@code versamenti}.</p>
  *
- * <p><b>{@link #codDominio}</b> (decisione del lead, 2026-09-26): verificato che tutta la
+ * <p><b>{@link #codDominio}</b>: tutta la
  * ricerca applicativa legacy su {@code fr}/{@code rpt}/{@code pagamenti} (business layer,
  * {@code FrBD}/{@code RptBD}/{@code PagamentiBD}) avviene sempre per {@code cod_dominio},
  * mai per {@code id_dominio} (colonna presente sul bean legacy ma mai usata come parametro
@@ -45,8 +44,8 @@ import it.govpay.pendenze.model.StatoFlussoRendicontazione;
  * migrazione).</p>
  *
  * <p><b>{@link #revisione}/{@link #obsoleto} preservano le versioni del flusso</b>, come
- * nel legacy (bug del lead, 2026-09-24: la prima versione con solo {@code id_dominio}/
- * {@code codFlusso} univoci impediva di conservare piu' revisioni dello stesso flusso).
+ * nel legacy: un vincolo di unicita' su solo {@code id_dominio}/{@code codFlusso}
+ * impedirebbe di conservare piu' revisioni dello stesso flusso.
  * Questa libreria non calcola essa stessa la prossima revisione ne' decide quale riga
  * marcare obsoleta (nessuna logica di acquisizione qui, vedi Javadoc di
  * {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}): si limita a

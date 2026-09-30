@@ -22,7 +22,7 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * {@link RicevutaElenco}), senza trasferire ne' allocare {@link Rpt#getXmlRt()}, non
      * richiesto dall'elenco.
      *
-     * <p>Filtra {@code dataMsgRicevuta is not null} (bug del lead, 2026-09-26): una riga
+     * <p>Filtra {@code dataMsgRicevuta is not null}: una riga
      * {@code rpt} esiste gia' dal momento in cui la richiesta di pagamento (RPT) viene
      * inviata al Nodo, ben prima che la ricevuta (RT) arrivi — senza questo filtro l'elenco
      * includerebbe anche pendenze per cui nessuna ricevuta e' ancora stata acquisita

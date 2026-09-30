@@ -40,6 +40,25 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
     boolean existsByIdApplicazioneAndIdPendenza(Long idApplicazione, String idPendenza);
 
     /**
+     * Ricerca per identificativo ({@code GET /pendenze/{idA2A}/{idPendenza}} dello YAML v3),
+     * stessa chiave univoca di {@link #existsByIdApplicazioneAndIdPendenza} — a differenza di
+     * quel metodo (usato per l'unicita' in scrittura, dove una pendenza v2/migrazione priva di
+     * opzione di pagamento deve comunque contare come collisione), qui le pendenze senza
+     * {@code opzionePagamento} sono escluse: senza questo filtro il
+     * mapper della REST API le trova ma non sa rappresentarle — {@code IllegalStateException},
+     * tradotta in 500 — mentre lo YAML v3 non ha ancora un modo di rappresentare una pendenza
+     * v2/migrazione; devono restituire 404, per coerenza con
+     * {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}, che le esclude
+     * gia' allo stesso modo per la ricerca per numero avviso).
+     *
+     * @param idApplicazione applicazione proprietaria
+     * @param idPendenza     identificativo della pendenza nel gestionale
+     * @return la pendenza, se esiste e ha un'opzione di pagamento
+     */
+    Optional<Pendenza> findByIdApplicazioneAndIdPendenzaAndOpzionePagamentoIsNotNull(Long idApplicazione,
+            String idPendenza);
+
+    /**
      * @param idDominio dominio creditore
      * @param iuv       Identificativo Univoco di Versamento
      * @return la pendenza, se esiste
@@ -59,22 +78,21 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
      * ora che entrambe vivono su {@code versamenti}: filtra direttamente su
      * {@code idApplicazione}, non piu' passando per {@code opzionePagamento}.
      *
-     * <p><b>Non filtra per {@code PosizioneDebitoria.dataPubblicazione}</b> (decisione del
-     * lead, 2026-09-27, dopo un tentativo intermedio di filtrare poi scartato — vedi Javadoc di
+     * <p><b>Non filtra per {@code PosizioneDebitoria.dataPubblicazione}</b> — vedi Javadoc di
      * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndIdPosizioneDebitoria} per il
      * ragionamento completo: ogni chiamante di questo metodo e' sempre l'applicazione
      * proprietaria, mai un consumatore esterno, e la spec dice che a lei la posizione deve
-     * restare sempre visibile).</p>
+     * restare sempre visibile.</p>
      *
-     * <p><b>{@code OpzionePagamentoIsNotNull}</b> (bug del lead, 2026-09-28): {@code opzionePagamento}
+     * <p><b>{@code OpzionePagamentoIsNotNull}</b>: {@code opzionePagamento}
      * e' {@code NULL} per le righe create da v2 (vedi Javadoc di campo su {@link Pendenza}), che
      * questa ricerca deve escludere — lo schema di risposta {@code PendenzaIndex} richiede sia
      * {@code opzionePagamento} sia {@code posizioneDebitoria} (raggiunta passando per
      * {@code opzionePagamento}). Il filtro va applicato qui, non dopo aver gia' paginato: un
      * filtro post-hoc sul contenuto di una {@code Page} gia' costruita da questa query
      * lascerebbe {@code numRisultati}/{@code prossimiRisultati} calcolati sul conteggio SENZA
-     * filtro, producendo pagine vuote o incomplete rispetto al totale dichiarato (bug segnalato
-     * dal lead in revisione: {@code numRisultati: 1} con {@code risultati: []}).</p>
+     * filtro, producendo pagine vuote o incomplete rispetto al totale dichiarato
+     * ({@code numRisultati: 1} con {@code risultati: []}).</p>
      *
      * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
      * @param numeroAvviso   NAV: identificativo dell'avviso di pagamento pagoPA

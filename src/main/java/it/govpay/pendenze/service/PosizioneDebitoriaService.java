@@ -100,8 +100,8 @@ public class PosizioneDebitoriaService {
     }
 
     /**
-     * Risolve {@code idA2A} (= {@code Applicazione.codApplicazione}, confermato dal lead,
-     * 2026-09-24) da {@link PosizioneDebitoria#getIdApplicazione()}: da quando
+     * Risolve {@code idA2A} (= {@code Applicazione.codApplicazione}) da
+     * {@link PosizioneDebitoria#getIdApplicazione()}: da quando
      * {@code PosizioneDebitoria} e' mappata su {@code documenti}, non esiste piu' una
      * colonna {@code idA2A} propria — solo la FK piatta verso l'anagrafica esterna (M4).
      */
@@ -172,9 +172,9 @@ public class PosizioneDebitoriaService {
      * @throws IllegalStateException se una pendenza e' priva sia di IUV sia di numero
      *                                avviso e non e' disponibile un {@link GeneratoreIuv}
      * @throws RisorsaGiaEsistenteException se esiste gia' una posizione con lo stesso
-     *                                {@code idA2A}+{@code idPosizioneDebitoria} (bug del
-     *                                lead, 2026-09-26: senza questo controllo, due posizioni
-     *                                con la stessa chiave logica ma dominio diverso vengono
+     *                                {@code idA2A}+{@code idPosizioneDebitoria} (senza
+     *                                questo controllo, due posizioni con la stessa chiave
+     *                                logica ma dominio diverso verrebbero
      *                                create entrambe — il vincolo DB reale su
      *                                {@code documenti} include anche {@code id_dominio},
      *                                mentre la ricerca pubblica per identificativo
@@ -234,7 +234,7 @@ public class PosizioneDebitoriaService {
         assegnaOValidaNavNotifica(posizione);
 
         try {
-            // saveAndFlush, non save (bug del lead, 2026-09-27): con id generato da
+            // saveAndFlush, non save: con id generato da
             // SEQUENCE Hibernate puo' differire l'INSERT fisico oltre il ritorno di save(),
             // fino al commit della transazione — che avviene FUORI da questo metodo (al
             // ritorno di crea() al chiamante). La violazione del vincolo UNIQUE emergeva
@@ -246,8 +246,8 @@ public class PosizioneDebitoriaService {
             // l'INSERT dentro questo blocco, dove puo' essere intercettato.
             return posizioneDebitoriaRepository.saveAndFlush(posizione);
         } catch (DataIntegrityViolationException e) {
-            // Rete di sicurezza contro le creazioni concorrenti (bug del lead, 2026-09-26):
-            // il controllo existsBy... sopra e' un check-then-act, non atomico — due richieste
+            // Rete di sicurezza contro le creazioni concorrenti: il controllo existsBy...
+            // sopra e' un check-then-act, non atomico — due richieste
             // concorrenti con lo stesso idA2A+idPosizioneDebitoria possono superarlo entrambe.
             // La garanzia reale e' il vincolo DB unique_documenti_applicazione (migrazione
             // 01_documenti.sql, cod_documento+id_applicazione senza id_dominio, per far
@@ -255,7 +255,7 @@ public class PosizioneDebitoriaService {
             // nella stessa eccezione del controllo esplicito, cosi' il chiamante vede sempre
             // RisorsaGiaEsistenteException e non un'eccezione di persistenza generica.
             //
-            // Riconosce il vincolo specifico (bug del lead, 2026-09-27): tradurre QUALUNQUE
+            // Riconosce il vincolo specifico: tradurre QUALUNQUE
             // DataIntegrityViolationException in "risorsa gia' esistente" e' scorretto — un
             // altro vincolo violato (es. NOT NULL su una colonna non valorizzata, un bug
             // diverso) verrebbe mascherato da un 409 fuorviante invece di propagarsi come
@@ -265,9 +265,9 @@ public class PosizioneDebitoriaService {
                         "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
                                 + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
             }
-            // Stessa rete di sicurezza, stessa motivazione, per il duplicato di idPendenza
-            // (bug del lead, 2026-09-29: il controllo proattivo verificaIdPendenzaNonDuplicato
-            // sopra e' anch'esso un check-then-act, non atomico).
+            // Stessa rete di sicurezza, stessa motivazione, per il duplicato di idPendenza:
+            // il controllo proattivo verificaIdPendenzaNonDuplicato
+            // sopra e' anch'esso un check-then-act, non atomico.
             if (violaVincolo(e, VINCOLO_UNICITA_ID_PENDENZA)) {
                 throw new RisorsaGiaEsistenteException(
                         "una pendenza di questa richiesta ha un idPendenza gia' usato da questa applicazione");
@@ -280,23 +280,22 @@ public class PosizioneDebitoriaService {
      * Entrambi i vincoli UNIQUE reali su {@code documenti} che possono segnalare lo stesso
      * duplicato pubblico ({@code idA2A}+{@code idPosizioneDebitoria}): {@code
      * unique_documenti_applicazione} (cod_documento+id_applicazione, aggiunto in migrazione
-     * per l'identita' pubblica — vedi bug del 2026-09-26 sopra) e {@code unique_documenti_1}
+     * per l'identita' pubblica) e {@code unique_documenti_1}
      * (cod_documento+id_applicazione+id_dominio, gia' presente nello schema legacy). Quando
      * il duplicato ha anche lo stesso {@code id_dominio}, ENTRAMBI i vincoli sono violati
      * dalla stessa riga — quale dei due il motore segnali dipende dall'ordine con cui
-     * valuta gli indici, non e' deterministico lato applicativo (bug del lead, 2026-09-27:
-     * riconoscere solo {@code unique_documenti_applicazione} lasciava questo caso — duplicato
-     * sullo stesso dominio, individuato solo al flush — propagarsi come 500 anziche' 409;
-     * riprodotto con uno spy su {@code existsBy...} per simulare la race condition).
+     * valuta gli indici, non e' deterministico lato applicativo: riconoscere solo
+     * {@code unique_documenti_applicazione} lascerebbe questo caso — duplicato sullo stesso
+     * dominio, individuato solo al flush — propagarsi come 500 anziche' 409.
      */
     private static final List<String> VINCOLI_UNICITA_IDENTIFICATIVO = List.of(
             "unique_documenti_applicazione", "unique_documenti_1");
 
     /**
      * Vincolo UNIQUE reale su {@code versamenti} ({@code cod_versamento_ente, id_applicazione}):
-     * {@code idPendenza} e' univoco per applicazione, non per posizione (bug del lead,
-     * 2026-09-29: riusare un idPendenza gia' esistente della stessa applicazione falliva con
-     * 500, nessuna traduzione in una risposta applicativa).
+     * {@code idPendenza} e' univoco per applicazione, non per posizione — senza tradurre
+     * questa violazione, riusare un idPendenza gia' esistente della stessa applicazione
+     * fallirebbe con 500 invece che con una risposta applicativa.
      */
     private static final String VINCOLO_UNICITA_ID_PENDENZA = "unique_versamenti_1";
 
@@ -380,8 +379,8 @@ public class PosizioneDebitoriaService {
      * dello stesso dominio lo usi gia' prima di inserire. Controllo applicativo, non un
      * vincolo DB — il legacy stesso non ne ha mai avuto uno su {@code versamenti}
      * (verificato: solo un indice non univoco su {@code iuv_versamento, id_dominio}, mai
-     * dichiarato {@code UNIQUE}), fa esattamente cosi'. Decisione del lead, 2026-09-25:
-     * nessun vincolo {@code UNIQUE} nuovo su {@code versamenti}, coerente con "minimizza le
+     * dichiarato {@code UNIQUE}), fa esattamente cosi'. Nessun vincolo {@code UNIQUE}
+     * nuovo su {@code versamenti}, coerente con "minimizza le
      * variazioni al DB" — IUV/numeroAvviso generati da {@link GeneratoreIuv} non passano da
      * qui, la loro unicita' e' gia' garantita per costruzione dal progressivo atomico.
      */
@@ -398,9 +397,9 @@ public class PosizioneDebitoriaService {
 
     /**
      * {@code idPendenza} e' univoco per applicazione, non per posizione (vedi Javadoc di
-     * {@link PendenzaRepository#existsByIdApplicazioneAndIdPendenza}) — bug del lead,
-     * 2026-09-29: riusare l'idPendenza di una pendenza gia' esistente della stessa
-     * applicazione (anche di un'ALTRA posizione) falliva con 500 (violazione del vincolo
+     * {@link PendenzaRepository#existsByIdApplicazioneAndIdPendenza}) — senza questo
+     * controllo, riusare l'idPendenza di una pendenza gia' esistente della stessa
+     * applicazione (anche di un'ALTRA posizione) fallirebbe con 500 (violazione del vincolo
      * UNIQUE {@code unique_versamenti_1} mai tradotta), non con una risposta applicativa.
      * Controllo proattivo — la rete di sicurezza reattiva contro la finestra di corsa e' nel
      * {@code catch} di {@link #crea}/{@link #aggiungiOpzionePagamento}.
@@ -507,6 +506,30 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Ricerca per identificativo ({@code GET /pendenze/{idA2A}/{idPendenza}} dello YAML v3):
+     * a differenza di {@link #cercaPendenze} (ricerca per {@code numeroAvviso}, l'identificativo
+     * pagoPA), qui {@code idPendenza} e' l'identificativo proprio del gestionale — stessa
+     * chiave univoca per applicazione di {@link PendenzaRepository#existsByIdApplicazioneAndIdPendenza}.
+     *
+     * <p>Esclude le pendenze prive di {@code opzionePagamento} (v2/migrazione: senza questo
+     * filtro il mapper della REST API solleverebbe {@code IllegalStateException}, tradotta
+     * in 500), stessa esclusione gia' applicata da
+     * {@link #cercaPendenze} per la ricerca per numero avviso: lo YAML v3 non ha ancora un modo
+     * di rappresentare una pendenza v2/migrazione, quindi per il chiamante e' come se non
+     * esistesse (404), non un errore interno.</p>
+     *
+     * @param idA2A      identificativo del gestionale responsabile
+     * @param idPendenza identificativo della pendenza nel gestionale
+     * @return la pendenza, se esiste e ha un'opzione di pagamento
+     */
+    @Transactional(readOnly = true)
+    public Optional<Pendenza> trovaPendenzaPerIdentificativo(String idA2A, String idPendenza) {
+        return risolviIdApplicazione(idA2A)
+                .flatMap(idApplicazione -> pendenzaRepository
+                        .findByIdApplicazioneAndIdPendenzaAndOpzionePagamentoIsNotNull(idApplicazione, idPendenza));
+    }
+
+    /**
      * Aggiorna una posizione debitoria esistente ({@code PATCH .../posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}}
      * dello YAML v3): non conosce la sintassi JSON Patch (RFC 6902) del chiamante — quella
      * traduzione e' a carico del chiamante stesso, che riceve l'aggregato gestito e vi
@@ -549,8 +572,8 @@ public class PosizioneDebitoriaService {
 
         try {
             // saveAndFlush, non save — stesso motivo di crea()/aggiungiOpzionePagamento: da
-            // quando PosizioneDebitoria ha un @Version (bug del lead, 2026-09-29, vedi
-            // Javadoc del campo), un aggiornamento concorrente sulla stessa posizione (es.
+            // quando PosizioneDebitoria ha un @Version (vedi Javadoc del campo),
+            // un aggiornamento concorrente sulla stessa posizione (es.
             // un'attivazione o un'altra PATCH) puo' far fallire il salvataggio con un
             // conflitto di lock ottimistico — va intercettato qui, non lasciato propagare
             // grezzo fino al livello REST.
@@ -571,7 +594,7 @@ public class PosizioneDebitoriaService {
      * bisogno di {@code posizione.getIdDominio()} per farlo correttamente (stesso principio
      * di {@link #aggiorna}: questo servizio non conosce i DTO REST del chiamante).
      *
-     * <p><b>Ordine delle operazioni non banale, bug trovato scrivendo i test</b>: gli
+     * <p><b>Ordine delle operazioni non banale</b>: gli
      * identificativi di pagamento (numero avviso/IUV, incluso l'eventuale
      * {@link #assegnaIdentificativiPagamento} che interroga il DB per unicita' —
      * {@link #verificaNumeroAvvisoNonDuplicato}) vengono assegnati alla nuova opzione MENTRE
@@ -597,7 +620,7 @@ public class PosizioneDebitoriaService {
      * valore resta "bucato" — stesso comportamento accettato altrove in questa libreria per i
      * progressivi pagoPA (mai pensati per essere densi/riusabili).</p>
      *
-     * <p><b>Tre controlli aggiuntivi, bug del lead, 2026-09-29</b>:</p>
+     * <p><b>Tre controlli aggiuntivi</b>:</p>
      * <ul>
      * <li>rifiuta se la posizione ha gia' un'opzione {@code ATTIVATA} (pagamento gia'
      * eseguito): un'alternativa aggiunta dopo quel momento non sarebbe mai passata per
@@ -640,7 +663,7 @@ public class PosizioneDebitoriaService {
                 .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
                         + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
 
-        // Bug del lead, 2026-09-29: un'alternativa aggiunta dopo che un'altra opzione e' gia'
+        // Un'alternativa aggiunta dopo che un'altra opzione e' gia'
         // ATTIVATA (pagamento gia' eseguito) contraddice la semantica dello YAML v3 — quando
         // un'opzione si attiva, tutte le altre DISPONIBILI vengono annullate automaticamente
         // perche' "non piu' applicabili" (vedi Javadoc di StatoOpzionePagamento): una nuova
@@ -702,8 +725,8 @@ public class PosizioneDebitoriaService {
         try {
             // saveAndFlush, non save — stessa ragione di crea() (intercettare qui la
             // violazione del vincolo invece di lasciarla propagare grezza al commit fuori da
-            // questo metodo) per DUE reti di sicurezza reattive, entrambe bug del lead,
-            // 2026-09-29: il duplicato di idPendenza (controllo proattivo sopra, ma
+            // questo metodo) per DUE reti di sicurezza reattive: il duplicato di idPendenza
+            // (controllo proattivo sopra, ma
             // check-then-act) e il conflitto di lock ottimistico sulla posizione (il
             // controllo "nessuna opzione ATTIVATA" sopra legge uno snapshot che
             // un'attivazione concorrente puo' rendere obsoleto prima del commit — vedi
@@ -897,9 +920,9 @@ public class PosizioneDebitoriaService {
      * esecuzione. Il chiamante deve gestire l'eccezione (tipicamente: rileggere lo stato
      * attuale e decidere di conseguenza), non ignorarla.</p>
      *
-     * <p><b>Nota per il futuro chiamante reale</b> (bug del lead, 2026-09-29, verificato con
-     * una prova a due transazioni sovrapposte: il conflitto viene rilevato correttamente,
-     * l'operazione perdente va in eccezione): questo metodo NON cattura ne' traduce il
+     * <p><b>Nota per il futuro chiamante reale</b> (verificato con una prova a due
+     * transazioni sovrapposte: il conflitto viene rilevato correttamente, l'operazione
+     * perdente va in eccezione): questo metodo NON cattura ne' traduce il
      * conflitto di lock ottimistico, lo lascia propagare grezzo
      * ({@code ObjectOptimisticLockingFailureException}) — corretto per un endpoint REST
      * sincrono (dove il livello REST puo' tradurlo in 409 e il client puo' decidere se
@@ -911,8 +934,7 @@ public class PosizioneDebitoriaService {
      * osservabile (es. un evento di errore). Non implementato qui: nessun chiamante reale
      * esiste ancora per cui progettarlo concretamente.</p>
      *
-     * <p><b>Lock esplicito sulla posizione</b> (bug del lead, 2026-09-29, suggerimento del
-     * lead per la robustezza): {@code LockModeType.OPTIMISTIC_FORCE_INCREMENT} su
+     * <p><b>Lock esplicito sulla posizione</b>: {@code LockModeType.OPTIMISTIC_FORCE_INCREMENT} su
      * {@code opzione.getPosizioneDebitoria()} forza l'incremento di
      * {@link PosizioneDebitoria#getVersione()} a questo commit, indipendentemente da quali
      * campi propri della posizione vengano toccati. Senza questa richiesta esplicita,
