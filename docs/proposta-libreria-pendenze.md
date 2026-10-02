@@ -1,3 +1,8 @@
+> **ARCHIVIATO** — Superato dalla decisione di andare direttamente al modello
+> nativo dell'evolutiva v3 (multi-debitore, `OpzionePagamento`), con migrazione
+> dati una tantum invece di un porting retrocompatibile del modello attuale.
+> Vedi [issue #8](https://github.com/link-it/govpay-common-pendenze/issues/8).
+
 # Proposta di disegno — `govpay-common-pendenze`
 
 Documento di proposta. Presuppone l'analisi in

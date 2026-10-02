@@ -1,3 +1,8 @@
+> **ARCHIVIATO** — Il codice qui descritto è stato rimosso: si va direttamente al
+> modello nativo v3 (multi-debitore, `OpzionePagamento`), niente porting
+> retrocompatibile del modello attuale. Vedi
+> [issue #8](https://github.com/link-it/govpay-common-pendenze/issues/8).
+
 # F1 — Modello e entità: disegno di dettaglio
 
 Prima fase di [proposta-libreria-pendenze.md](proposta-libreria-pendenze.md).
