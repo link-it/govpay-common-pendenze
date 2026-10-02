@@ -29,6 +29,7 @@ import it.govpay.common.entity.DominioEntity;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
+import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
 import it.govpay.pendenze.entity.FlussoRendicontazione;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
@@ -104,6 +105,58 @@ class RicevutaRendicontazioneServiceTest {
 
         assertThat(pagina.numeroRisultatiTotali()).isEqualTo(1);
         assertThat(pagina.risultati()).extracting(RicevutaElenco::getIur).containsExactly("iur-arrivata");
+    }
+
+    @Test
+    @DisplayName("cercaRicevuteDaCursore: prima pagina (cursor nullo) restituisce le piu' recenti, ordinate per "
+            + "dataMsgRicevuta desc")
+    void cercaRicevuteDaCursorePrimaPagina() {
+        Long idDominio = dominioPersistito("DOM-CURSORE-1");
+        Pendenza pendenza = pendenzaPersistita("pend-cursore-1", idDominio);
+        ricevutaPersistita(pendenza, "iur-vecchia", ADESSO.minusDays(2));
+        ricevutaPersistita(pendenza, "iur-media", ADESSO.minusDays(1));
+        ricevutaPersistita(pendenza, "iur-recente", ADESSO);
+
+        PaginaSenzaConteggio<RicevutaElenco> pagina = service.cercaRicevuteDaCursore(pendenza.getId(), null, null, 2);
+
+        assertThat(pagina.risultati()).extracting(RicevutaElenco::getIur)
+                .containsExactly("iur-recente", "iur-media");
+        assertThat(pagina.haAltriRisultati()).isTrue();
+    }
+
+    @Test
+    @DisplayName("cercaRicevuteDaCursore: la pagina successiva, usando il cursore dell'ultimo elemento della "
+            + "precedente, non ripete risultati e si ferma correttamente all'ultima pagina")
+    void cercaRicevuteDaCursoreSuccessiva() {
+        Long idDominio = dominioPersistito("DOM-CURSORE-2");
+        Pendenza pendenza = pendenzaPersistita("pend-cursore-2", idDominio);
+        Rpt vecchia = ricevutaPersistita(pendenza, "iur-vecchia", ADESSO.minusDays(2));
+        ricevutaPersistita(pendenza, "iur-media", ADESSO.minusDays(1));
+        Rpt recente = ricevutaPersistita(pendenza, "iur-recente", ADESSO);
+
+        PaginaSenzaConteggio<RicevutaElenco> prima = service.cercaRicevuteDaCursore(pendenza.getId(), null, null, 2);
+        RicevutaElenco ultimaDellaPrima = prima.risultati().get(prima.risultati().size() - 1);
+
+        PaginaSenzaConteggio<RicevutaElenco> seconda = service.cercaRicevuteDaCursore(pendenza.getId(),
+                ultimaDellaPrima.getDataMsgRicevuta(), ultimaDellaPrima.getId(), 2);
+
+        assertThat(seconda.risultati()).extracting(RicevutaElenco::getIur).containsExactly("iur-vecchia");
+        assertThat(seconda.haAltriRisultati()).isFalse();
+    }
+
+    @Test
+    @DisplayName("cercaRicevuteDaCursore non attraversa le ricevute di un'altra pendenza")
+    void cercaRicevuteDaCursoreNonAttraversaLePendenze() {
+        Long idDominio = dominioPersistito("DOM-CURSORE-3");
+        Pendenza pendenzaA = pendenzaPersistita("pend-cursore-a", idDominio);
+        Pendenza pendenzaB = pendenzaPersistita("pend-cursore-b", idDominio);
+        ricevutaPersistita(pendenzaA, "iur-a", ADESSO);
+        ricevutaPersistita(pendenzaB, "iur-b", ADESSO);
+
+        PaginaSenzaConteggio<RicevutaElenco> pagina = service.cercaRicevuteDaCursore(pendenzaA.getId(), null, null,
+                10);
+
+        assertThat(pagina.risultati()).extracting(RicevutaElenco::getIur).containsExactly("iur-a");
     }
 
     @Test
@@ -210,13 +263,18 @@ class RicevutaRendicontazioneServiceTest {
     }
 
     private Rpt ricevutaPersistita(Pendenza pendenza, String iur) {
+        return ricevutaPersistita(pendenza, iur, ADESSO);
+    }
+
+    /** Come sopra, con {@code dataMsgRicevuta} esplicita — serve ai test del cursore keyset. */
+    private Rpt ricevutaPersistita(Pendenza pendenza, String iur, OffsetDateTime dataMsgRicevuta) {
         Rpt rpt = new Rpt();
         rpt.setIdVersamento(pendenza.getId());
         rpt.setIuv(pendenza.getIuv());
         rpt.setIur(iur);
         rpt.setCodDominio("DOMINIO_1");
         rpt.setXmlRt("<Receipt/>".getBytes(StandardCharsets.UTF_8));
-        rpt.setDataMsgRicevuta(ADESSO);
+        rpt.setDataMsgRicevuta(dataMsgRicevuta);
         rpt.setVersione("RPTV2_RTV1");
         em.persistAndFlush(rpt);
         return rpt;

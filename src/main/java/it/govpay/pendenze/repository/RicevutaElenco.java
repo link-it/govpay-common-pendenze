@@ -14,6 +14,9 @@ import it.govpay.pendenze.entity.Rpt;
  */
 public interface RicevutaElenco {
 
+    /** Chiave interna di {@link Rpt} — usata come secondo criterio del cursore keyset. */
+    Long getId();
+
     String getIur();
 
     /** Valore legacy grezzo di {@code VersioneRPT} — vedi Javadoc di {@link Rpt#getVersione()}. */

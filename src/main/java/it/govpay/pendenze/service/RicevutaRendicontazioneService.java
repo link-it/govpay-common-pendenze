@@ -1,5 +1,6 @@
 package it.govpay.pendenze.service;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -10,7 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import it.govpay.common.entity.DominioEntity;
 import it.govpay.common.repository.DominioRepository;
+import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
+import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.Rendicontazione;
 import it.govpay.pendenze.entity.Rpt;
@@ -78,6 +81,28 @@ public class RicevutaRendicontazioneService {
         Page<RicevutaElenco> pagina = rptRepository.findElencoByIdVersamento(idPendenza, pageable);
         return new PaginaRisultati<>(pagina.getContent(), pageable.getOffset(), pageable.getPageSize(),
                 pagina.getTotalElements());
+    }
+
+    /**
+     * Come {@link #cercaRicevute}, in modalita' cursore (keyset su
+     * {@code dataMsgRicevuta desc, id desc}) — stesso schema di
+     * {@code PosizioneDebitoriaService#cercaPendenzeDaCursore}: interroga con
+     * {@code limit + 1} per determinare se esistono altri risultati, poi trunca.
+     *
+     * @param idPendenza           chiave interna della pendenza
+     * @param cursorDataMsgRicevuta valore {@code dataMsgRicevuta} dell'ultimo elemento della
+     *                              pagina precedente, {@code null} per la prima pagina
+     * @param cursorId             valore {@code id} dell'ultimo elemento della pagina
+     *                             precedente (spareggio a parita' di {@code dataMsgRicevuta})
+     * @param limit                dimensione della pagina
+     * @return la pagina di ricevute, senza conteggio totale (non ha senso su un keyset)
+     */
+    public PaginaSenzaConteggio<RicevutaElenco> cercaRicevuteDaCursore(Long idPendenza,
+            OffsetDateTime cursorDataMsgRicevuta, Long cursorId, int limit) {
+        Pageable pageable = OffsetPageRequest.of(0, limit + 1);
+        List<RicevutaElenco> grezzi = rptRepository.findElencoByIdVersamentoDaCursore(idPendenza,
+                cursorDataMsgRicevuta, cursorId, pageable);
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, limit);
     }
 
     /**
