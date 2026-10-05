@@ -1,9 +1,14 @@
 package it.govpay.pendenze.repository;
 
+import java.time.OffsetDateTime;
+import java.util.List;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import it.govpay.pendenze.entity.FlussoRendicontazione;
 import it.govpay.pendenze.entity.Rendicontazione;
@@ -41,4 +46,31 @@ public interface RendicontazioneRepository extends JpaRepository<Rendicontazione
      */
     @EntityGraph(attributePaths = "flusso")
     Page<Rendicontazione> findByIuvAndFlusso_CodDominio(String iuv, String codDominio, Pageable pageable);
+
+    /**
+     * Come {@link #findByIuvAndFlusso_CodDominio}, in modalita' cursore (keyset) — stesso
+     * schema di {@code RptRepository#findElencoByIdVersamentoDaCursore}. L'ordinamento usa
+     * {@code flusso.dataOraFlusso} (colonna {@code NOT NULL} sul flusso, vedi Javadoc di
+     * {@link FlussoRendicontazione}) invece di {@code Rendicontazione.data} (che e'
+     * {@code nullable}, inadatto a un confronto {@code <}/{@code =} su un keyset).
+     *
+     * @param iuv                  IUV della pendenza
+     * @param codDominio           codice del dominio della pendenza
+     * @param cursorDataOraFlusso  valore {@code flusso.dataOraFlusso} dell'ultimo elemento
+     *                             della pagina precedente, {@code null} per la prima pagina
+     * @param cursorId             valore {@code id} dell'ultimo elemento della pagina
+     *                             precedente (spareggio a parita' di {@code dataOraFlusso})
+     * @param pageable             solo per il {@code limit} (l'ordinamento e' fisso)
+     * @return al piu' {@code pageable.getPageSize()} rendicontazioni successive al cursore,
+     *         con il flusso già inizializzato
+     */
+    @EntityGraph(attributePaths = "flusso")
+    @Query("select r from Rendicontazione r where r.iuv = :iuv and r.flusso.codDominio = :codDominio "
+            + "and (:cursorDataOraFlusso is null or r.flusso.dataOraFlusso < :cursorDataOraFlusso "
+            + "or (r.flusso.dataOraFlusso = :cursorDataOraFlusso and r.id < :cursorId)) "
+            + "order by r.flusso.dataOraFlusso desc, r.id desc")
+    List<Rendicontazione> findByIuvAndFlusso_CodDominioDaCursore(@Param("iuv") String iuv,
+            @Param("codDominio") String codDominio,
+            @Param("cursorDataOraFlusso") OffsetDateTime cursorDataOraFlusso, @Param("cursorId") Long cursorId,
+            Pageable pageable);
 }

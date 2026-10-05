@@ -222,6 +222,73 @@ class RicevutaRendicontazioneServiceTest {
     }
 
     @Test
+    @DisplayName("cercaRendicontazioniDaCursore: prima pagina (cursor nullo) restituisce le piu' recenti, "
+            + "ordinate per flusso.dataOraFlusso desc")
+    void cercaRendicontazioniDaCursorePrimaPagina() {
+        Long idDominio = dominioPersistito("DOM-REND-CURSORE-1");
+        Pendenza pendenza = pendenzaPersistita("pend-rend-cursore-1", idDominio);
+        FlussoRendicontazione flussoVecchio = flussoPersistito("flusso-rc1-vecchio", idDominio,
+                "DOM-REND-CURSORE-1", ADESSO.minusDays(2));
+        FlussoRendicontazione flussoMedio = flussoPersistito("flusso-rc1-medio", idDominio, "DOM-REND-CURSORE-1",
+                ADESSO.minusDays(1));
+        FlussoRendicontazione flussoRecente = flussoPersistito("flusso-rc1-recente", idDominio,
+                "DOM-REND-CURSORE-1", ADESSO);
+        rendicontazionePersistita(pendenza, flussoVecchio, "iur-vecchia");
+        rendicontazionePersistita(pendenza, flussoMedio, "iur-media");
+        rendicontazionePersistita(pendenza, flussoRecente, "iur-recente");
+
+        PaginaSenzaConteggio<Rendicontazione> pagina = service.cercaRendicontazioniDaCursore(pendenza.getId(), null,
+                null, 2);
+
+        assertThat(pagina.risultati()).extracting(Rendicontazione::getIur).containsExactly("iur-recente",
+                "iur-media");
+        assertThat(pagina.haAltriRisultati()).isTrue();
+    }
+
+    @Test
+    @DisplayName("cercaRendicontazioniDaCursore: la pagina successiva, usando il cursore dell'ultimo elemento "
+            + "della precedente, non ripete risultati e si ferma correttamente all'ultima pagina")
+    void cercaRendicontazioniDaCursoreSuccessiva() {
+        Long idDominio = dominioPersistito("DOM-REND-CURSORE-2");
+        Pendenza pendenza = pendenzaPersistita("pend-rend-cursore-2", idDominio);
+        FlussoRendicontazione flussoVecchio = flussoPersistito("flusso-rc2-vecchio", idDominio,
+                "DOM-REND-CURSORE-2", ADESSO.minusDays(2));
+        FlussoRendicontazione flussoMedio = flussoPersistito("flusso-rc2-medio", idDominio, "DOM-REND-CURSORE-2",
+                ADESSO.minusDays(1));
+        FlussoRendicontazione flussoRecente = flussoPersistito("flusso-rc2-recente", idDominio,
+                "DOM-REND-CURSORE-2", ADESSO);
+        rendicontazionePersistita(pendenza, flussoVecchio, "iur-vecchia");
+        rendicontazionePersistita(pendenza, flussoMedio, "iur-media");
+        rendicontazionePersistita(pendenza, flussoRecente, "iur-recente");
+
+        PaginaSenzaConteggio<Rendicontazione> prima = service.cercaRendicontazioniDaCursore(pendenza.getId(), null,
+                null, 2);
+        Rendicontazione ultimaDellaPrima = prima.risultati().get(prima.risultati().size() - 1);
+
+        PaginaSenzaConteggio<Rendicontazione> seconda = service.cercaRendicontazioniDaCursore(pendenza.getId(),
+                ultimaDellaPrima.getFlusso().getDataOraFlusso(), ultimaDellaPrima.getId(), 2);
+
+        assertThat(seconda.risultati()).extracting(Rendicontazione::getIur).containsExactly("iur-vecchia");
+        assertThat(seconda.haAltriRisultati()).isFalse();
+    }
+
+    @Test
+    @DisplayName("cercaRendicontazioniDaCursore non attraversa le rendicontazioni di un'altra pendenza")
+    void cercaRendicontazioniDaCursoreNonAttraversaLePendenze() {
+        Long idDominio = dominioPersistito("DOM-REND-CURSORE-3");
+        Pendenza pendenzaA = pendenzaPersistita("pend-rend-cursore-a", idDominio);
+        Pendenza pendenzaB = pendenzaPersistita("pend-rend-cursore-b", idDominio);
+        FlussoRendicontazione flusso = flussoPersistito("flusso-rc3", idDominio, "DOM-REND-CURSORE-3");
+        rendicontazionePersistita(pendenzaA, flusso, "iur-a");
+        rendicontazionePersistita(pendenzaB, flusso, "iur-b");
+
+        PaginaSenzaConteggio<Rendicontazione> pagina = service.cercaRendicontazioniDaCursore(pendenzaA.getId(), null,
+                null, 10);
+
+        assertThat(pagina.risultati()).extracting(Rendicontazione::getIur).containsExactly("iur-a");
+    }
+
+    @Test
     @DisplayName("il flusso di una rendicontazione è già inizializzato dopo la ricerca tramite il servizio, "
             + "in una transazione diversa da quella di preparazione")
     void cercaRendicontazioniInizializzaIlFlusso() {
@@ -293,11 +360,17 @@ class RicevutaRendicontazioneServiceTest {
     }
 
     private FlussoRendicontazione flussoPersistito(String codFlusso, Long idDominio, String codDominio) {
+        return flussoPersistito(codFlusso, idDominio, codDominio, ADESSO);
+    }
+
+    /** Come sopra, con {@code dataOraFlusso} esplicita — serve ai test del cursore keyset. */
+    private FlussoRendicontazione flussoPersistito(String codFlusso, Long idDominio, String codDominio,
+            OffsetDateTime dataOraFlusso) {
         FlussoRendicontazione flusso = new FlussoRendicontazione();
         flusso.setIdDominio(idDominio);
         flusso.setCodDominio(codDominio);
         flusso.setCodFlusso(codFlusso);
-        flusso.setDataOraFlusso(ADESSO);
+        flusso.setDataOraFlusso(dataOraFlusso);
         flusso.setIur("flusso-iur-" + codFlusso);
         flusso.setDataAcquisizione(ADESSO);
         flusso.setDataRegolamento(ADESSO);

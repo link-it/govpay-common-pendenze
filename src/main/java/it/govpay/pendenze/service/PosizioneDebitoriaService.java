@@ -34,6 +34,7 @@ import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
+import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.OpzionePagamentoRepository;
 import it.govpay.pendenze.repository.PendenzaRepository;
@@ -1050,6 +1051,108 @@ public class PosizioneDebitoriaService {
                     + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
         }
         return annulla(idOpzionePagamento);
+    }
+
+    /**
+     * Annulla una singola pendenza (rata) — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
+     * dello YAML v3, path {@code /stato}, value {@code ANNULLATO}. Entita' diversa da
+     * {@link #annulla(UUID)} (che annulla l'INTERA opzione di pagamento, non la singola
+     * pendenza): per un {@code PIANO_RATEALE} i due annullamenti sono indipendenti, nessuno
+     * dei due innesca automaticamente l'altro.
+     *
+     * <p>Mirror del legacy ({@code PendenzeDAO.patchStato} caso {@code ANNULLATO},
+     * {@code jars/core/.../dao/pagamenti/PendenzeDAO.java:674-684}): ammesso solo da
+     * {@code NON_ESEGUITO}, idempotente se gia' {@code ANNULLATO}. A differenza del legacy,
+     * NON resetta alcun flag di notifica avviso/promemoria ({@code avvisoNotificato}/
+     * {@code avvAppIOPromemoriaScadenzaNotificato}/{@code avvMailPromemoriaScadenzaNotificato}):
+     * quel sottosistema non e' ancora mappato su {@link Pendenza} in questa libreria (gap
+     * noto, non un comportamento da compensare qui).</p>
+     *
+     * @param idA2A      identificativo del gestionale responsabile
+     * @param idPendenza identificativo della pendenza nel gestionale
+     * @return la pendenza annullata
+     * @throws RisorsaNonTrovataException          se non esiste una pendenza con questa chiave
+     * @throws TransizioneStatoNonAmmessaException se lo stato attuale non e' {@code NON_ESEGUITO}
+     *                                              ne' {@code ANNULLATO}
+     */
+    public Pendenza annullaPendenza(String idA2A, String idPendenza) {
+        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        if (pendenza.getStato() != StatoPendenza.NON_ESEGUITO
+                && pendenza.getStato() != StatoPendenza.ANNULLATO) {
+            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] e' " + pendenza.getStato()
+                    + ": puo' essere annullata solo da NON_ESEGUITO");
+        }
+        entityManager.lock(pendenza.getOpzionePagamento().getPosizioneDebitoria(),
+                LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        pendenza.setStato(StatoPendenza.ANNULLATO);
+        pendenza.setDataUltimoAggiornamento(adesso);
+        pendenza.setDataUltimaModificaAca(adesso);
+        return pendenza;
+    }
+
+    /**
+     * Ripristina una pendenza annullata — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
+     * dello YAML v3, path {@code /stato}, value {@code NON_ESEGUITO}. Mirror del legacy
+     * ({@code PendenzeDAO.patchStato} caso {@code NON_ESEGUITO},
+     * {@code jars/core/.../dao/pagamenti/PendenzeDAO.java:685-702}), con una deviazione
+     * deliberata: il legacy rifiuta {@code NON_ESEGUITO} quando lo stato attuale e' GIA'
+     * {@code NON_ESEGUITO} (asimmetria rispetto al caso {@code ANNULLATO}, che invece e'
+     * idempotente — sembra un difetto del legacy, non una regola voluta); qui entrambe le
+     * direzioni sono idempotenti, scelta esplicita per la v3. Stesso gap sui flag di notifica
+     * avviso/promemoria di {@link #annullaPendenza}.
+     *
+     * <p><b>Rifiuta se l'opzione di pagamento e' {@code ANNULLATA}</b> (stato definitivo, vedi
+     * Javadoc di {@link StatoOpzionePagamento}): ripristinare la pendenza non la renderebbe
+     * comunque pagabile — l'avviso continuerebbe a segnalare {@code ANNULLATA} (deriva
+     * dall'opzione, non dalla singola pendenza, vedi Javadoc di {@code AvvisoMapper#mapStato}
+     * in govpay-pendenze-api) — quindi sarebbe un'operazione apparentemente riabilitante senza
+     * poterlo essere. Controllo incondizionato, indipendente dallo stato attuale della
+     * pendenza: non e' un caso di sincronizzazione mancata con {@link #annulla(UUID)} (quella
+     * resta intenzionale, vedi nota di classe) ma un rifiuto esplicito di UN'azione specifica
+     * che qui non avrebbe l'effetto che promette.</p>
+     *
+     * @param idA2A      identificativo del gestionale responsabile
+     * @param idPendenza identificativo della pendenza nel gestionale
+     * @return la pendenza ripristinata
+     * @throws RisorsaNonTrovataException          se non esiste una pendenza con questa chiave
+     * @throws TransizioneStatoNonAmmessaException se l'opzione di pagamento e' {@code ANNULLATA},
+     *                                              o se lo stato attuale della pendenza non e'
+     *                                              {@code ANNULLATO} ne' {@code NON_ESEGUITO}
+     */
+    public Pendenza ripristinaPendenza(String idA2A, String idPendenza) {
+        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        if (pendenza.getOpzionePagamento().getStato() == StatoOpzionePagamento.ANNULLATA) {
+            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] appartiene a "
+                    + "un'opzione di pagamento ANNULLATA (stato definitivo): il ripristino non la renderebbe "
+                    + "pagabile, l'avviso continuerebbe a segnalare ANNULLATA");
+        }
+        if (pendenza.getStato() != StatoPendenza.ANNULLATO
+                && pendenza.getStato() != StatoPendenza.NON_ESEGUITO) {
+            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] e' " + pendenza.getStato()
+                    + ": puo' essere ripristinata solo da ANNULLATO");
+        }
+        entityManager.lock(pendenza.getOpzionePagamento().getPosizioneDebitoria(),
+                LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
+        pendenza.setDataUltimoAggiornamento(adesso);
+        pendenza.setDataUltimaModificaAca(adesso);
+        return pendenza;
+    }
+
+    /**
+     * Risolve la pendenza per {@link #annullaPendenza}/{@link #ripristinaPendenza}: a
+     * differenza di {@link #trovaPendenzaPerIdentificativo} (pubblico, {@code readOnly}, per
+     * la sola lettura) qui l'entita' va restituita gestita nella transazione di scrittura
+     * corrente, altrimenti le mutazioni seguenti non verrebbero mai salvate.
+     */
+    private Pendenza trovaPendenzaScrivibile(String idA2A, String idPendenza) {
+        return risolviIdApplicazione(idA2A)
+                .flatMap(idApplicazione -> pendenzaRepository
+                        .findByIdApplicazioneAndIdPendenzaAndOpzionePagamentoIsNotNull(idApplicazione, idPendenza))
+                .orElseThrow(() -> new RisorsaNonTrovataException(
+                        "nessuna pendenza con idPendenza [" + idPendenza + "] per idA2A [" + idA2A + "]"));
     }
 
     /**
