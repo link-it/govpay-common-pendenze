@@ -1142,6 +1142,34 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Aggiorna {@code descrizioneStato} — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
+     * dello YAML v3, path {@code /descrizioneStato}. Mirror del legacy
+     * ({@code PendenzeDAO.patchDescrizioneStato},
+     * {@code jars/core/.../dao/pagamenti/PendenzeDAO.java:653-664}): un semplice valore, non
+     * una macchina a stati — nessun controllo sullo stato attuale della pendenza o
+     * dell'opzione, a differenza di {@link #annullaPendenza}/{@link #ripristinaPendenza}. La
+     * validazione sintattica (solo {@code replace}, valore non vuoto) e' a carico del
+     * chiamante ({@code PosizioneDebitoriaMapper#validaPatchPendenza} in govpay-pendenze-api),
+     * non di questo metodo.
+     *
+     * @param idA2A           identificativo del gestionale responsabile
+     * @param idPendenza      identificativo della pendenza nel gestionale
+     * @param descrizioneStato nuovo valore, non nullo/vuoto (vedi sopra)
+     * @return la pendenza aggiornata
+     * @throws RisorsaNonTrovataException se non esiste una pendenza con questa chiave
+     */
+    public Pendenza aggiornaDescrizioneStatoPendenza(String idA2A, String idPendenza, String descrizioneStato) {
+        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        entityManager.lock(pendenza.getOpzionePagamento().getPosizioneDebitoria(),
+                LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        pendenza.setDescrizioneStato(descrizioneStato);
+        pendenza.setDataUltimoAggiornamento(adesso);
+        pendenza.setDataUltimaModificaAca(adesso);
+        return pendenza;
+    }
+
+    /**
      * Risolve la pendenza per {@link #annullaPendenza}/{@link #ripristinaPendenza}: a
      * differenza di {@link #trovaPendenzaPerIdentificativo} (pubblico, {@code readOnly}, per
      * la sola lettura) qui l'entita' va restituita gestita nella transazione di scrittura
