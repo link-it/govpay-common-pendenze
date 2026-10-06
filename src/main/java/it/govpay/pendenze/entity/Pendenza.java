@@ -184,16 +184,6 @@ public class Pendenza {
     @Enumerated(EnumType.STRING)
     private StatoPendenza stato = StatoPendenza.NON_ESEGUITO;
 
-    /**
-     * Motivazione testuale libera legata a {@link #stato} (es. perche' una pendenza e' stata
-     * annullata) — colonna legacy {@code descrizione_stato} ({@code VARCHAR(255)}, nullable:
-     * {@code NULL} finche' nessuno la imposta, nessun default). A differenza di {@link #stato}
-     * non e' una macchina a stati: un semplice valore, scrivibile indipendentemente
-     * dall'annullamento/ripristino della pendenza.
-     */
-    @Column(name = "descrizione_stato", length = 255)
-    private String descrizioneStato;
-
     /** Concetto legacy distinto da {@link #stato}, sempre {@code NON_PAGATO} alla creazione. */
     @Column(name = "stato_pagamento", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)
@@ -417,14 +407,6 @@ public class Pendenza {
 
     public void setStato(StatoPendenza stato) {
         this.stato = stato;
-    }
-
-    public String getDescrizioneStato() {
-        return descrizioneStato;
-    }
-
-    public void setDescrizioneStato(String descrizioneStato) {
-        this.descrizioneStato = descrizioneStato;
     }
 
     public StatoPagamento getStatoPagamento() {

@@ -515,31 +515,6 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("aggiornaDescrizioneStatoPendenza imposta il valore e marca ACA")
-    void aggiornaDescrizioneStatoPendenzaFunziona() {
-        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        em.flush();
-        azzeraMarcatureAca(posizione);
-        em.flush();
-        em.clear();
-
-        Pendenza risultato = service.aggiornaDescrizioneStatoPendenza(codApplicazioneDi(posizione), "pendenza-1",
-                "annullata per errore di imputazione");
-
-        assertThat(risultato.getDescrizioneStato()).isEqualTo("annullata per errore di imputazione");
-        assertThat(risultato.getDataUltimoAggiornamento()).isNotNull();
-        assertThat(risultato.getDataUltimaModificaAca()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("aggiornaDescrizioneStatoPendenza solleva RisorsaNonTrovataException per una pendenza inesistente")
-    void aggiornaDescrizioneStatoPendenzaRisorsaInesistente() {
-        assertThatThrownBy(
-                () -> service.aggiornaDescrizioneStatoPendenza("A2A-INESISTENTE", "pendenza-inesistente", "motivo"))
-                .isInstanceOf(RisorsaNonTrovataException.class);
-    }
-
-    @Test
     @DisplayName("annullaPendenza marca data_ultimo_aggiornamento e data_ultima_modifica_aca")
     void annullaPendenzaMarcaAca() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
