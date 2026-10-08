@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -128,8 +129,8 @@ class PosizioneDebitoriaServiceTest {
         PosizioneDebitoria salvata = service.crea(posizione);
         em.flush();
         // Simula: l'ultima marcatura ACA e' gia' stata sincronizzata (colonne azzerate),
-        // cosi' l'asserzione sotto dimostra che attiva() le ripopola davvero, non che
-        // sono rimaste valorizzate dalla creazione.
+        // cosi' l'asserzione sotto dimostra che registraEsitoPendenza (via attiva) le
+        // ripopola davvero, non che sono rimaste valorizzate dalla creazione.
         azzeraMarcatureAca(salvata);
         em.flush();
         em.clear();
@@ -137,7 +138,8 @@ class PosizioneDebitoriaServiceTest {
         UUID idScelta = scelta.getIdOpzionePagamento();
         UUID idAlternativa = alternativa.getIdOpzionePagamento();
 
-        OpzionePagamento attivata = service.attiva(idScelta);
+        Pendenza pendenzaEseguita = service.registraEsitoPendenza("A2A-1", "pendenza-1", StatoPendenza.ESEGUITO);
+        OpzionePagamento attivata = pendenzaEseguita.getOpzionePagamento();
         em.flush();
         em.clear();
 
@@ -152,24 +154,14 @@ class PosizioneDebitoriaServiceTest {
         assertThat(alternativaRiletta.getStato()).isEqualTo(StatoOpzionePagamento.ANNULLATA);
         assertThat(alternativaRiletta.getPendenze()).allSatisfy(
                 p -> assertThat(p.getDataUltimaModificaAca()).isNotNull());
+        assertThat(alternativaRiletta.getPendenze()).extracting(Pendenza::getStato)
+                .containsOnly(StatoPendenza.ANNULLATO);
 
         OpzionePagamento sceltaRiletta = riletta.getOpzioniPagamento().stream()
                 .filter(o -> o.getIdOpzionePagamento().equals(idScelta))
                 .findFirst().orElseThrow();
         assertThat(sceltaRiletta.getPendenze()).allSatisfy(
                 p -> assertThat(p.getDataUltimaModificaAca()).isNotNull());
-    }
-
-    @Test
-    @DisplayName("attiva rifiuta un'opzione non DISPONIBILE")
-    void attivaRifiutaOpzioneNonDisponibile() {
-        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        PosizioneDebitoria salvata = service.crea(posizione);
-        UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
-
-        service.attiva(id);
-
-        assertThatThrownBy(() -> service.attiva(id)).isInstanceOf(TransizioneStatoNonAmmessaException.class);
     }
 
     @Test
@@ -319,8 +311,10 @@ class PosizioneDebitoriaServiceTest {
         PosizioneDebitoria salvata = service.crea(posizione);
         UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
 
-        service.annulla(id);
-        OpzionePagamento risultato = service.annulla(id);
+        String idA2A = codApplicazioneDi(salvata);
+        String idPos = salvata.getIdPosizioneDebitoria();
+        service.annulla(idA2A, idPos, id);
+        OpzionePagamento risultato = service.annulla(idA2A, idPos, id);
 
         assertThat(risultato.getStato()).isEqualTo(StatoOpzionePagamento.ANNULLATA);
     }
@@ -331,19 +325,10 @@ class PosizioneDebitoriaServiceTest {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
         PosizioneDebitoria salvata = service.crea(posizione);
         UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.registraEsitoPendenza(codApplicazioneDi(salvata), "pendenza-1", StatoPendenza.ESEGUITO);
 
-        service.attiva(id);
-
-        assertThatThrownBy(() -> service.annulla(id)).isInstanceOf(TransizioneStatoNonAmmessaException.class);
-    }
-
-    @Test
-    @DisplayName("attiva e annulla sollevano RisorsaNonTrovataException per un'opzione inesistente")
-    void opzioneInesistente() {
-        UUID inesistente = UUID.randomUUID();
-
-        assertThatThrownBy(() -> service.attiva(inesistente)).isInstanceOf(RisorsaNonTrovataException.class);
-        assertThatThrownBy(() -> service.annulla(inesistente)).isInstanceOf(RisorsaNonTrovataException.class);
+        assertThatThrownBy(() -> service.annulla(codApplicazioneDi(salvata), salvata.getIdPosizioneDebitoria(), id))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
     }
 
     @Test
@@ -385,8 +370,10 @@ class PosizioneDebitoriaServiceTest {
                 posizioneA.getIdPosizioneDebitoria(), idOpzioneB))
                 .isInstanceOf(RisorsaNonTrovataException.class);
 
-        OpzionePagamento opzioneBRiletta = service.attiva(idOpzioneB); // ancora DISPONIBILE: attiva() non la rifiuta
-        assertThat(opzioneBRiletta.getStato()).isEqualTo(StatoOpzionePagamento.ATTIVATA);
+        // ancora DISPONIBILE: il tentativo di annullamento rifiutato sopra non l'ha toccata.
+        Pendenza pendenzaBEseguita = service.registraEsitoPendenza(codApplicazioneDi(posizioneB), "pendenza-b",
+                StatoPendenza.ESEGUITO);
+        assertThat(pendenzaBEseguita.getOpzionePagamento().getStato()).isEqualTo(StatoOpzionePagamento.ATTIVATA);
     }
 
     @Test
@@ -405,7 +392,7 @@ class PosizioneDebitoriaServiceTest {
     void annullaScopedRifiutaOpzioneAttivata() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
         UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
-        service.attiva(id);
+        service.registraEsitoPendenza(codApplicazioneDi(posizione), "pendenza-1", StatoPendenza.ESEGUITO);
 
         assertThatThrownBy(() -> service.annulla(codApplicazioneDi(posizione),
                 posizione.getIdPosizioneDebitoria(), id))
@@ -413,120 +400,377 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("annullaPendenza annulla la singola pendenza, non l'intera opzione")
-    void annullaPendenzaFunzionaDaNonEseguito() {
-        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+    @DisplayName("annulla imposta ANNULLATO su tutte le pendenze dell'opzione (PIANO_RATEALE, piu' di una rata)")
+    void annullaCascataSuTutteLePendenze() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
+        PosizioneDebitoria salvata = service.crea(posizione);
+        UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
 
-        Pendenza risultato = service.annullaPendenza(codApplicazioneDi(posizione), "pendenza-1");
+        OpzionePagamento risultato = service.annulla(codApplicazioneDi(salvata), salvata.getIdPosizioneDebitoria(),
+                id);
 
-        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.ANNULLATO);
-        assertThat(risultato.getOpzionePagamento().getStato()).isEqualTo(StatoOpzionePagamento.DISPONIBILE);
+        assertThat(risultato.getPendenze()).extracting(Pendenza::getStato).containsOnly(StatoPendenza.ANNULLATO);
     }
 
     @Test
-    @DisplayName("annullaPendenza e' idempotente su una pendenza gia' ANNULLATA")
-    void annullaPendenzaIdempotente() {
-        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        String idA2A = codApplicazioneDi(posizione);
+    @DisplayName("ripristina riporta DISPONIBILE un'opzione ANNULLATA, con cascata NON_ESEGUITO su tutte le pendenze")
+    void ripristinaFunzionaECascataSuTutteLePendenze() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
+        PosizioneDebitoria salvata = service.crea(posizione);
+        UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        String idA2A = codApplicazioneDi(salvata);
+        String idPos = salvata.getIdPosizioneDebitoria();
+        service.annulla(idA2A, idPos, id);
 
-        service.annullaPendenza(idA2A, "pendenza-1");
-        Pendenza risultato = service.annullaPendenza(idA2A, "pendenza-1");
+        OpzionePagamento risultato = service.ripristina(idA2A, idPos, id);
 
-        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.ANNULLATO);
+        assertThat(risultato.getStato()).isEqualTo(StatoOpzionePagamento.DISPONIBILE);
+        assertThat(risultato.getPendenze()).extracting(Pendenza::getStato).containsOnly(StatoPendenza.NON_ESEGUITO);
     }
 
     @Test
-    @DisplayName("annullaPendenza rifiuta una pendenza ESEGUITA")
-    void annullaPendenzaRifiutaPendenzaEseguita() {
-        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
+    @DisplayName("ripristina e' idempotente su un'opzione gia' DISPONIBILE")
+    void ripristinaIdempotente() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        PosizioneDebitoria salvata = service.crea(posizione);
+        UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
 
-        assertThatThrownBy(() -> service.annullaPendenza(codApplicazioneDi(posizione), "pendenza-1"))
+        OpzionePagamento risultato = service.ripristina(codApplicazioneDi(salvata), salvata.getIdPosizioneDebitoria(),
+                id);
+
+        assertThat(risultato.getStato()).isEqualTo(StatoOpzionePagamento.DISPONIBILE);
+    }
+
+    @Test
+    @DisplayName("ripristina rifiuta un'opzione ATTIVATA")
+    void ripristinaRifiutaOpzioneAttivata() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        PosizioneDebitoria salvata = service.crea(posizione);
+        UUID id = salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.registraEsitoPendenza(codApplicazioneDi(salvata), "pendenza-1", StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.ripristina(codApplicazioneDi(salvata), salvata.getIdPosizioneDebitoria(), id))
                 .isInstanceOf(TransizioneStatoNonAmmessaException.class);
     }
 
     @Test
-    @DisplayName("annullaPendenza solleva RisorsaNonTrovataException per una pendenza inesistente")
-    void annullaPendenzaRisorsaInesistente() {
-        assertThatThrownBy(() -> service.annullaPendenza("A2A-INESISTENTE", "pendenza-inesistente"))
+    @DisplayName("ripristina(idA2A, idPosizioneDebitoria, idOpzionePagamento) ripristina l'opzione se "
+            + "appartiene davvero a quella posizione/applicazione")
+    void ripristinaScopedFunzionaSeLidentitaCorrisponde() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.annulla(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(), id);
+
+        OpzionePagamento risultato = service.ripristina(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), id);
+
+        assertThat(risultato.getStato()).isEqualTo(StatoOpzionePagamento.DISPONIBILE);
+    }
+
+    @Test
+    @DisplayName("ripristina(idA2A, idPosizioneDebitoria, idOpzionePagamento) rifiuta con "
+            + "RisorsaNonTrovataException se l'opzione appartiene a un'ALTRA posizione/applicazione")
+    void ripristinaScopedRifiutaSeLopzioneNonAppartieneAQuestaPosizione() {
+        PosizioneDebitoria posizioneA = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        PosizioneDebitoria posizioneB = new PosizioneDebitoria();
+        posizioneB.setIdApplicazione(idApplicazionePer("A2A-" + UUID.randomUUID().toString().substring(0, 8)));
+        posizioneB.setIdPosizioneDebitoria("pos-" + UUID.randomUUID().toString().substring(0, 8));
+        posizioneB.setIdDominio(2L);
+        posizioneB.setDescrizione("test");
+        posizioneB.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizioneB, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "b");
+        posizioneB = service.crea(posizioneB);
+        UUID idOpzioneB = posizioneB.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.annulla(codApplicazioneDi(posizioneB), posizioneB.getIdPosizioneDebitoria(), idOpzioneB);
+
+        assertThatThrownBy(() -> service.ripristina(codApplicazioneDi(posizioneA),
+                posizioneA.getIdPosizioneDebitoria(), idOpzioneB))
                 .isInstanceOf(RisorsaNonTrovataException.class);
     }
 
     @Test
-    @DisplayName("ripristinaPendenza riporta a NON_ESEGUITO una pendenza ANNULLATA")
-    void ripristinaPendenzaFunzionaDaAnnullata() {
-        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        String idA2A = codApplicazioneDi(posizione);
-        service.annullaPendenza(idA2A, "pendenza-1");
-
-        Pendenza risultato = service.ripristinaPendenza(idA2A, "pendenza-1");
-
-        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.NON_ESEGUITO);
-    }
-
-    /**
-     * Deviazione deliberata dal legacy (vedi Javadoc di
-     * {@link PosizioneDebitoriaService#ripristinaPendenza}): il legacy rifiuta questo caso,
-     * qui e' idempotente per scelta esplicita della v3.
-     */
-    @Test
-    @DisplayName("ripristinaPendenza e' idempotente su una pendenza gia' NON_ESEGUITO")
-    void ripristinaPendenzaIdempotente() {
+    @DisplayName("ripristina(idA2A, idPosizioneDebitoria, idOpzionePagamento) rifiuta con "
+            + "RisorsaNonTrovataException un'opzione inesistente")
+    void ripristinaScopedRifiutaOpzioneInesistente() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
 
-        Pendenza risultato = service.ripristinaPendenza(codApplicazioneDi(posizione), "pendenza-1");
-
-        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.NON_ESEGUITO);
-    }
-
-    @Test
-    @DisplayName("ripristinaPendenza rifiuta una pendenza ESEGUITA")
-    void ripristinaPendenzaRifiutaPendenzaEseguita() {
-        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
-
-        assertThatThrownBy(() -> service.ripristinaPendenza(codApplicazioneDi(posizione), "pendenza-1"))
-                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
-    }
-
-    @Test
-    @DisplayName("ripristinaPendenza solleva RisorsaNonTrovataException per una pendenza inesistente")
-    void ripristinaPendenzaRisorsaInesistente() {
-        assertThatThrownBy(() -> service.ripristinaPendenza("A2A-INESISTENTE", "pendenza-inesistente"))
+        assertThatThrownBy(() -> service.ripristina(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), UUID.randomUUID()))
                 .isInstanceOf(RisorsaNonTrovataException.class);
     }
 
+    @Test
+    @DisplayName("ripristina(idA2A, idPosizioneDebitoria, idOpzionePagamento) rifiuta un'opzione gia' ATTIVATA")
+    void ripristinaScopedRifiutaOpzioneAttivata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.registraEsitoPendenza(codApplicazioneDi(posizione), "pendenza-1", StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.ripristina(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), id))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
     /**
-     * Controllo incondizionato: la pendenza e' ancora NON_ESEGUITO (annullare l'opzione non
-     * tocca {@code pendenza.stato}, vedi Javadoc di classe) ma il ripristino va rifiutato
-     * comunque, perche' l'opzione ANNULLATA e' uno stato definitivo — non e' un caso di
-     * sincronizzazione mancata, e' il rifiuto esplicito di QUESTA azione specifica.
+     * Bug riprodotto in revisione: senza questo controllo, annulla() sovrascriveva
+     * silenziosamente con ANNULLATO una pendenza gia' eseguita (disallineamento fra
+     * opzione.stato e lo stato reale delle sue pendenze).
      */
     @Test
-    @DisplayName("ripristinaPendenza rifiuta se l'opzione di pagamento e' ANNULLATA, anche se la pendenza e' "
-            + "ancora NON_ESEGUITO")
-    void ripristinaPendenzaRifiutaSeOpzioneAnnullata() {
+    @DisplayName("annulla rifiuta se una pendenza e' gia' eseguita, invece di sovrascriverla silenziosamente")
+    void annullaRifiutaSePendenzaGiaEseguita() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        UUID idOpzione = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
-        service.annulla(idOpzione);
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        Pendenza pendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0);
+        pendenza.setStato(StatoPendenza.ESEGUITO);
 
-        assertThatThrownBy(() -> service.ripristinaPendenza(codApplicazioneDi(posizione), "pendenza-1"))
+        assertThatThrownBy(() -> service.annulla(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                id)).isInstanceOf(TransizioneStatoNonAmmessaException.class);
+        assertThat(pendenza.getStato()).isEqualTo(StatoPendenza.ESEGUITO);
+    }
+
+    /**
+     * Il ramo idempotente (opzione gia' ANNULLATA) deve rilevare il disallineamento, non
+     * ignorarlo solo perche' non ci sarebbe nulla da mutare sull'opzione stessa.
+     */
+    @Test
+    @DisplayName("annulla rileva un disallineamento anche quando sarebbe idempotente (opzione gia' ANNULLATA)")
+    void annullaIdempotenteRilevaPendenzaDisallineata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        String idA2A = codApplicazioneDi(posizione);
+        String idPos = posizione.getIdPosizioneDebitoria();
+        service.annulla(idA2A, idPos, id);
+        // Simula un disallineamento esterno (es. un futuro motore di registrazione pagamenti
+        // che scrivesse la pendenza senza passare da questo service).
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.annulla(idA2A, idPos, id))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    /**
+     * Bug riprodotto in revisione: {@code verificaNessunaPendenzaEseguita} da sola accetta
+     * qualunque mix di NON_ESEGUITO/ANNULLATO, quindi non rilevava una pendenza rimasta
+     * NON_ESEGUITO mentre l'opzione e' GIA' ANNULLATA (nessuna cascata l'avrebbe mai
+     * corretta, essendo un ritorno idempotente).
+     */
+    @Test
+    @DisplayName("annulla rifiuta (non ignora) se l'opzione e' gia' ANNULLATA ma una pendenza e' rimasta NON_ESEGUITO")
+    void annullaIdempotenteRilevaPendenzaNonEseguitaDisallineata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        String idA2A = codApplicazioneDi(posizione);
+        String idPos = posizione.getIdPosizioneDebitoria();
+        service.annulla(idA2A, idPos, id);
+        // Simula un disallineamento esterno: l'opzione e' ANNULLATA ma questa pendenza non
+        // ha seguito la cascata (es. scritta direttamente da un futuro motore esterno).
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.NON_ESEGUITO);
+
+        assertThatThrownBy(() -> service.annulla(idA2A, idPos, id))
                 .isInstanceOf(TransizioneStatoNonAmmessaException.class);
     }
 
     @Test
-    @DisplayName("annullaPendenza marca data_ultimo_aggiornamento e data_ultima_modifica_aca")
-    void annullaPendenzaMarcaAca() {
+    @DisplayName("ripristina rifiuta se una pendenza e' gia' eseguita, invece di sovrascriverla silenziosamente")
+    void ripristinaRifiutaSePendenzaGiaEseguita() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        em.flush();
-        azzeraMarcatureAca(posizione);
-        em.flush();
-        em.clear();
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        String idA2A = codApplicazioneDi(posizione);
+        String idPos = posizione.getIdPosizioneDebitoria();
+        service.annulla(idA2A, idPos, id);
+        Pendenza pendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0);
+        pendenza.setStato(StatoPendenza.ESEGUITO);
 
-        Pendenza risultato = service.annullaPendenza(codApplicazioneDi(posizione), "pendenza-1");
+        assertThatThrownBy(() -> service.ripristina(idA2A, idPos, id))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+        assertThat(pendenza.getStato()).isEqualTo(StatoPendenza.ESEGUITO);
+    }
 
-        assertThat(risultato.getDataUltimoAggiornamento()).isNotNull();
+    @Test
+    @DisplayName("ripristina rileva un disallineamento anche quando sarebbe idempotente (opzione gia' DISPONIBILE)")
+    void ripristinaIdempotenteRilevaPendenzaDisallineata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.ripristina(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                id)).isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    /**
+     * Simmetrico di {@link #annullaIdempotenteRilevaPendenzaNonEseguitaDisallineata}: una
+     * pendenza rimasta ANNULLATO mentre l'opzione e' GIA' DISPONIBILE non viene rilevata da
+     * {@code verificaNessunaPendenzaEseguita} (ANNULLATO non e' "eseguita"), ma e' comunque
+     * un disallineamento perche' nessuna cascata e' in corso per correggerla.
+     */
+    @Test
+    @DisplayName("ripristina rifiuta (non ignora) se l'opzione e' gia' DISPONIBILE ma una pendenza e' rimasta ANNULLATO")
+    void ripristinaIdempotenteRilevaPendenzaAnnullataDisallineata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID id = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        // L'opzione resta DISPONIBILE (nessuna transizione reale), ma la pendenza viene
+        // forzata ad ANNULLATO per simulare un disallineamento esterno.
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.ANNULLATO);
+
+        assertThatThrownBy(() -> service.ripristina(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(),
+                id)).isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    /**
+     * Bug riprodotto in revisione: 1) attiva(A) annulla automaticamente B (ancora
+     * DISPONIBILE) e le sue pendenze; 2) senza questo controllo, ripristina(B) la riportava
+     * DISPONIBILE (pendenze a NON_ESEGUITO) con A ancora ATTIVATA, vanificando l'esclusione
+     * reciproca e rendendo B di nuovo attivabile in seguito.
+     */
+    @Test
+    @DisplayName("ripristina rifiuta se un'altra opzione della stessa posizione e' ATTIVATA")
+    void ripristinaRifiutaSeAltraOpzioneAttivata() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-" + UUID.randomUUID().toString().substring(0, 8)));
+        posizione.setIdPosizioneDebitoria("pos-" + UUID.randomUUID().toString().substring(0, 8));
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
+        OpzionePagamento b = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
+        opzioneConPendenza(b, "b2"); // minimo 2 pendenze per PIANO_RATEALE
+
+        PosizioneDebitoria salvata = service.crea(posizione);
+        UUID idB = b.getIdOpzionePagamento();
+
+        // cascata automatica: B -> ANNULLATA, sue pendenze -> ANNULLATO
+        String idA2A = codApplicazioneDi(salvata);
+        service.registraEsitoPendenza(idA2A, "pendenza-a", StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.ripristina(idA2A, salvata.getIdPosizioneDebitoria(), idB))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza allinea l'opzione ad ATTIVATA, in un'unica operazione")
+    void registraEsitoPendenzaAllineaOpzioneAdAttivata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        Pendenza risultato = service.registraEsitoPendenza(codApplicazioneDi(posizione), "pendenza-1",
+                StatoPendenza.ESEGUITO);
+
+        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.ESEGUITO);
+        assertThat(posizione.getOpzioniPagamento().get(0).getStato()).isEqualTo(StatoOpzionePagamento.ATTIVATA);
+    }
+
+    /**
+     * Stessa cascata di {@link #attivaAnnullaLeAlternativeEMarcaAca} ({@code attiva(UUID)}),
+     * ma innescata dal verso pendenza, non dall'opzione — e' esattamente il coordinamento
+     * che {@code registraEsitoPendenza} deve garantire in un'unica operazione.
+     */
+    @Test
+    @DisplayName("registraEsitoPendenza annulla automaticamente le alternative e le loro pendenze")
+    void registraEsitoPendenzaAnnullaAutomaticamenteLeAlternative() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-" + UUID.randomUUID().toString().substring(0, 8)));
+        posizione.setIdPosizioneDebitoria("pos-" + UUID.randomUUID().toString().substring(0, 8));
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
+        OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
+        opzioneConPendenza(alternativa, "b2"); // minimo 2 pendenze per PIANO_RATEALE
+
+        PosizioneDebitoria salvata = service.crea(posizione);
+        String idA2A = codApplicazioneDi(salvata);
+
+        service.registraEsitoPendenza(idA2A, "pendenza-a", StatoPendenza.ESEGUITO);
+
+        OpzionePagamento alternativaRiletta = salvata.getOpzioniPagamento().get(1);
+        assertThat(alternativaRiletta.getStato()).isEqualTo(StatoOpzionePagamento.ANNULLATA);
+        assertThat(alternativaRiletta.getPendenze()).extracting(Pendenza::getStato)
+                .containsOnly(StatoPendenza.ANNULLATO);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza non richiama di nuovo la cascata se l'opzione e' gia' ATTIVATA")
+    void registraEsitoPendenzaNonRipeteLaCascataSeGiaAttivata() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
+        PosizioneDebitoria salvata = service.crea(posizione);
+        String idA2A = codApplicazioneDi(salvata);
+        service.registraEsitoPendenza(idA2A, "pendenza-1", StatoPendenza.ESEGUITO);
+        em.flush();
+        // Simula: l'ultima marcatura ACA e' gia' stata sincronizzata (colonne azzerate), cosi'
+        // l'asserzione sotto dimostra che il secondo esito la ripopola davvero (bug riprodotto
+        // in revisione: senza marcaModificaAca esplicito su questo ramo, restava nulla).
+        azzeraMarcatureAca(salvata);
+        em.flush();
+
+        Pendenza risultato = service.registraEsitoPendenza(idA2A, "pendenza-2", StatoPendenza.ESEGUITO);
+
+        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.ESEGUITO);
         assertThat(risultato.getDataUltimaModificaAca()).isNotNull();
+        assertThat(salvata.getOpzioniPagamento().get(0).getStato()).isEqualTo(StatoOpzionePagamento.ATTIVATA);
+        assertThat(salvata.getDataUltimaModificaAca()).isNotNull();
+    }
+
+    /**
+     * Bug riprodotto in revisione: senza questo controllo, {@code registraEsitoPendenza(...,
+     * NON_ESEGUITO)} su una pendenza gia' ESEGUITO lasciava l'opzione incoerentemente
+     * ATTIVATA con la pendenza "appena pagata" tornata NON_ESEGUITO — un disallineamento
+     * silenzioso.
+     */
+    @Test
+    @DisplayName("registraEsitoPendenza rifiuta NON_ESEGUITO: non e' un esito di pagamento")
+    void registraEsitoPendenzaRifiutaNonEseguito() {
+        String idA2A = codApplicazioneDi(service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
+
+        assertThatThrownBy(() -> service.registraEsitoPendenza(idA2A, "pendenza-1", StatoPendenza.NON_ESEGUITO))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    /**
+     * Bug riprodotto in revisione: senza questo controllo, {@code registraEsitoPendenza(...,
+     * ANNULLATO)} reintroduceva l'annullamento indipendente della singola pendenza da una
+     * porta laterale — esattamente il percorso che la v3 ha deliberatamente eliminato in
+     * favore del solo annullamento a livello di opzione.
+     */
+    @Test
+    @DisplayName("registraEsitoPendenza rifiuta ANNULLATO: non e' un esito di pagamento")
+    void registraEsitoPendenzaRifiutaAnnullato() {
+        String idA2A = codApplicazioneDi(service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
+
+        assertThatThrownBy(() -> service.registraEsitoPendenza(idA2A, "pendenza-1", StatoPendenza.ANNULLATO))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza rifiuta un nuovoStato nullo")
+    void registraEsitoPendenzaRifiutaStatoNullo() {
+        String idA2A = codApplicazioneDi(service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
+
+        assertThatThrownBy(() -> service.registraEsitoPendenza(idA2A, "pendenza-1", null))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza rifiuta se l'opzione della pendenza e' ANNULLATA")
+    void registraEsitoPendenzaRifiutaSeOpzioneAnnullata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String idA2A = codApplicazioneDi(posizione);
+        service.annulla(idA2A, posizione.getIdPosizioneDebitoria(),
+                posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento());
+
+        assertThatThrownBy(() -> service.registraEsitoPendenza(idA2A, "pendenza-1", StatoPendenza.ESEGUITO))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza solleva RisorsaNonTrovataException per una pendenza inesistente")
+    void registraEsitoPendenzaRisorsaInesistente() {
+        assertThatThrownBy(() -> service.registraEsitoPendenza("A2A-INESISTENTE", "pendenza-inesistente",
+                StatoPendenza.ESEGUITO))
+                .isInstanceOf(RisorsaNonTrovataException.class);
     }
 
     @Test
@@ -693,8 +937,7 @@ class PosizioneDebitoriaServiceTest {
             + "per l'annullamento automatico")
     void aggiungiOpzionePagamentoRifiutaSeEsisteGiaUnaOpzioneAttivata() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
-        UUID idOpzioneEsistente = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
-        service.attiva(idOpzioneEsistente);
+        service.registraEsitoPendenza(codApplicazioneDi(posizione), "pendenza-1", StatoPendenza.ESEGUITO);
 
         assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
                 posizione.getIdPosizioneDebitoria(),
@@ -1225,6 +1468,118 @@ class PosizioneDebitoriaServiceTest {
         assertThat(pendenzaCreata.getDebitoreIdentificativo()).isEqualTo("VEDERE_SOGGETTI_DEBITORI");
         assertThat(pendenzaCreata.getDebitoreAnagrafica()).isEqualTo("Vedere tabella soggetti_debitori");
         assertThat(pendenzaCreata.getSrcDebitoreIdentificativo()).isEqualTo("VEDERE_SOGGETTI_DEBITORI");
+    }
+
+    // ── aggiornaPendenza ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("aggiornaPendenza marca dataUltimoAggiornamento sulla pendenza e dataUltimaModificaAca "
+            + "(bug: aggiorna() marcava solo la posizione/ACA, non il timestamp della pendenza stessa)")
+    void aggiornaPendenzaMarcaDataUltimoAggiornamentoEAca() throws InterruptedException {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        azzeraMarcatureAca(posizione);
+        OffsetDateTime originale = posizione.getOpzioniPagamento().get(0).getPendenze().get(0)
+                .getDataUltimoAggiornamento();
+        em.flush();
+        em.clear();
+        Thread.sleep(5);
+
+        Pendenza aggiornata = service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+        });
+
+        assertThat(aggiornata.getDataUltimoAggiornamento()).isAfter(originale);
+        assertThat(aggiornata.getDataUltimaModificaAca()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta se lo stato non e' NON_ESEGUITO ne' ANNULLATO")
+    void aggiornaPendenzaRifiutaStatoNonCompatibile() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+        })).isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
+    @DisplayName("aggiornaPendenza solleva RisorsaNonTrovataException per una pendenza inesistente")
+    void aggiornaPendenzaRisorsaInesistente() {
+        assertThatThrownBy(() -> service.aggiornaPendenza("A2A-INESISTENTE", "pendenza-inesistente", p -> {
+        })).isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    /**
+     * Verifica che il vincolo sia garantito dal SERVICE, non solo dal mapper REST: nessun
+     * {@code PatchOp}/JSON qui, solo una chiamata diretta a {@code aggiornaPendenza} con un
+     * {@code Consumer} che rimuove la voce esistente — esattamente come potrebbe fare un
+     * futuro consumatore diretto della libreria (es. console-api) che non passa dal mapper.
+     */
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta la rimozione di una voce esistente, anche chiamando il service "
+            + "direttamente (senza passare dal mapper REST)")
+    void aggiornaPendenzaRifiutaRimozioneVoceEsistente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            p.getVoci().clear();
+            p.setImporto(0.00);
+        })).isInstanceOf(TransizioneStatoNonAmmessaException.class)
+                .hasMessageContaining("non puo' essere rimossa");
+    }
+
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta il cambio di tributo di una voce esistente, anche chiamando il "
+            + "service direttamente")
+    void aggiornaPendenzaRifiutaCambioTributoVoceEsistente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1",
+                p -> p.getVoci().get(0).setIdTributo(99L)))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class)
+                .hasMessageContaining("non puo' cambiare il riferimento");
+    }
+
+    /**
+     * Verifica che il limite sia garantito dal validatore di libreria, non solo dalla bean
+     * validation del DTO REST: nessun {@code PatchOp}/JSON qui, solo una chiamata diretta a
+     * {@code aggiornaPendenza} con importi negativi su voce e pendenza, somma coerente tra
+     * loro — esattamente il caso che il solo controllo di coerenza (somma voci = importo)
+     * lascia passare, perche' due importi negativi possono comunque somare correttamente.
+     */
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta importi negativi su voce/pendenza anche con somma coerente, "
+            + "chiamando il service direttamente (non solo tramite il mapper REST)")
+    void aggiornaPendenzaRifiutaImportiNegativiAncheConSommaCoerente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            p.getVoci().get(0).setImporto(-10.00);
+            p.setImporto(-10.00);
+        })).isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiornaPendenza permette di aggiungere una voce nuova senza toccare quelle esistenti")
+    void aggiornaPendenzaPermetteAggiuntaVoceNuova() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        Pendenza aggiornata = service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            VocePendenza nuova = voceDiProva("voce-nuova", 5.00);
+            nuova.setIndice(2);
+            p.addVocePendenza(nuova);
+            p.setImporto(15.00);
+        });
+
+        assertThat(aggiornata.getVoci()).hasSize(2);
     }
 
     // ── Fixture ──────────────────────────────────────────────────────────────

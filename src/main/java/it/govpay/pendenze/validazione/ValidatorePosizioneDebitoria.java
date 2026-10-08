@@ -135,10 +135,12 @@ public final class ValidatorePosizioneDebitoria {
         }
 
         validaScalaImporto(BigDecimal.valueOf(pendenza.getImporto()), "la pendenza [" + pendenza.getIdPendenza() + "]");
+        validaLimitiImporto(BigDecimal.valueOf(pendenza.getImporto()), "la pendenza [" + pendenza.getIdPendenza() + "]");
 
         BigDecimal sommaVoci = BigDecimal.ZERO;
         for (VocePendenza voce : pendenza.getVoci()) {
             validaScalaImporto(BigDecimal.valueOf(voce.getImporto()), "la voce [" + voce.getIdVocePendenza() + "]");
+            validaLimitiImporto(BigDecimal.valueOf(voce.getImporto()), "la voce [" + voce.getIdVocePendenza() + "]");
             sommaVoci = sommaVoci.add(BigDecimal.valueOf(voce.getImporto()));
             validaDettaglioContabile(voce);
         }
@@ -167,6 +169,27 @@ public final class ValidatorePosizioneDebitoria {
         } catch (ArithmeticException e) {
             throw new ValidazioneNonSuperataException(
                     contesto + " ha un importo con più di 2 decimali significativi: " + importo.toPlainString());
+        }
+    }
+
+    /**
+     * Stessi limiti dichiarati nello YAML v3 per {@code PendenzaBase.importo}/
+     * {@code DatiComuniVocePendenza.importo} ({@code minimum: 0.00, maximum: 10000000000000000.00}).
+     * Il controllo di coerenza sopra (somma voci = importo pendenza) non basta a escludere
+     * importi fuori limite: due importi negativi la cui somma torna comunque coerente con
+     * un importo pendenza altrettanto negativo lo superano senza problemi (bug riscontrato:
+     * importi negativi con somma coerente accettati). Verificato qui, non solo a livello di
+     * bean validation del DTO REST, cosi' vale anche per un chiamante diretto della libreria
+     * (es. la futura console-api) che non passa dalla validazione del body HTTP.
+     */
+    private static final BigDecimal IMPORTO_MINIMO = BigDecimal.ZERO;
+    private static final BigDecimal IMPORTO_MASSIMO = new BigDecimal("10000000000000000");
+
+    private static void validaLimitiImporto(BigDecimal importo, String contesto) {
+        if (importo.compareTo(IMPORTO_MINIMO) < 0 || importo.compareTo(IMPORTO_MASSIMO) > 0) {
+            throw new ValidazioneNonSuperataException(
+                    contesto + " ha un importo " + importo.toPlainString() + " fuori dai limiti ammessi ["
+                            + IMPORTO_MINIMO + ", " + IMPORTO_MASSIMO + "]");
         }
     }
 

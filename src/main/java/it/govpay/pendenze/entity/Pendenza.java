@@ -212,6 +212,22 @@ public class Pendenza {
     @Column(name = "send_abilitato", nullable = false)
     private boolean sendAbilitato = false;
 
+    /**
+     * Importo delle spese di notifica SEND, quantificato dal servizio di pagamento
+     * interrogando il connettore SEND del dominio (percorso automatico, {@link #sendAbilitato}
+     * {@code true}) — mai scritto da questa libreria o da govpay-pendenze-api, solo
+     * registrato tramite {@link it.govpay.pendenze.service.PosizioneDebitoriaService#registraImportoSend}.
+     * Non partecipa alla coerenza importo/voci di {@link #importo}: e' una quota aggiuntiva
+     * nota solo al momento del pagamento, non al caricamento della pendenza (vedi
+     * {@code VersamentoUtils.getImportoTotaleConSend} del legacy).
+     */
+    @Column(name = "send_importo_totale")
+    private Double sendImportoTotale;
+
+    /** Istante dell'ultima interrogazione del connettore SEND che ha prodotto {@link #sendImportoTotale}. */
+    @Column(name = "send_data_aggiornamento")
+    private OffsetDateTime sendDataAggiornamento;
+
     /** {@code TIMESTAMP} in produzione (come {@code data_validita}/{@code data_scadenza} sotto), non DATE. */
     @Column(name = "data_pagamento")
     private OffsetDateTime dataPagamento;
@@ -471,6 +487,22 @@ public class Pendenza {
 
     public void setSendAbilitato(boolean sendAbilitato) {
         this.sendAbilitato = sendAbilitato;
+    }
+
+    public Double getSendImportoTotale() {
+        return sendImportoTotale;
+    }
+
+    public void setSendImportoTotale(Double sendImportoTotale) {
+        this.sendImportoTotale = sendImportoTotale;
+    }
+
+    public OffsetDateTime getSendDataAggiornamento() {
+        return sendDataAggiornamento;
+    }
+
+    public void setSendDataAggiornamento(OffsetDateTime sendDataAggiornamento) {
+        this.sendDataAggiornamento = sendDataAggiornamento;
     }
 
     public OffsetDateTime getDataPagamento() {

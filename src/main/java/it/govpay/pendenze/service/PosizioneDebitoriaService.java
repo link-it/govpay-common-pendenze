@@ -3,9 +3,12 @@ package it.govpay.pendenze.service;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -912,6 +915,21 @@ public class PosizioneDebitoriaService {
      * posizione debitoria, essendo alternative non piu' applicabili (semantica dello YAML
      * v3, schema {@code StatoOpzionePagamento}).
      *
+     * <p><b>Privato, non piu' un metodo pubblico del service</b>: l'attivazione e'
+     * concettualmente un EFFETTO del pagamento di una pendenza (e quindi della scelta di
+     * un'opzione), non un'azione indipendente — se la congruenza fra
+     * {@code OpzionePagamento.stato} e gli stati delle pendenze fosse sempre garantita (ed
+     * e' esattamente quello che {@link #verificaAlmenoUnaPendenzaEseguita}/
+     * {@link #verificaNessunaPendenzaEseguita}/{@link #verificaTutteLePendenzeNelloStato}
+     * fanno rispettare), un'opzione {@code DISPONIBILE} avrebbe per definizione tutte le
+     * pendenze {@code NON_ESEGUITO}: chiamare questo metodo da solo, su un'opzione
+     * genuinamente congruente, fallirebbe sempre (nessuna pendenza "eseguita" da trovare).
+     * Riesce solo perche' {@link #registraEsitoPendenza} muta la pendenza PRIMA di
+     * richiamarlo, nella stessa transazione, sullo stesso oggetto gestito — una violazione
+     * transitoria e intenzionale della congruenza, interna a un'unica operazione atomica,
+     * non un contratto pubblico indipendente. {@link #registraEsitoPendenza} e' quindi
+     * l'unico chiamante legittimo.</p>
+     *
      * <p><b>Concorrenza.</b> {@link OpzionePagamento#getVersione()} e' un lock ottimistico:
      * se questo metodo e {@link #annulla(UUID)} vengono chiamati concorrentemente sulla
      * stessa opzione, chi scrive per secondo su una versione ormai superata riceve un
@@ -921,19 +939,20 @@ public class PosizioneDebitoriaService {
      * esecuzione. Il chiamante deve gestire l'eccezione (tipicamente: rileggere lo stato
      * attuale e decidere di conseguenza), non ignorarla.</p>
      *
-     * <p><b>Nota per il futuro chiamante reale</b> (verificato con una prova a due
-     * transazioni sovrapposte: il conflitto viene rilevato correttamente, l'operazione
-     * perdente va in eccezione): questo metodo NON cattura ne' traduce il
+     * <p><b>Nota per il futuro motore di registrazione pagamenti</b> (verificato con una
+     * prova a due transazioni sovrapposte: il conflitto viene rilevato correttamente,
+     * l'operazione perdente va in eccezione): questo metodo NON cattura ne' traduce il
      * conflitto di lock ottimistico, lo lascia propagare grezzo
-     * ({@code ObjectOptimisticLockingFailureException}) — corretto per un endpoint REST
-     * sincrono (dove il livello REST puo' tradurlo in 409 e il client puo' decidere se
-     * riprovare, vedi {@code ProblemExceptionHandler} in govpay-pendenze-api), ma SBAGLIATO
-     * per il futuro processo che registrera' i pagamenti reali (es. a fronte di una notifica
-     * pagoPA): quel chiamante non ha un client interattivo a cui delegare la decisione — deve
-     * invece rileggere l'aggregato e rieseguire l'intera transazione applicativa (non solo
-     * questa chiamata), con un numero limitato di tentativi, prima di arrendersi in modo
-     * osservabile (es. un evento di errore). Non implementato qui: nessun chiamante reale
-     * esiste ancora per cui progettarlo concretamente.</p>
+     * ({@code ObjectOptimisticLockingFailureException}), e lo stesso fa oggi
+     * {@link #registraEsitoPendenza} — corretto per un endpoint REST sincrono (dove il
+     * livello REST puo' tradurlo in 409 e il client puo' decidere se riprovare, vedi
+     * {@code ProblemExceptionHandler} in govpay-pendenze-api), ma SBAGLIATO per un futuro
+     * motore di registrazione pagamenti guidato da una notifica pagoPA: quel chiamante non
+     * ha un client interattivo a cui delegare la decisione — dovrebbe invece rileggere
+     * l'aggregato e rieseguire l'intera transazione applicativa (non solo questa chiamata),
+     * con un numero limitato di tentativi, prima di arrendersi in modo osservabile (es. un
+     * evento di errore). {@link #registraEsitoPendenza} e' volutamente il percorso minimo
+     * (vedi il suo Javadoc) e non implementa ancora questa strategia di retry.</p>
      *
      * <p><b>Lock esplicito sulla posizione</b>: {@code LockModeType.OPTIMISTIC_FORCE_INCREMENT} su
      * {@code opzione.getPosizioneDebitoria()} forza l'incremento di
@@ -949,15 +968,17 @@ public class PosizioneDebitoriaService {
      * @param idOpzionePagamento identificativo dell'opzione che risulta pagata
      * @return l'opzione appena attivata
      * @throws RisorsaNonTrovataException        se l'opzione non esiste
-     * @throws TransizioneStatoNonAmmessaException se l'opzione non e' {@code DISPONIBILE}
+     * @throws TransizioneStatoNonAmmessaException se l'opzione non e' {@code DISPONIBILE}, o
+     *                                              se nessuna pendenza e' eseguita
      */
-    public OpzionePagamento attiva(UUID idOpzionePagamento) {
+    private OpzionePagamento attiva(UUID idOpzionePagamento) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
         if (opzione.getStato() != StatoOpzionePagamento.DISPONIBILE) {
             throw new TransizioneStatoNonAmmessaException(
                     "l'opzione di pagamento [" + idOpzionePagamento + "] non e' DISPONIBILE (stato attuale: "
                             + opzione.getStato() + "): non puo' essere attivata");
         }
+        verificaAlmenoUnaPendenzaEseguita(opzione, idOpzionePagamento);
         entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
@@ -967,9 +988,11 @@ public class PosizioneDebitoriaService {
 
         for (OpzionePagamento altra : opzione.getPosizioneDebitoria().getOpzioniPagamento()) {
             if (!altra.getId().equals(opzione.getId()) && altra.getStato() == StatoOpzionePagamento.DISPONIBILE) {
+                verificaNessunaPendenzaEseguita(altra, altra.getIdOpzionePagamento(), "annullata");
                 altra.setStato(StatoOpzionePagamento.ANNULLATA);
                 altra.setDataUltimoAggiornamento(adesso);
                 marcaModificaAca(altra, adesso);
+                cascataStatoPendenze(altra, StatoPendenza.ANNULLATO, adesso);
             }
         }
 
@@ -983,34 +1006,215 @@ public class PosizioneDebitoriaService {
      * di un'opzione gia' {@code ATTIVATA}, perche' corrisponde a un pagamento gia'
      * eseguito (semantica dello YAML v3).
      *
+     * <p><b>Cascata sulle pendenze</b>: imposta {@code ANNULLATO} su tutte le pendenze
+     * dell'opzione (vedi {@link #cascataStatoPendenze}) — l'unico punto di scrittura dove
+     * lo stato di una pendenza cambia a seguito dell'opzione, dato che la v3 non espone piu'
+     * un annullamento indipendente della singola pendenza (deciso dopo aver verificato che
+     * il legacy, al contrario, tratta lo stato come proprieta' del singolo versamento: qui
+     * si e' scelto deliberatamente il livello dell'opzione come unica fonte di verita'). Prima
+     * di eseguirla, {@link #verificaNessunaPendenzaEseguita} verifica che nessuna pendenza sia
+     * gia' in uno stato diverso da {@code NON_ESEGUITO}/{@code ANNULLATO} — senza, la cascata
+     * sovrascriverebbe silenziosamente una pendenza realmente eseguita, scenario riprodotto e
+     * segnalato in revisione (il commento precedente assumeva l'invariante senza che il codice
+     * la garantisse). Controllo eseguito anche sul ramo idempotente (opzione gia'
+     * {@code ANNULLATA}): un disallineamento va segnalato comunque, non ignorato solo perche'
+     * non ci sarebbe nulla da mutare.</p>
+     *
      * <p>Stesso lock esplicito di {@link #attiva(UUID)} sulla posizione — vedi il suo
      * Javadoc — tranne quando il metodo e' idempotente (opzione gia' {@code ANNULLATA}):
      * in quel caso non c'e' alcuna mutazione, quindi nessun bisogno di forzare un
      * incremento di versione.</p>
      *
+     * <p><b>Privato</b>: {@code idOpzionePagamento} da solo non e' legato a nessun controllo
+     * di appartenenza — qualunque chiamante esterno (govpay-pendenze-api, la futura
+     * govpay-console-api) deve passare per {@link #annulla(String, String, UUID)}, che
+     * verifica prima che l'opzione appartenga davvero a quella posizione/applicazione.
+     * Questo resta il metodo di base su cui quello scoped si appoggia.</p>
+     *
      * @param idOpzionePagamento identificativo dell'opzione da annullare
      * @return l'opzione annullata
      * @throws RisorsaNonTrovataException        se l'opzione non esiste
-     * @throws TransizioneStatoNonAmmessaException se l'opzione e' {@code ATTIVATA}
+     * @throws TransizioneStatoNonAmmessaException se l'opzione e' {@code ATTIVATA}, o se una
+     *                                              sua pendenza e' gia' in uno stato diverso
+     *                                              da {@code NON_ESEGUITO}/{@code ANNULLATO}
      */
-    public OpzionePagamento annulla(UUID idOpzionePagamento) {
+    private OpzionePagamento annulla(UUID idOpzionePagamento) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
 
-        if (opzione.getStato() == StatoOpzionePagamento.ANNULLATA) {
-            return opzione;
-        }
         if (opzione.getStato() == StatoOpzionePagamento.ATTIVATA) {
             throw new TransizioneStatoNonAmmessaException(
                     "l'opzione di pagamento [" + idOpzionePagamento
                             + "] e' ATTIVATA: corrisponde a un pagamento gia' eseguito, non puo' essere annullata");
         }
+        if (opzione.getStato() == StatoOpzionePagamento.ANNULLATA) {
+            verificaTutteLePendenzeNelloStato(opzione, StatoPendenza.ANNULLATO, idOpzionePagamento, "annullata");
+            return opzione;
+        }
+        verificaNessunaPendenzaEseguita(opzione, idOpzionePagamento, "annullata");
         entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         opzione.setStato(StatoOpzionePagamento.ANNULLATA);
         opzione.setDataUltimoAggiornamento(adesso);
         marcaModificaAca(opzione, adesso);
+        cascataStatoPendenze(opzione, StatoPendenza.ANNULLATO, adesso);
         return opzione;
+    }
+
+    /**
+     * Ripristina a {@code DISPONIBILE} un'opzione di pagamento {@code ANNULLATA} —
+     * simmetrico ad {@link #annulla(UUID)}: stesso guard (rifiuta se {@code ATTIVATA}),
+     * stessa verifica di congruenza sulle pendenze e stessa cascata (qui a
+     * {@code NON_ESEGUITO}, vedi {@link #cascataStatoPendenze}). Idempotente se gia'
+     * {@code DISPONIBILE}.
+     *
+     * <p><b>Verifica anche l'assenza di un'altra opzione {@code ATTIVATA}</b> nella stessa
+     * posizione ({@link #verificaNessunAltraOpzioneAttivata}): senza questo controllo si
+     * potrebbe ripristinare un'alternativa gia' esclusa automaticamente da {@link #attiva}
+     * (vedi il suo ciclo sulle "altre" opzioni), vanificando l'esclusione reciproca — scenario
+     * riprodotto e segnalato in revisione (attiva(A) → B annullata automaticamente →
+     * ripristina(B) la riporta DISPONIBILE con A ancora ATTIVATA, rendendo B di nuovo
+     * attivabile). Controllo e lock PRIMA del possibile ritorno idempotente (a differenza di
+     * {@link #annulla(UUID)}, che per questo non puo' saltare il lock come fa il suo ramo
+     * idempotente): la lettura delle "altre" opzioni deve restare protetta dalla stessa
+     * garanzia di concorrenza di {@link #attiva(UUID)} (incremento forzato della versione
+     * della posizione), altrimenti una {@code attiva(UUID)} concorrente su un'altra opzione
+     * potrebbe commitare fra questa lettura e la mutazione senza essere rilevata.</p>
+     *
+     * <p><b>Privato</b>, stesso motivo di {@link #annulla(UUID)}: qualunque chiamante
+     * esterno deve passare per {@link #ripristina(String, String, UUID)}, che verifica
+     * l'appartenenza dell'opzione.</p>
+     *
+     * @param idOpzionePagamento identificativo dell'opzione da ripristinare
+     * @return l'opzione ripristinata
+     * @throws RisorsaNonTrovataException        se l'opzione non esiste
+     * @throws TransizioneStatoNonAmmessaException se l'opzione e' {@code ATTIVATA}, se un'altra
+     *                                              opzione della stessa posizione e'
+     *                                              {@code ATTIVATA}, o se una pendenza e' gia'
+     *                                              in uno stato diverso da
+     *                                              {@code NON_ESEGUITO}/{@code ANNULLATO}
+     */
+    private OpzionePagamento ripristina(UUID idOpzionePagamento) {
+        OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
+
+        if (opzione.getStato() == StatoOpzionePagamento.ATTIVATA) {
+            throw new TransizioneStatoNonAmmessaException(
+                    "l'opzione di pagamento [" + idOpzionePagamento
+                            + "] e' ATTIVATA: corrisponde a un pagamento gia' eseguito, non puo' essere ripristinata");
+        }
+        entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        verificaNessunAltraOpzioneAttivata(opzione, idOpzionePagamento);
+        if (opzione.getStato() == StatoOpzionePagamento.DISPONIBILE) {
+            verificaTutteLePendenzeNelloStato(opzione, StatoPendenza.NON_ESEGUITO, idOpzionePagamento,
+                    "ripristinata");
+            return opzione;
+        }
+        verificaNessunaPendenzaEseguita(opzione, idOpzionePagamento, "ripristinata");
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        opzione.setStato(StatoOpzionePagamento.DISPONIBILE);
+        opzione.setDataUltimoAggiornamento(adesso);
+        marcaModificaAca(opzione, adesso);
+        cascataStatoPendenze(opzione, StatoPendenza.NON_ESEGUITO, adesso);
+        return opzione;
+    }
+
+    /**
+     * {@code true} se lo stato e' diverso da {@code NON_ESEGUITO}/{@code ANNULLATO} — cioe'
+     * se descrive un qualunque esito di pagamento registrato da pagoPA (eseguita,
+     * parzialmente eseguita, anomala, ecc.). Base dell'invariante fra
+     * {@code OpzionePagamento.stato} e gli stati delle sue pendenze: {@code DISPONIBILE} e
+     * {@code ANNULLATA} richiedono che NESSUNA pendenza la soddisfi, {@code ATTIVATA} richiede
+     * che ALMENO UNA la soddisfi. Usato sia su uno stato gia' persistito ({@link #pendenzaEseguita})
+     * sia su un {@code nuovoStato} ancora da validare ({@link #registraEsitoPendenza}).
+     */
+    private static boolean statoEseguito(StatoPendenza stato) {
+        return stato != StatoPendenza.NON_ESEGUITO && stato != StatoPendenza.ANNULLATO;
+    }
+
+    private static boolean pendenzaEseguita(Pendenza pendenza) {
+        return statoEseguito(pendenza.getStato());
+    }
+
+    /**
+     * Precondizione di {@link #annulla(UUID)}/{@link #ripristina(UUID)} (anche sul ramo
+     * dell'"altra" opzione annullata automaticamente da {@link #attiva(UUID)}): nessuna
+     * pendenza dell'opzione deve essere gia' {@link #pendenzaEseguita(Pendenza) eseguita},
+     * altrimenti la cascata sulle pendenze la sovrascriverebbe silenziosamente.
+     *
+     * @param azione participio usato nel messaggio ("annullata"/"ripristinata")
+     * @throws TransizioneStatoNonAmmessaException se almeno una pendenza e' eseguita
+     */
+    private void verificaNessunaPendenzaEseguita(OpzionePagamento opzione, UUID idOpzionePagamento, String azione) {
+        boolean qualcunaEseguita = opzione.getPendenze().stream().anyMatch(PosizioneDebitoriaService::pendenzaEseguita);
+        if (qualcunaEseguita) {
+            throw new TransizioneStatoNonAmmessaException("l'opzione di pagamento [" + idOpzionePagamento
+                    + "] ha almeno una pendenza in uno stato diverso da NON_ESEGUITO/ANNULLATO: non puo' essere "
+                    + azione + " senza sovrascrivere silenziosamente quel dato");
+        }
+    }
+
+    /**
+     * Precondizione dei rami idempotenti di {@link #annulla(UUID)}/{@link #ripristina(UUID)}
+     * (opzione gia' nello stato di destinazione, nessuna cascata verrebbe applicata): a
+     * differenza di {@link #verificaNessunaPendenzaEseguita} (che accetta qualunque mix di
+     * {@code NON_ESEGUITO}/{@code ANNULLATO}, corretto solo come precondizione di una
+     * transizione REALE, perche' la cascata seguente uniforma comunque tutte le pendenze),
+     * qui serve la congruenza ESATTA — {@code statoAtteso} identico su tutte le pendenze —
+     * perche' nessuna cascata sta per essere eseguita: un mix non verrebbe mai corretto.
+     * Senza questo controllo specifico, es. una pendenza rimasta {@code NON_ESEGUITO} mentre
+     * l'opzione e' gia' {@code ANNULLATA} (o viceversa una {@code ANNULLATO} mentre l'opzione
+     * e' gia' {@code DISPONIBILE}) attraverserebbe il ritorno idempotente senza essere
+     * rilevata.
+     *
+     * @param statoAtteso stato che OGNI pendenza deve avere ({@code ANNULLATO} per
+     *                    {@code ANNULLATA}, {@code NON_ESEGUITO} per {@code DISPONIBILE})
+     * @param azione      participio usato nel messaggio ("annullata"/"ripristinata")
+     * @throws TransizioneStatoNonAmmessaException se almeno una pendenza non e' nello stato atteso
+     */
+    private void verificaTutteLePendenzeNelloStato(OpzionePagamento opzione, StatoPendenza statoAtteso,
+            UUID idOpzionePagamento, String azione) {
+        boolean tutteCongruenti = opzione.getPendenze().stream().allMatch(p -> p.getStato() == statoAtteso);
+        if (!tutteCongruenti) {
+            throw new TransizioneStatoNonAmmessaException("l'opzione di pagamento [" + idOpzionePagamento
+                    + "] e' gia' " + opzione.getStato() + " ma almeno una delle sue pendenze non e' " + statoAtteso
+                    + ": disallineamento rilevato, richiesta di " + azione + " rifiutata");
+        }
+    }
+
+    /**
+     * Precondizione di {@link #attiva(UUID)}: l'opzione deve avere ALMENO UNA pendenza
+     * {@link #pendenzaEseguita(Pendenza) eseguita} — altrimenti diventerebbe {@code ATTIVATA}
+     * senza che nulla lo giustifichi, violando l'invariante nel verso opposto a
+     * {@link #verificaNessunaPendenzaEseguita}.
+     *
+     * @throws TransizioneStatoNonAmmessaException se nessuna pendenza e' eseguita
+     */
+    private void verificaAlmenoUnaPendenzaEseguita(OpzionePagamento opzione, UUID idOpzionePagamento) {
+        boolean qualcunaEseguita = opzione.getPendenze().stream().anyMatch(PosizioneDebitoriaService::pendenzaEseguita);
+        if (!qualcunaEseguita) {
+            throw new TransizioneStatoNonAmmessaException("l'opzione di pagamento [" + idOpzionePagamento
+                    + "] non ha nessuna pendenza in uno stato diverso da NON_ESEGUITO/ANNULLATO: non puo' essere "
+                    + "attivata senza che almeno una pendenza risulti eseguita");
+        }
+    }
+
+    /**
+     * Precondizione di {@link #ripristina(UUID)}: nessun'altra opzione della stessa posizione
+     * deve essere {@code ATTIVATA} — altrimenti si riabiliterebbe un'alternativa gia' esclusa
+     * da {@link #attiva(UUID)} dopo un pagamento effettivo, vanificando la mutua esclusione.
+     *
+     * @throws TransizioneStatoNonAmmessaException se un'altra opzione e' ATTIVATA
+     */
+    private void verificaNessunAltraOpzioneAttivata(OpzionePagamento opzione, UUID idOpzionePagamento) {
+        boolean altraAttivata = opzione.getPosizioneDebitoria().getOpzioniPagamento().stream()
+                .anyMatch(altra -> !altra.getId().equals(opzione.getId())
+                        && altra.getStato() == StatoOpzionePagamento.ATTIVATA);
+        if (altraAttivata) {
+            throw new TransizioneStatoNonAmmessaException("l'opzione di pagamento [" + idOpzionePagamento
+                    + "] non puo' essere ripristinata: un'altra opzione della stessa posizione e' ATTIVATA "
+                    + "(pagamento gia' eseguito tramite un'alternativa)");
+        }
     }
 
     private OpzionePagamento trovaOpzionePagamento(UUID idOpzionePagamento) {
@@ -1027,8 +1231,11 @@ public class PosizioneDebitoriaService {
      * QUELLA posizione/applicazione prima di annullarla — altrimenti un chiamante autenticato
      * come applicazione "A" potrebbe annullare un'opzione dell'applicazione "B" semplicemente
      * indovinandone lo UUID (che non e' altrimenti legato a nessun controllo di appartenenza).
-     * {@link #annulla(UUID)} resta il metodo di base (pensato per un futuro chiamante interno,
-     * es. il processo di registrazione pagamenti, che conosce solo l'UUID dell'opzione).
+     * {@link #annulla(UUID)} resta il metodo di base, privato: qualunque chiamante (anche
+     * interno, es. un futuro processo di registrazione pagamenti) deve comunque passare da
+     * qui, perche' la verifica di appartenenza non e' mai opzionale — l'esperienza con
+     * {@link #attiva(UUID)} (idem privato) mostra che un metodo pubblico "per un futuro
+     * chiamante" senza quel chiamante reale e' solo superficie non verificata.
      *
      * @param idA2A                identificativo del gestionale responsabile
      * @param idPosizioneDebitoria identificativo della posizione nel gestionale
@@ -1054,98 +1261,249 @@ public class PosizioneDebitoriaService {
     }
 
     /**
-     * Annulla una singola pendenza (rata) — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
-     * dello YAML v3, path {@code /stato}, value {@code ANNULLATO}. Entita' diversa da
-     * {@link #annulla(UUID)} (che annulla l'INTERA opzione di pagamento, non la singola
-     * pendenza): per un {@code PIANO_RATEALE} i due annullamenti sono indipendenti, nessuno
-     * dei due innesca automaticamente l'altro.
+     * Come {@link #ripristina(UUID)}, ma per il percorso REST — mirror esatto di
+     * {@link #annulla(String, String, UUID)}, stesso controllo di appartenenza.
      *
-     * <p>Mirror del legacy ({@code PendenzeDAO.patchStato} caso {@code ANNULLATO},
-     * {@code jars/core/.../dao/pagamenti/PendenzeDAO.java:674-684}): ammesso solo da
-     * {@code NON_ESEGUITO}, idempotente se gia' {@code ANNULLATO}. A differenza del legacy,
-     * NON resetta alcun flag di notifica avviso/promemoria ({@code avvisoNotificato}/
-     * {@code avvAppIOPromemoriaScadenzaNotificato}/{@code avvMailPromemoriaScadenzaNotificato}):
-     * quel sottosistema non e' ancora mappato su {@link Pendenza} in questa libreria (gap
-     * noto, non un comportamento da compensare qui).</p>
-     *
-     * @param idA2A      identificativo del gestionale responsabile
-     * @param idPendenza identificativo della pendenza nel gestionale
-     * @return la pendenza annullata
-     * @throws RisorsaNonTrovataException          se non esiste una pendenza con questa chiave
-     * @throws TransizioneStatoNonAmmessaException se lo stato attuale non e' {@code NON_ESEGUITO}
-     *                                              ne' {@code ANNULLATO}
+     * @param idA2A                identificativo del gestionale responsabile
+     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param idOpzionePagamento   identificativo dell'opzione da ripristinare
+     * @return l'opzione ripristinata
+     * @throws RisorsaNonTrovataException          se l'opzione non esiste, o esiste ma non
+     *                                              appartiene a questa posizione/applicazione
+     * @throws TransizioneStatoNonAmmessaException se l'opzione e' {@code ATTIVATA}
      */
-    public Pendenza annullaPendenza(String idA2A, String idPendenza) {
-        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
-        if (pendenza.getStato() != StatoPendenza.NON_ESEGUITO
-                && pendenza.getStato() != StatoPendenza.ANNULLATO) {
-            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] e' " + pendenza.getStato()
-                    + ": puo' essere annullata solo da NON_ESEGUITO");
+    public OpzionePagamento ripristina(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento) {
+        OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
+        PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
+        boolean appartiene = idPosizioneDebitoria.equals(posizione.getIdPosizioneDebitoria())
+                && idA2A.equals(risolviIdA2A(posizione.getIdApplicazione()));
+        if (!appartiene) {
+            throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
+                    + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
         }
-        entityManager.lock(pendenza.getOpzionePagamento().getPosizioneDebitoria(),
-                LockModeType.OPTIMISTIC_FORCE_INCREMENT);
-        OffsetDateTime adesso = OffsetDateTime.now(clock);
-        pendenza.setStato(StatoPendenza.ANNULLATO);
-        pendenza.setDataUltimoAggiornamento(adesso);
-        pendenza.setDataUltimaModificaAca(adesso);
-        return pendenza;
+        return ripristina(idOpzionePagamento);
     }
 
     /**
-     * Ripristina una pendenza annullata — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
-     * dello YAML v3, path {@code /stato}, value {@code NON_ESEGUITO}. Mirror del legacy
-     * ({@code PendenzeDAO.patchStato} caso {@code NON_ESEGUITO},
-     * {@code jars/core/.../dao/pagamenti/PendenzeDAO.java:685-702}), con una deviazione
-     * deliberata: il legacy rifiuta {@code NON_ESEGUITO} quando lo stato attuale e' GIA'
-     * {@code NON_ESEGUITO} (asimmetria rispetto al caso {@code ANNULLATO}, che invece e'
-     * idempotente — sembra un difetto del legacy, non una regola voluta); qui entrambe le
-     * direzioni sono idempotenti, scelta esplicita per la v3. Stesso gap sui flag di notifica
-     * avviso/promemoria di {@link #annullaPendenza}.
+     * Registra l'esito di un pagamento su una pendenza e, nella STESSA transazione,
+     * determina se la sua opzione deve diventare {@code ATTIVATA} — se sì, applica la
+     * stessa cascata di {@link #attiva(UUID)} (annullamento automatico delle alternative e
+     * delle loro pendenze). Chiude il verso dell'invariante mancante finora: i controlli
+     * aggiunti ad {@link #attiva(UUID)}/{@link #annulla(UUID)}/{@link #ripristina(UUID)}
+     * impediscono alcune transizioni incoerenti, ma da soli NON garantiscono che aggiornare
+     * una pendenza allinei l'opzione — serve un percorso che lo faccia esplicitamente, in
+     * un'unica operazione di questo service, cosi' un chiamante (es. il futuro motore di
+     * registrazione pagamenti, o govpay-console-api) non deve ricordarsi di invocare
+     * separatamente {@code attiva(UUID)} dopo aver scritto la pendenza. Deliberatamente non
+     * delegato al setter JPA della pendenza (nessun listener/callback): l'orchestrazione resta
+     * esplicita qui, non implicita nell'entita'.
      *
-     * <p><b>Rifiuta se l'opzione di pagamento e' {@code ANNULLATA}</b> (stato definitivo, vedi
-     * Javadoc di {@link StatoOpzionePagamento}): ripristinare la pendenza non la renderebbe
-     * comunque pagabile — l'avviso continuerebbe a segnalare {@code ANNULLATA} (deriva
-     * dall'opzione, non dalla singola pendenza, vedi Javadoc di {@code AvvisoMapper#mapStato}
-     * in govpay-pendenze-api) — quindi sarebbe un'operazione apparentemente riabilitante senza
-     * poterlo essere. Controllo incondizionato, indipendente dallo stato attuale della
-     * pendenza: non e' un caso di sincronizzazione mancata con {@link #annulla(UUID)} (quella
-     * resta intenzionale, vedi nota di classe) ma un rifiuto esplicito di UN'azione specifica
-     * che qui non avrebbe l'effetto che promette.</p>
+     * <p><b>Scope volutamente minimo</b>: aggiorna solo {@code pendenza.stato} (e
+     * {@code dataUltimoAggiornamento}) — non e' il futuro motore di registrazione pagamenti
+     * completo (che dovra' scrivere anche {@code importoPagato}/{@code dataPagamento}/
+     * {@code iuvPagamento}/ecc., vedi la voce U9 della tabella di mapping legacy in
+     * {@code proposta-libreria-pendenze.md}): e' il percorso minimo che garantisce il
+     * coordinamento richiesto, su cui quel futuro motore potra' appoggiarsi o che potra'
+     * estendere.</p>
+     *
+     * <p>Rifiuta {@code nuovoStato} nullo o uguale a {@code NON_ESEGUITO}/{@code ANNULLATO}:
+     * questo metodo registra un ESITO di pagamento, non una transizione qualunque — quelle
+     * due si gestiscono tramite {@link #annulla(UUID)}/{@link #ripristina(UUID)}
+     * sull'opzione, mai scrivendo direttamente sulla singola pendenza (esattamente il
+     * percorso indipendente che la v3 ha deliberatamente eliminato: senza questo controllo,
+     * {@code registraEsitoPendenza(..., NON_ESEGUITO)} lascerebbe l'opzione
+     * incoerentemente {@code ATTIVATA} con la pendenza "appena pagata" tornata
+     * {@code NON_ESEGUITO}, e {@code registraEsitoPendenza(..., ANNULLATO)} reintrodurrebbe
+     * l'annullamento della singola pendenza da una porta laterale).</p>
+     *
+     * <p>Rifiuta se l'opzione della pendenza e' {@code ANNULLATA} (stato definitivo): non ha
+     * senso registrare un esito di pagamento su una pendenza la cui opzione e' stata esclusa
+     * come alternativa non piu' applicabile.</p>
+     *
+     * <p>Se l'opzione e' invece gia' {@code ATTIVATA} (es. un'altra pendenza era gia' stata
+     * eseguita prima — caso tipico: seconda rata di un piano rateale dopo l'attivazione
+     * sulla prima), {@link #attiva(UUID)} non viene richiamato una seconda volta — non ha
+     * senso ripetere la cascata sulle "altre" opzioni, gia' avvenuta la prima volta — ma
+     * {@link #marcaModificaAca} va comunque invocato esplicitamente: questa pendenza e'
+     * appena stata modificata, il batch ACA deve rilevarlo indipendentemente dal fatto che
+     * l'opzione cambi stato o no (stessa regola trasversale di {@link #marcaModificaAca},
+     * "nessuna eccezione").</p>
      *
      * @param idA2A      identificativo del gestionale responsabile
      * @param idPendenza identificativo della pendenza nel gestionale
-     * @return la pendenza ripristinata
+     * @param nuovoStato esito di pagamento da registrare ({@code ESEGUITO},
+     *                   {@code PARZIALMENTE_ESEGUITO}, ecc. — qualunque valore diverso da
+     *                   {@code NON_ESEGUITO}/{@code ANNULLATO}/{@code null})
+     * @return la pendenza aggiornata
      * @throws RisorsaNonTrovataException          se non esiste una pendenza con questa chiave
-     * @throws TransizioneStatoNonAmmessaException se l'opzione di pagamento e' {@code ANNULLATA},
-     *                                              o se lo stato attuale della pendenza non e'
-     *                                              {@code ANNULLATO} ne' {@code NON_ESEGUITO}
+     * @throws TransizioneStatoNonAmmessaException se {@code nuovoStato} e' nullo o e'
+     *                                              {@code NON_ESEGUITO}/{@code ANNULLATO}, o
+     *                                              se l'opzione della pendenza e'
+     *                                              {@code ANNULLATA}
      */
-    public Pendenza ripristinaPendenza(String idA2A, String idPendenza) {
+    public Pendenza registraEsitoPendenza(String idA2A, String idPendenza, StatoPendenza nuovoStato) {
+        if (nuovoStato == null || !statoEseguito(nuovoStato)) {
+            throw new TransizioneStatoNonAmmessaException("'" + nuovoStato + "' non e' un esito di pagamento "
+                    + "valido per questo metodo: deve essere diverso da NON_ESEGUITO/ANNULLATO/null (quelle "
+                    + "transizioni si gestiscono tramite annulla(UUID)/ripristina(UUID) sull'opzione, non "
+                    + "registrando un falso esito sulla singola pendenza)");
+        }
         Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
-        if (pendenza.getOpzionePagamento().getStato() == StatoOpzionePagamento.ANNULLATA) {
+        OpzionePagamento opzione = pendenza.getOpzionePagamento();
+        if (opzione.getStato() == StatoOpzionePagamento.ANNULLATA) {
             throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] appartiene a "
-                    + "un'opzione di pagamento ANNULLATA (stato definitivo): il ripristino non la renderebbe "
-                    + "pagabile, l'avviso continuerebbe a segnalare ANNULLATA");
+                    + "un'opzione di pagamento ANNULLATA (stato definitivo): non e' possibile registrare un "
+                    + "esito di pagamento su di essa");
         }
-        if (pendenza.getStato() != StatoPendenza.ANNULLATO
-                && pendenza.getStato() != StatoPendenza.NON_ESEGUITO) {
-            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] e' " + pendenza.getStato()
-                    + ": puo' essere ripristinata solo da ANNULLATO");
-        }
-        entityManager.lock(pendenza.getOpzionePagamento().getPosizioneDebitoria(),
-                LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+
+        entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
         OffsetDateTime adesso = OffsetDateTime.now(clock);
-        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
+        pendenza.setStato(nuovoStato);
         pendenza.setDataUltimoAggiornamento(adesso);
-        pendenza.setDataUltimaModificaAca(adesso);
+
+        if (opzione.getStato() == StatoOpzionePagamento.DISPONIBILE) {
+            attiva(opzione.getIdOpzionePagamento());
+        } else {
+            marcaModificaAca(opzione, adesso);
+        }
         return pendenza;
     }
 
     /**
-     * Risolve la pendenza per {@link #annullaPendenza}/{@link #ripristinaPendenza}: a
-     * differenza di {@link #trovaPendenzaPerIdentificativo} (pubblico, {@code readOnly}, per
-     * la sola lettura) qui l'entita' va restituita gestita nella transazione di scrittura
-     * corrente, altrimenti le mutazioni seguenti non verrebbero mai salvate.
+     * Registra l'importo delle spese di notifica SEND quantificato dal servizio di
+     * pagamento interrogando il connettore SEND del dominio (percorso automatico,
+     * {@code sendAbilitato} {@code true} sulla pendenza) — equivalente di
+     * {@code VersamentoUtils.aggiornaImportoSend} del legacy, ma qui separato dal calcolo
+     * stesso: questa libreria si limita a persistere un valore gia' quantificato altrove
+     * (il connettore SEND, la politica di retention e la chiamata al servizio restano di
+     * competenza del servizio di pagamento, non ancora implementato).
+     *
+     * <p>Non marca modifica ACA: il legacy {@code comunicaAggiornamentoPendenzaAllArchivioCentralizzato}
+     * non considera questi due campi tra le condizioni che richiedono una comunicazione
+     * all'archivio centralizzato (vedi {@code VersamentoUtils.java:1374-1409}).</p>
+     *
+     * @param idA2A                identificativo del gestionale responsabile
+     * @param idPendenza           identificativo della pendenza nel gestionale
+     * @param sendImportoTotale    importo delle spese di notifica SEND, in euro
+     * @param sendDataAggiornamento istante dell'interrogazione che ha prodotto questo importo
+     * @return la pendenza aggiornata
+     * @throws RisorsaNonTrovataException se non esiste una pendenza con questa chiave
+     */
+    public Pendenza registraImportoSend(String idA2A, String idPendenza, Double sendImportoTotale,
+            OffsetDateTime sendDataAggiornamento) {
+        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        pendenza.setSendImportoTotale(sendImportoTotale);
+        pendenza.setSendDataAggiornamento(sendDataAggiornamento);
+        return pendenza;
+    }
+
+    /**
+     * Aggiorna i metadati di una singola pendenza — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
+     * dello YAML v3: l'equivalente v3 della "PUT profonda" legacy ({@code PendenzeDAO},
+     * {@code aggiornaSeEsiste=true}), limitato ai campi che hanno un corrispettivo diretto
+     * su {@link Pendenza} ({@code dataScadenzaAvviso}/{@code dataValidita}/{@code importo}/
+     * {@code voci} — vedi {@code PosizioneDebitoriaMapper#applicaPatchPendenza} per i path
+     * esatti). Non e' piu' il punto di annullamento/ripristino della singola pendenza (vedi
+     * nota di classe): quella superficie e' stata rimossa insieme a
+     * {@code annullaPendenza}/{@code ripristinaPendenza}.
+     *
+     * <p>Permesso solo se lo stato attuale e' {@code NON_ESEGUITO} o {@code ANNULLATO} —
+     * mirror del legacy ({@code VersamentoUtils.validazioneSemanticaAggiornamento},
+     * controllo VER_003): non ha senso aggiornare scadenza/importo/voci di una pendenza
+     * gia' eseguita.</p>
+     *
+     * <p>Riusa interamente {@link #aggiorna} per rivalidazione (incluse cardinalita'/scala/
+     * somma delle voci, {@code ValidatorePosizioneDebitoria.validaPendenza}), lock
+     * ottimistico e marcatura ACA: {@code applicaModifiche} e' invocato PRIMA di delegare,
+     * ma sulla stessa istanza gestita che {@link #aggiorna} ri-otterra' (stesso contesto di
+     * persistenza JPA, nessuna query duplicata in pratica) — evita di duplicare qui la
+     * stessa logica di validazione/locking/salvataggio.</p>
+     *
+     * <p><b>Invarianti sulle voci esistenti, garantiti qui e non solo nel mapper REST</b>:
+     * nessuna voce gia' persistita (identificata dall'{@code id} di database, non
+     * dall'{@code idVocePendenza} REST) puo' essere rimossa da {@code applicaModifiche}, ne'
+     * puo' cambiare {@code idTributo}/{@code idIbanAccredito}/{@code idIbanAppoggio} — stesso
+     * confronto prima/dopo per qualunque chiamante di questo metodo, non solo
+     * {@code PosizioneDebitoriaMapper#applicaPatchPendenza} (che fa un controllo equivalente,
+     * ma solo sul path REST): senza questa verifica qui, un consumatore diretto della
+     * libreria (es. la futura console-api) potrebbe eludere involontariamente queste regole
+     * chiamando {@code applicaModifiche} con una mutazione che rimuove o reindirizza una voce.</p>
+     *
+     * <p>Marca anche {@code pendenza.dataUltimoAggiornamento}: {@link #aggiorna} marca il
+     * timestamp della POSIZIONE e la modifica ACA di tutte le sue pendenze, ma non il
+     * timestamp di aggiornamento della singola pendenza toccata da questo metodo — senza
+     * questa riga resterebbe invariato anche quando cambiano date/importo/voci.</p>
+     *
+     * @param idA2A            identificativo del gestionale responsabile
+     * @param idPendenza       identificativo della pendenza nel gestionale
+     * @param applicaModifiche mutazione da applicare alla pendenza gestita
+     * @return la pendenza aggiornata
+     * @throws RisorsaNonTrovataException           se non esiste una pendenza con questa chiave
+     * @throws TransizioneStatoNonAmmessaException se lo stato attuale non e' {@code NON_ESEGUITO}
+     *                                              ne' {@code ANNULLATO}, o se {@code applicaModifiche}
+     *                                              rimuove una voce esistente o ne cambia il
+     *                                              riferimento (tributo/IBAN)
+     */
+    public Pendenza aggiornaPendenza(String idA2A, String idPendenza, Consumer<Pendenza> applicaModifiche) {
+        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        if (pendenza.getStato() != StatoPendenza.NON_ESEGUITO && pendenza.getStato() != StatoPendenza.ANNULLATO) {
+            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] e' " + pendenza.getStato()
+                    + ": puo' essere aggiornata solo se NON_ESEGUITO o ANNULLATO");
+        }
+        String idPosizioneDebitoria = pendenza.getOpzionePagamento().getPosizioneDebitoria()
+                .getIdPosizioneDebitoria();
+        // Snapshot a VALORI (record immutabile), non a riferimenti di entity: VocePendenza e'
+        // mutabile e applicaModifiche muta le STESSE istanze gestite, quindi un riferimento
+        // qui rifletterebbe anche la mutazione successiva, rendendo il confronto "prima" vs
+        // "dopo" sempre vero (bug riscontrato in fase di test: nessuna eccezione lanciata
+        // anche cambiando idTributo, perche' "prima" e "dopo" erano lo stesso oggetto).
+        Map<Long, SnapshotVoce> vociPrima = pendenza.getVoci().stream()
+                .filter(v -> v.getId() != null)
+                .collect(Collectors.toMap(VocePendenza::getId, SnapshotVoce::di));
+
+        applicaModifiche.accept(pendenza);
+
+        Map<Long, VocePendenza> vociDopo = pendenza.getVoci().stream()
+                .filter(v -> v.getId() != null)
+                .collect(Collectors.toMap(VocePendenza::getId, v -> v));
+        for (Map.Entry<Long, SnapshotVoce> voceEsistente : vociPrima.entrySet()) {
+            SnapshotVoce prima = voceEsistente.getValue();
+            VocePendenza dopo = vociDopo.get(voceEsistente.getKey());
+            if (dopo == null) {
+                throw new TransizioneStatoNonAmmessaException("la voce [" + prima.idVocePendenza()
+                        + "] non puo' essere rimossa: le voci esistenti di una pendenza non possono essere "
+                        + "eliminate, solo aggiornate o affiancate da voci nuove");
+            }
+            if (!Objects.equals(prima.idTributo(), dopo.getIdTributo())
+                    || !Objects.equals(prima.idIbanAccredito(), dopo.getIdIbanAccredito())
+                    || !Objects.equals(prima.idIbanAppoggio(), dopo.getIdIbanAppoggio())) {
+                throw new TransizioneStatoNonAmmessaException("la voce [" + prima.idVocePendenza()
+                        + "] non puo' cambiare il riferimento (tributo/IBAN) rispetto all'originale");
+            }
+        }
+
+        pendenza.setDataUltimoAggiornamento(OffsetDateTime.now(clock));
+        aggiorna(idA2A, idPosizioneDebitoria, posizione -> {
+            // la mutazione e' gia' stata applicata sopra, sulla stessa istanza gestita che
+            // questa chiamata ri-ottiene dal contesto di persistenza — vedi Javadoc del metodo.
+        });
+        return pendenza;
+    }
+
+    /** Copia a valori di una {@link VocePendenza} esistente, per {@link #aggiornaPendenza}. */
+    private record SnapshotVoce(String idVocePendenza, Long idTributo, Long idIbanAccredito, Long idIbanAppoggio) {
+        static SnapshotVoce di(VocePendenza voce) {
+            return new SnapshotVoce(voce.getIdVocePendenza(), voce.getIdTributo(), voce.getIdIbanAccredito(),
+                    voce.getIdIbanAppoggio());
+        }
+    }
+
+    /**
+     * Risolve la pendenza per {@link #registraEsitoPendenza}/{@link #registraImportoSend}/
+     * {@link #aggiornaPendenza}: a differenza di {@link #trovaPendenzaPerIdentificativo}
+     * (pubblico, {@code readOnly}, per la sola lettura) qui l'entita' va restituita gestita
+     * nella transazione di scrittura corrente, altrimenti le mutazioni seguenti non
+     * verrebbero mai salvate.
      */
     private Pendenza trovaPendenzaScrivibile(String idA2A, String idPendenza) {
         return risolviIdApplicazione(idA2A)
@@ -1170,6 +1528,37 @@ public class PosizioneDebitoriaService {
         opzione.getPosizioneDebitoria().setDataUltimaModificaAca(adesso);
         for (Pendenza pendenza : opzione.getPendenze()) {
             pendenza.setDataUltimaModificaAca(adesso);
+        }
+    }
+
+    /**
+     * Imposta lo stesso stato su tutte le pendenze dell'opzione, a seguito di una
+     * transizione dell'opzione stessa (annullamento/ripristino, manuale o automatico come
+     * effetto collaterale di {@link #attiva} sulle "altre" opzioni). Il verso opzione→pendenze:
+     * il verso inverso (una singola pendenza che fa transitare l'opzione) non passa da questo
+     * metodo, ma da {@link #registraEsitoPendenza}, che poi richiama {@link #attiva(UUID)} —
+     * quest'ultima, a sua volta, usa questo metodo solo per le "altre" opzioni annullate
+     * automaticamente, mai per l'opzione appena attivata (le cui pendenze NON vanno
+     * sovrascritte, e' proprio il pagamento su una di esse ad aver causato la transizione).
+     *
+     * <p><b>Non sicura di per se'</b>: l'invariante "nessuna pendenza e' gia' eseguita" non e'
+     * garantita dal solo stato dell'opzione (es. {@code attiva(UUID)} non verificava, prima
+     * della correzione in revisione, che almeno una pendenza fosse davvero eseguita prima di
+     * passare ad {@code ATTIVATA} — un'opzione {@code DISPONIBILE} poteva quindi avere una
+     * pendenza gia' {@code ESEGUITO}). Ogni chiamante DEVE aver gia' invocato
+     * {@link #verificaNessunaPendenzaEseguita} (o, per {@link #attiva(UUID)}, non chiamare
+     * affatto questo metodo sull'opzione che sta attivando) prima di questa cascata, altrimenti
+     * sovrascriverebbe silenziosamente una pendenza realmente eseguita.</p>
+     *
+     * @param opzione   opzione appena transitata
+     * @param nuovoStato stato da impostare su ciascuna pendenza ({@code ANNULLATO} o
+     *                   {@code NON_ESEGUITO})
+     * @param adesso    istante della transizione, dallo stesso {@link Clock} della libreria
+     */
+    private void cascataStatoPendenze(OpzionePagamento opzione, StatoPendenza nuovoStato, OffsetDateTime adesso) {
+        for (Pendenza pendenza : opzione.getPendenze()) {
+            pendenza.setStato(nuovoStato);
+            pendenza.setDataUltimoAggiornamento(adesso);
         }
     }
 }
