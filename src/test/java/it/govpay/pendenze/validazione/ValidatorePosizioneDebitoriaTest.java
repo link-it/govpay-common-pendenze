@@ -111,6 +111,28 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
+    @DisplayName("rifiuta due voci della stessa pendenza con lo stesso idVocePendenza, anche con importi "
+            + "diversi e totale coerente")
+    void dueVociConLoStessoIdVocePendenzaSonoRifiutate() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        Pendenza pendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0);
+        pendenza.getVoci().get(0).setImporto(4.00);
+
+        VocePendenza duplicata = new VocePendenza();
+        duplicata.setIdVocePendenza("voce-1");
+        duplicata.setImporto(6.00);
+        duplicata.setDescrizione("test");
+        duplicata.setIndice(2);
+        duplicata.setStato(StatoVocePendenza.NON_ESEGUITO);
+        duplicata.setIdTributo(42L);
+        pendenza.addVocePendenza(duplicata);
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("stesso idVocePendenza");
+    }
+
+    @Test
     @DisplayName("rifiuta un importo con più di 2 decimali, anche se la somma in memoria torna")
     void importoConTroppiDecimali() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);

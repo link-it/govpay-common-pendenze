@@ -24,10 +24,22 @@ import it.govpay.pendenze.model.StatoRendicontazione;
  *
  * <p><b>Non ha una colonna {@code id_pendenza}</b> (correzione rispetto a una prima
  * ipotesi): il legacy correla la rendicontazione alla pendenza solo tramite
- * {@link #iuv} (stringa) — {@code id_singolo_versamento}/{@code id_pagamento} esistono
- * ma sono entrambe nullable e non sono mappate qui (fuori scopo per ora). La
- * risoluzione verso una {@link Pendenza} specifica resta a carico del chiamante, vedi
- * {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}.</p>
+ * {@link #iuv} (stringa) — {@code id_pagamento} esiste ma e' nullable e non e' mappata
+ * qui (fuori scopo per ora). La risoluzione verso una {@link Pendenza} specifica resta a
+ * carico del chiamante, vedi {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}.</p>
+ *
+ * <p><b>{@link #idSingoloVersamento} e' invece mappato</b> (a differenza di
+ * {@code id_pagamento}): e' una FK fisica reale verso {@code singoli_versamenti(id)}
+ * (schema legacy, {@code gov_pay.sql}), popolata dalla riconciliazione del legacy per
+ * {@code indiceDati} ({@code Rendicontazioni.java}: {@code singoloVersamento.getIndiceDati()
+ * == idxRiconciliazione}) quando trova un {@code SingoloVersamento} corrispondente — serve a
+ * {@code PosizioneDebitoriaService#aggiornaPendenza} per verificare, con un confronto diretto
+ * sull'id della riga, se una voce che sta per essere rimossa o riusata (vedi Javadoc di
+ * {@code PosizioneDebitoriaMapper#sostituisciVoci}) e' gia' stata rendicontata — senza
+ * passare per {@code iuv}/{@code codDominio} (che richiederebbe risolvere l'anagrafica del
+ * dominio). E' {@code null} quando la riconciliazione non ha trovato un
+ * {@code SingoloVersamento} corrispondente: quelle rendicontazioni non sono coperte da questo
+ * controllo, stesso limite della riconciliazione legacy stessa.</p>
  *
  * <p><b>Fuori dall'aggregato {@link PosizioneDebitoria}</b>: stesso principio del
  * vecchio "dettaglio pendenza" da evitare (centinaia di query per una singola
@@ -65,6 +77,10 @@ public class Rendicontazione {
     /** Indice dell'occorrenza nella struttura {@code datiSingoloPagamento} della ricevuta. */
     @Column(name = "indice_dati")
     private Integer indiceDati;
+
+    /** FK fisica verso {@code singoli_versamenti(id)} — vedi Javadoc di classe. */
+    @Column(name = "id_singolo_versamento")
+    private Long idSingoloVersamento;
 
     @Column(name = "importo_pagato")
     private Double importoPagato;
@@ -120,6 +136,14 @@ public class Rendicontazione {
 
     public void setIndiceDati(Integer indiceDati) {
         this.indiceDati = indiceDati;
+    }
+
+    public Long getIdSingoloVersamento() {
+        return idSingoloVersamento;
+    }
+
+    public void setIdSingoloVersamento(Long idSingoloVersamento) {
+        this.idSingoloVersamento = idSingoloVersamento;
     }
 
     public Double getImportoPagato() {

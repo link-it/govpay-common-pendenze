@@ -32,17 +32,21 @@ import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
+import it.govpay.pendenze.entity.FlussoRendicontazione;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
+import it.govpay.pendenze.entity.Rendicontazione;
 import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
+import it.govpay.pendenze.model.StatoFlussoRendicontazione;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
+import it.govpay.pendenze.model.StatoRendicontazione;
 import it.govpay.pendenze.model.StatoVocePendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
@@ -968,6 +972,110 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("aggiungiPendenza aggiunge una pendenza a un'opzione SOLUZIONE_UNICA esistente, "
+            + "con numeroRata successivo a quello della pendenza gia' presente")
+    void aggiungiPendenzaAggiungeAOpzioneSoluzioneUnicaEsistente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID idOpzione = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        em.flush();
+        em.clear();
+
+        Pendenza aggiunta = service.aggiungiPendenza(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), idOpzione,
+                o -> nuovaPendenzaStandalone(o.getPosizioneDebitoria().getIdApplicazione(), "aggiunta"));
+
+        assertThat(aggiunta.getNumeroRata()).isEqualTo(2);
+        assertThat(aggiunta.getIdDominio()).isEqualTo(posizione.getIdDominio());
+        assertThat(aggiunta.getVoci().get(0).getIndice()).isEqualTo(1);
+
+        OpzionePagamento opzioneRiletta = em.find(OpzionePagamento.class,
+                posizione.getOpzioniPagamento().get(0).getId());
+        assertThat(opzioneRiletta.getPendenze()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("aggiungiPendenza funziona anche su PIANO_RATEALE (non solo SOLUZIONE_UNICA): "
+            + "nessuna delle due tipologie ha un limite massimo di pendenze")
+    void aggiungiPendenzaAggiungeAOpzionePianoRatealeEsistente() {
+        // PIANO_RATEALE richiede almeno 2 pendenze fin dalla creazione (cardinalitaPendenzeMinima):
+        // posizioneConUnaOpzione ne crea solo una, va completata prima di service.crea.
+        PosizioneDebitoria posizioneDaCreare = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizioneDaCreare.getOpzioniPagamento().get(0), "2");
+        PosizioneDebitoria posizione = service.crea(posizioneDaCreare);
+        UUID idOpzione = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+
+        Pendenza aggiunta = service.aggiungiPendenza(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), idOpzione,
+                o -> nuovaPendenzaStandalone(o.getPosizioneDebitoria().getIdApplicazione(), "rata-3"));
+
+        assertThat(aggiunta.getNumeroRata()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("aggiungiPendenza rifiuta con ValidazioneNonSuperataException (la cardinalita' massima "
+            + "e' verificata dal validatore di libreria, non da un controllo duplicato qui) l'aggiunta "
+            + "a un'opzione SOLUZIONE_UNICA_ENTRO che ne ammette al massimo una")
+    void aggiungiPendenzaRifiutaSeSuperaLaCardinalitaMassima() {
+        PosizioneDebitoria posizioneDaCreare = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA_ENTRO);
+        posizioneDaCreare.getOpzioniPagamento().get(0).setGiorni(30);
+        PosizioneDebitoria posizione = service.crea(posizioneDaCreare);
+        UUID idOpzione = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+
+        assertThatThrownBy(() -> service.aggiungiPendenza(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), idOpzione,
+                o -> nuovaPendenzaStandalone(o.getPosizioneDebitoria().getIdApplicazione(), "seconda")))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("al massimo");
+    }
+
+    @Test
+    @DisplayName("aggiungiPendenza rifiuta se l'opzione non e' DISPONIBILE (es. ANNULLATA)")
+    void aggiungiPendenzaRifiutaSeOpzioneNonDisponibile() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        UUID idOpzione = posizione.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+        service.annulla(codApplicazioneDi(posizione), posizione.getIdPosizioneDebitoria(), idOpzione);
+
+        assertThatThrownBy(() -> service.aggiungiPendenza(codApplicazioneDi(posizione),
+                posizione.getIdPosizioneDebitoria(), idOpzione,
+                o -> nuovaPendenzaStandalone(o.getPosizioneDebitoria().getIdApplicazione(), "su-annullata")))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class)
+                .hasMessageContaining("DISPONIBILE");
+    }
+
+    @Test
+    @DisplayName("aggiungiPendenza solleva RisorsaNonTrovataException per un'opzione inesistente")
+    void aggiungiPendenzaRisorsaInesistente() {
+        assertThatThrownBy(() -> service.aggiungiPendenza("A2A-INESISTENTE", "pos-inesistente", UUID.randomUUID(),
+                o -> nuovaPendenzaStandalone(o.getPosizioneDebitoria().getIdApplicazione(), "x")))
+                .isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiungiPendenza solleva RisorsaNonTrovataException se l'opzione esiste ma appartiene "
+            + "a un'altra posizione/applicazione (nessuna rivelazione dell'appartenenza reale)")
+    void aggiungiPendenzaRisorsaInesistenteSeOpzioneDiAltraPosizione() {
+        PosizioneDebitoria posizioneA = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+
+        // Non posizioneConUnaOpzione per posizioneB: usa sempre suffisso pendenza/voce "1" fisso,
+        // che qui collide (stesso idDominio=1L) con la pendenza-1/numeroAvviso di posizioneA.
+        PosizioneDebitoria posizioneBDaCreare = new PosizioneDebitoria();
+        String suffissoB = UUID.randomUUID().toString().substring(0, 8);
+        posizioneBDaCreare.setIdApplicazione(idApplicazionePer("A2A-" + suffissoB));
+        posizioneBDaCreare.setIdPosizioneDebitoria("pos-" + suffissoB);
+        posizioneBDaCreare.setIdDominio(1L);
+        posizioneBDaCreare.setDescrizione("test");
+        posizioneBDaCreare.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizioneBDaCreare, TipologiaOpzionePagamento.SOLUZIONE_UNICA, suffissoB);
+        PosizioneDebitoria posizioneB = service.crea(posizioneBDaCreare);
+        UUID idOpzioneDiB = posizioneB.getOpzioniPagamento().get(0).getIdOpzionePagamento();
+
+        assertThatThrownBy(() -> service.aggiungiPendenza(codApplicazioneDi(posizioneA),
+                posizioneA.getIdPosizioneDebitoria(), idOpzioneDiB,
+                o -> nuovaPendenzaStandalone(o.getPosizioneDebitoria().getIdApplicazione(), "cross")))
+                .isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
     @DisplayName("crea rifiuta con RisorsaGiaEsistenteException (non 500) un idPendenza gia' "
             + "usato da un'altra posizione della stessa applicazione")
     void creaRifiutaIdPendenzaGiaUsatoDaAltraPosizione() {
@@ -1024,6 +1132,34 @@ class PosizioneDebitoriaServiceTest {
         pendenza.addVocePendenza(voce);
 
         return opzione;
+    }
+
+    /** Come {@link #nuovaOpzioneStandalone}, ma solo la pendenza (per {@code aggiungiPendenza}). */
+    private Pendenza nuovaPendenzaStandalone(Long idApplicazione, String suffisso) {
+        Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(idApplicazione);
+        pendenza.setIdPendenza("pendenza-" + suffisso);
+        pendenza.setIdTipoPendenza(1L);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        String cifraUnica = String.valueOf((Math.abs(suffisso.hashCode()) % 9) + 1);
+        pendenza.setNumeroAvviso("5000000000000000" + cifraUnica);
+        pendenza.setIuv("5000000000000000" + cifraUnica);
+        pendenza.setSrcIuv(pendenza.getIuv());
+        pendenza.setDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setDebitoreAnagrafica("Mario Rossi");
+        pendenza.setSrcDebitoreIdentificativo("RSSMRA80A01H501U");
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
+
+        VocePendenza voce = new VocePendenza();
+        voce.setIdVocePendenza("voce-" + suffisso);
+        voce.setImporto(10.00);
+        voce.setDescrizione("test");
+        voce.setStato(StatoVocePendenza.NON_ESEGUITO);
+        voce.setIdTributo(42L);
+        pendenza.addVocePendenza(voce);
+
+        return pendenza;
     }
 
     private String codApplicazioneDi(PosizioneDebitoria posizione) {
@@ -1510,15 +1646,111 @@ class PosizioneDebitoriaServiceTest {
     }
 
     /**
-     * Verifica che il vincolo sia garantito dal SERVICE, non solo dal mapper REST: nessun
-     * {@code PatchOp}/JSON qui, solo una chiamata diretta a {@code aggiornaPendenza} con un
-     * {@code Consumer} che rimuove la voce esistente — esattamente come potrebbe fare un
-     * futuro consumatore diretto della libreria (es. console-api) che non passa dal mapper.
+     * A differenza del legacy ({@code VersamentoUtils.validazioneSemanticaAggiornamento},
+     * {@code VER_005}/{@code VER_006}, che rifiuta sempre una riduzione) questo endpoint v3
+     * ammette la rimozione di una voce esistente — richiesta esplicita, non un mirror.
+     * Verificato con una chiamata diretta al service (nessun {@code PatchOp}/JSON), come
+     * farebbe un futuro consumatore diretto della libreria (es. console-api).
      */
     @Test
-    @DisplayName("aggiornaPendenza rifiuta la rimozione di una voce esistente, anche chiamando il service "
-            + "direttamente (senza passare dal mapper REST)")
-    void aggiornaPendenzaRifiutaRimozioneVoceEsistente() {
+    @DisplayName("aggiornaPendenza permette la rimozione di una voce esistente, purche' ne resti almeno una")
+    void aggiornaPendenzaPermetteRimozioneVoceEsistente() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            VocePendenza extra = voceDiProva("voce-extra", 5.00);
+            extra.setIndice(2);
+            p.addVocePendenza(extra);
+            p.setImporto(15.00);
+        });
+        em.flush();
+        em.clear();
+
+        Pendenza aggiornata = service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            p.getVoci().removeIf(v -> "voce-1".equals(v.getIdVocePendenza()));
+            p.setImporto(5.00);
+        });
+
+        assertThat(aggiornata.getVoci()).hasSize(1);
+        assertThat(aggiornata.getVoci().get(0).getIdVocePendenza()).isEqualTo("voce-extra");
+    }
+
+    /**
+     * Stesso scenario di {@link #aggiornaPendenzaPermetteRimozioneVoceEsistente}, ma la voce da
+     * rimuovere e' gia' referenziata da una {@link Rendicontazione} (FK fisica
+     * {@code idSingoloVersamento}, vedi Javadoc di {@link PosizioneDebitoriaService#aggiornaPendenza}):
+     * rimuoverla attribuirebbe quello storico alla voce che ne riusasse la riga. Nessun
+     * {@link it.govpay.pendenze.entity.Pagamento} e nessun cambio di stato della pendenza qui
+     * (resta {@code NON_ESEGUITO}): il controllo non e' legato all'esecuzione del pagamento, una
+     * rendicontazione anomala puo' arrivare anche senza.
+     */
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta la rimozione di una voce gia' referenziata da una rendicontazione, "
+            + "anche senza alcun pagamento associato e con la pendenza ancora NON_ESEGUITO")
+    void aggiornaPendenzaRifiutaRimozioneVoceGiaRendicontata() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        Long idVoce1 = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci().get(0).getId();
+        String iuvPendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getIuv();
+        em.flush();
+        em.clear();
+
+        FlussoRendicontazione flusso = new FlussoRendicontazione();
+        flusso.setIdDominio(1L);
+        flusso.setCodDominio("DOM-REND-VOCE");
+        flusso.setCodFlusso("flusso-rend-voce");
+        flusso.setDataOraFlusso(OffsetDateTime.now());
+        flusso.setIur("flusso-iur-rend-voce");
+        flusso.setDataAcquisizione(OffsetDateTime.now());
+        flusso.setDataRegolamento(OffsetDateTime.now());
+        flusso.setCodPsp("PSP-1");
+        flusso.setNumeroPagamenti(1L);
+        flusso.setImportoTotale(10.00);
+        flusso.setStato(StatoFlussoRendicontazione.ACCETTATA);
+        flusso.setRevisione(1L);
+        flusso.setObsoleto(false);
+        em.persistAndFlush(flusso);
+
+        Rendicontazione rendicontazione = new Rendicontazione();
+        rendicontazione.setFlusso(flusso);
+        rendicontazione.setIuv(iuvPendenza);
+        rendicontazione.setIur("iur-rend-voce");
+        rendicontazione.setImportoPagato(10.00);
+        rendicontazione.setEsito(0);
+        rendicontazione.setData(OffsetDateTime.now());
+        rendicontazione.setStato(StatoRendicontazione.OK);
+        rendicontazione.setIdSingoloVersamento(idVoce1);
+        em.persistAndFlush(rendicontazione);
+        em.clear();
+
+        service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            VocePendenza extra = voceDiProva("voce-extra", 5.00);
+            extra.setIndice(2);
+            p.addVocePendenza(extra);
+            p.setImporto(15.00);
+        });
+        em.flush();
+        em.clear();
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            p.getVoci().removeIf(v -> "voce-1".equals(v.getIdVocePendenza()));
+            p.setImporto(5.00);
+        }))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class)
+                .hasMessageContaining("rendicontazione");
+    }
+
+    /**
+     * Il minimo di una voce residua non e' verificato dal confronto prima/dopo di
+     * {@code aggiornaPendenza} (vedi test sopra), ma resta comunque garantito a valle da
+     * {@code ValidatorePosizioneDebitoria.validaPendenza} (cardinalita' 1-5), eseguito da
+     * {@link PosizioneDebitoriaService#aggiorna} prima del salvataggio.
+     */
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta comunque la rimozione dell'ultima voce residua "
+            + "(cardinalita' minima, garantita dal validatore di libreria)")
+    void aggiornaPendenzaRifiutaRimozioneUltimaVoce() {
         PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
         em.flush();
         em.clear();
@@ -1526,8 +1758,7 @@ class PosizioneDebitoriaServiceTest {
         assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
             p.getVoci().clear();
             p.setImporto(0.00);
-        })).isInstanceOf(TransizioneStatoNonAmmessaException.class)
-                .hasMessageContaining("non puo' essere rimossa");
+        })).isInstanceOf(ValidazioneNonSuperataException.class);
     }
 
     @Test
@@ -1542,6 +1773,60 @@ class PosizioneDebitoriaServiceTest {
                 p -> p.getVoci().get(0).setIdTributo(99L)))
                 .isInstanceOf(TransizioneStatoNonAmmessaException.class)
                 .hasMessageContaining("non puo' cambiare il riferimento");
+    }
+
+    /**
+     * Stesso controllo gia' presente in {@code PosizioneDebitoriaMapper#applicaPutPendenza}
+     * (mirror VER_024), qui duplicato nel service perche' valga anche per un chiamante diretto
+     * della libreria, non solo per il percorso REST — vedi Javadoc di
+     * {@link PosizioneDebitoriaService#aggiornaPendenza}.
+     */
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta il cambio di numeroAvviso gia' assegnato, anche chiamando il "
+            + "service direttamente")
+    void aggiornaPendenzaRifiutaCambioNumeroAvvisoGiaAssegnato() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        String numeroAvvisoOriginale = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso();
+        em.flush();
+        em.clear();
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1",
+                p -> p.setNumeroAvviso("999999999999999999")))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class)
+                .hasMessageContaining("numeroAvviso")
+                .hasMessageContaining(numeroAvvisoOriginale);
+    }
+
+    /**
+     * Il confronto prima/dopo e' indicizzato per {@code idVocePendenza}, non per l'{@code id}
+     * di database (vedi Javadoc di {@link PosizioneDebitoriaService#aggiornaPendenza}): se
+     * fosse indicizzato per {@code id}, questo test fallirebbe, perche' qui si muta la STESSA
+     * istanza gestita (stesso {@code id} di database) facendole cambiare sia
+     * {@code idVocePendenza} sia {@code idTributo} — esattamente quello che fa
+     * {@code PosizioneDebitoriaMapper#sostituisciVoci} in govpay-pendenze-api per riusare la
+     * riga di una voce rimossa invece di una coppia DELETE+INSERT (necessario per evitare una
+     * collisione transitoria sul vincolo di unicita' DB, visto che Hibernate esegue gli insert
+     * prima dei delete nello stesso flush). Dal punto di vista di idVocePendenza questo e' a
+     * tutti gli effetti "la vecchia voce rimossa, una nuova voce aggiunta" — ammesso.
+     */
+    @Test
+    @DisplayName("aggiornaPendenza permette di riusare la stessa voce gestita per un'identita' diversa "
+            + "(stesso id di database, idVocePendenza e tributo diversi) — e' rimozione+aggiunta, non un "
+            + "cambio di riferimento sulla stessa voce")
+    void aggiornaPendenzaPermetteRiusoDellaStessaVocePerUnaIdentitaDiversa() {
+        PosizioneDebitoria posizione = service.crea(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
+        em.flush();
+        em.clear();
+
+        Pendenza aggiornata = service.aggiornaPendenza(codApplicazioneDi(posizione), "pendenza-1", p -> {
+            VocePendenza riusata = p.getVoci().get(0);
+            riusata.setIdVocePendenza("voce-riusata");
+            riusata.setIdTributo(99L);
+        });
+
+        assertThat(aggiornata.getVoci()).hasSize(1);
+        assertThat(aggiornata.getVoci().get(0).getIdVocePendenza()).isEqualTo("voce-riusata");
+        assertThat(aggiornata.getVoci().get(0).getIdTributo()).isEqualTo(99L);
     }
 
     /**

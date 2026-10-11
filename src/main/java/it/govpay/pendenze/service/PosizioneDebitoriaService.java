@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import jakarta.persistence.EntityManager;
@@ -42,6 +43,7 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.OpzionePagamentoRepository;
 import it.govpay.pendenze.repository.PendenzaRepository;
 import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
+import it.govpay.pendenze.repository.RendicontazioneRepository;
 import it.govpay.pendenze.spi.GeneratoreIuv;
 import it.govpay.pendenze.spi.IdentificativiPagamento;
 import it.govpay.pendenze.validazione.ValidatorePosizioneDebitoria;
@@ -69,6 +71,7 @@ public class PosizioneDebitoriaService {
     private final OpzionePagamentoRepository opzionePagamentoRepository;
     private final PendenzaRepository pendenzaRepository;
     private final ApplicazioneRepository applicazioneRepository;
+    private final RendicontazioneRepository rendicontazioneRepository;
     private final Clock clock;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
 
@@ -93,12 +96,13 @@ public class PosizioneDebitoriaService {
      */
     public PosizioneDebitoriaService(PosizioneDebitoriaRepository posizioneDebitoriaRepository,
             OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository,
-            ApplicazioneRepository applicazioneRepository, Clock clock,
-            ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
+            ApplicazioneRepository applicazioneRepository, RendicontazioneRepository rendicontazioneRepository,
+            Clock clock, ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
         this.pendenzaRepository = pendenzaRepository;
         this.applicazioneRepository = applicazioneRepository;
+        this.rendicontazioneRepository = rendicontazioneRepository;
         this.clock = clock;
         this.generatoreIuvProvider = generatoreIuvProvider;
     }
@@ -750,6 +754,117 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Aggiunge una pendenza a un'opzione di pagamento ESISTENTE
+     * ({@code POST .../posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}/opzioni-pagamento/
+     * {idOpzionePagamento}/pendenze} dello YAML v3) — richiesta esplicita di questa evolutiva,
+     * nessun corrispettivo diretto nel legacy (dove le pendenze/rate si caricano sempre
+     * insieme all'opzione, non aggiunte in un secondo momento).
+     *
+     * <p>Permesso solo se l'opzione e' ancora {@code DISPONIBILE}: un'opzione {@code ATTIVATA}
+     * (pagamento gia' eseguito) o {@code ANNULLATA} non ammette piu' modifiche al suo piano di
+     * pendenze.</p>
+     *
+     * <p><b>Nessun controllo esplicito sulla tipologia qui</b>: la cardinalita' massima
+     * ({@code TipologiaOpzionePagamento.cardinalitaPendenzeMassima()} — {@code null} per
+     * {@code SOLUZIONE_UNICA}/{@code PIANO_RATEALE} (nessun limite), {@code 1} per
+     * {@code SOLUZIONE_UNICA_ENTRO}/{@code OLTRE}) e' gia' verificata da
+     * {@code ValidatorePosizioneDebitoria.validaOpzione}, eseguita qui come ovunque dopo aver
+     * collegato la nuova pendenza all'opzione: un tentativo su un'opzione gia' al massimo (es.
+     * una {@code SOLUZIONE_UNICA_ENTRO} che ne ha gia' una) viene quindi rifiutato dalla stessa
+     * fonte unica usata in creazione, non da un controllo duplicato qui.</p>
+     *
+     * <p>Stesso controllo di appartenenza di {@link #annulla(String, String, UUID)}: l'opzione
+     * deve appartenere davvero a questa posizione/applicazione, altrimenti un chiamante
+     * autenticato come un'altra applicazione potrebbe aggiungere una pendenza a un'opzione che
+     * non e' sua semplicemente indovinandone lo UUID.</p>
+     *
+     * <p>Stessa preparazione per-pendenza di {@link #aggiungiOpzionePagamento} (identificativi
+     * di pagamento, indici voci, dominio ereditato dalla posizione), qui per una sola pendenza
+     * aggiunta a un'opzione gia' persistita: {@code numeroRata} continua la sequenza esistente
+     * (massimo + 1), non riparte da 1.</p>
+     *
+     * @param idA2A                identificativo del gestionale responsabile
+     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param idOpzionePagamento   identificativo dell'opzione a cui aggiungere la pendenza
+     * @param costruisciPendenza   costruisce la nuova pendenza (con le sue voci) a partire
+     *                             dall'opzione risolta, NON ancora collegata all'aggregato
+     * @return la nuova pendenza, persistita
+     * @throws RisorsaNonTrovataException          se l'opzione non esiste, o esiste ma non
+     *                                              appartiene a questa posizione/applicazione
+     * @throws TransizioneStatoNonAmmessaException se l'opzione non e' {@code DISPONIBILE}
+     * @throws ValidazioneNonSuperataException     se l'aggregato risultante non rispetta i
+     *                                              vincoli semantici (incluso il superamento
+     *                                              della cardinalita' massima di pendenze per
+     *                                              questa tipologia di opzione)
+     * @throws RisorsaGiaEsistenteException        se la nuova pendenza ha un {@code idPendenza}
+     *                                              gia' usato da questa applicazione
+     * @throws ModificaConcorrenteException        se la posizione e' stata modificata
+     *                                              concorrentemente prima del commit
+     */
+    public Pendenza aggiungiPendenza(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento,
+            Function<OpzionePagamento, Pendenza> costruisciPendenza) {
+        OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
+        PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
+        boolean appartiene = idPosizioneDebitoria.equals(posizione.getIdPosizioneDebitoria())
+                && idA2A.equals(risolviIdA2A(posizione.getIdApplicazione()));
+        if (!appartiene) {
+            throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
+                    + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
+        }
+        if (opzione.getStato() != StatoOpzionePagamento.DISPONIBILE) {
+            throw new TransizioneStatoNonAmmessaException("l'opzione di pagamento [" + idOpzionePagamento + "] e' "
+                    + opzione.getStato() + ": si puo' aggiungere una pendenza solo se DISPONIBILE");
+        }
+
+        Pendenza nuovaPendenza = costruisciPendenza.apply(opzione);
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        int numeroRata = opzione.getPendenze().stream().mapToInt(Pendenza::getNumeroRata).max().orElse(0) + 1;
+        nuovaPendenza.setNumeroRata(numeroRata);
+        nuovaPendenza.setDataCreazione(adesso);
+        nuovaPendenza.setDataUltimoAggiornamento(adesso);
+        nuovaPendenza.setDataUltimaModificaAca(adesso);
+        // Stesso principio di crea()/aggiungiOpzionePagamento: IUV/NAV sono univoci per
+        // dominio, la pendenza deve portare lo stesso dominio della posizione.
+        nuovaPendenza.setIdDominio(posizione.getIdDominio());
+
+        int indice = 1;
+        for (VocePendenza voce : nuovaPendenza.getVoci()) {
+            voce.setIndice(indice++);
+            if (voce.getIdDominio() == null) {
+                voce.setIdDominio(posizione.getIdDominio());
+            }
+        }
+
+        // Ancora una pendenza autonoma, non collegata a "opzione" (entita' gestita): stesso
+        // ordine (e stesso motivo) di aggiungiOpzionePagamento, vedi il suo Javadoc.
+        verificaIdPendenzaNonDuplicato(posizione, nuovaPendenza);
+        assegnaIdentificativiPagamento(posizione, nuovaPendenza);
+
+        opzione.addPendenza(nuovaPendenza);
+
+        ValidatorePosizioneDebitoria.valida(posizione);
+
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+        opzione.setDataUltimoAggiornamento(adesso);
+
+        try {
+            posizioneDebitoriaRepository.saveAndFlush(posizione);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            throw new ModificaConcorrenteException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] e' stata modificata concorrentemente: riprovare");
+        } catch (DataIntegrityViolationException e) {
+            if (violaVincolo(e, VINCOLO_UNICITA_ID_PENDENZA)) {
+                throw new RisorsaGiaEsistenteException(
+                        "la nuova pendenza ha un idPendenza gia' usato da questa applicazione");
+            }
+            throw e;
+        }
+        return nuovaPendenza;
+    }
+
+    /**
      * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3):
      * {@code idDebitore} e' l'unico criterio di ricerca ammesso, oltre a {@code idA2A}. Trova
      * la posizione se l'identificativo corrisponde a qualunque soggetto in
@@ -1398,14 +1513,14 @@ public class PosizioneDebitoriaService {
     }
 
     /**
-     * Aggiorna i metadati di una singola pendenza — {@code PATCH .../pendenze/{idA2A}/{idPendenza}}
-     * dello YAML v3: l'equivalente v3 della "PUT profonda" legacy ({@code PendenzeDAO},
-     * {@code aggiornaSeEsiste=true}), limitato ai campi che hanno un corrispettivo diretto
-     * su {@link Pendenza} ({@code dataScadenzaAvviso}/{@code dataValidita}/{@code importo}/
-     * {@code voci} — vedi {@code PosizioneDebitoriaMapper#applicaPatchPendenza} per i path
-     * esatti). Non e' piu' il punto di annullamento/ripristino della singola pendenza (vedi
-     * nota di classe): quella superficie e' stata rimossa insieme a
-     * {@code annullaPendenza}/{@code ripristinaPendenza}.
+     * Aggiorna una singola pendenza — {@code PUT .../pendenze/{idA2A}/{idPendenza}} dello YAML
+     * v3: l'equivalente v3 della "PUT profonda" legacy ({@code PendenzeDAO.createOrUpdate},
+     * {@code aggiornaSeEsiste=true}), limitato ai campi che hanno un corrispettivo diretto su
+     * {@link Pendenza} ({@code idTipoPendenza}/{@code numeroAvviso}/{@code dataScadenzaAvviso}/
+     * {@code dataValidita}/{@code importo}/{@code voci} — vedi
+     * {@code PosizioneDebitoriaMapper#applicaPutPendenza} per i path esatti). Non e' piu' il
+     * punto di annullamento/ripristino della singola pendenza (vedi nota di classe): quella
+     * superficie e' stata rimossa insieme a {@code annullaPendenza}/{@code ripristinaPendenza}.
      *
      * <p>Permesso solo se lo stato attuale e' {@code NON_ESEGUITO} o {@code ANNULLATO} —
      * mirror del legacy ({@code VersamentoUtils.validazioneSemanticaAggiornamento},
@@ -1419,15 +1534,43 @@ public class PosizioneDebitoriaService {
      * persistenza JPA, nessuna query duplicata in pratica) — evita di duplicare qui la
      * stessa logica di validazione/locking/salvataggio.</p>
      *
-     * <p><b>Invarianti sulle voci esistenti, garantiti qui e non solo nel mapper REST</b>:
-     * nessuna voce gia' persistita (identificata dall'{@code id} di database, non
-     * dall'{@code idVocePendenza} REST) puo' essere rimossa da {@code applicaModifiche}, ne'
-     * puo' cambiare {@code idTributo}/{@code idIbanAccredito}/{@code idIbanAppoggio} — stesso
-     * confronto prima/dopo per qualunque chiamante di questo metodo, non solo
-     * {@code PosizioneDebitoriaMapper#applicaPatchPendenza} (che fa un controllo equivalente,
-     * ma solo sul path REST): senza questa verifica qui, un consumatore diretto della
-     * libreria (es. la futura console-api) potrebbe eludere involontariamente queste regole
-     * chiamando {@code applicaModifiche} con una mutazione che rimuove o reindirizza una voce.</p>
+     * <p><b>Invariante residuo sulle voci esistenti, garantito qui e non solo nel mapper REST</b>:
+     * nessuna voce gia' presente, identificata dall'{@code idVocePendenza} (la stessa identita'
+     * di business usata dal path REST, non l'{@code id} di database — quest'ultimo puo' essere
+     * riusato da una voce nuova diversa, vedi Javadoc di
+     * {@code PosizioneDebitoriaMapper#sostituisciVoci}), puo' cambiare {@code idTributo}/
+     * {@code idIbanAccredito} — stesso confronto prima/dopo per qualunque chiamante di questo
+     * metodo, non solo {@code PosizioneDebitoriaMapper#applicaPutPendenza} (che fa un
+     * controllo equivalente, ma solo sul path REST): senza questa verifica qui, un
+     * consumatore diretto della libreria (es. la futura console-api) potrebbe eludere
+     * involontariamente questa regola chiamando {@code applicaModifiche} con una mutazione che
+     * reindirizza una voce. {@code idIbanAppoggio} non e' protetto (mirror esatto del legacy,
+     * {@code VersamentoUtils.validazioneSemanticaAggiornamento} non lo controlla — scelta
+     * deliberata, non un'omissione). La RIMOZIONE di una voce esistente e' invece ammessa
+     * (richiesta esplicita per questo endpoint, a differenza del legacy che la rifiuta sempre —
+     * VER_005/VER_006): il minimo di una voce residua non e' verificato qui, ma e' comunque
+     * garantito a valle da {@code ValidatorePosizioneDebitoria.validaPendenza} (cardinalita'
+     * 1-5), eseguito da {@link #aggiorna} prima del salvataggio.</p>
+     *
+     * <p><b>Eccezione alla rimozione ammessa: una voce gia' rendicontata</b> — verificato per
+     * confronto diretto sulla FK fisica tramite
+     * {@link RendicontazioneRepository#existsByIdSingoloVersamento} (vedi il suo Javadoc):
+     * rimuoverla, o riusarne la riga per una voce nuova (vedi Javadoc di
+     * {@code PosizioneDebitoriaMapper#sostituisciVoci}), attribuirebbe lo storico sbagliato. Non
+     * e' legato allo stato della pendenza (una rendicontazione anomala puo' arrivare senza, o
+     * prima, del pagamento corrispondente, indipendentemente da {@code NON_ESEGUITO}/
+     * {@code ANNULLATO}) — per questo e' un controllo separato, non assorbito da quello sullo
+     * stato in testa al metodo. Un {@link it.govpay.pendenze.entity.Pagamento}, al contrario,
+     * NON e' controllato qui: la sua creazione e' atomica con l'uscita da {@code NON_ESEGUITO}
+     * nel legacy, e {@code ANNULLATO} e' raggiungibile solo da {@code NON_ESEGUITO} (mai da
+     * {@code ESEGUITO}) — una pendenza che supera il controllo di stato sopra non puo' quindi
+     * avere un pagamento su nessuna voce.</p>
+     *
+     * <p><b>{@code numeroAvviso}, se gia' assegnato, non puo' cambiare</b> (mirror VER_024) —
+     * stesso controllo gia' presente in {@code PosizioneDebitoriaMapper#applicaPutPendenza},
+     * duplicato qui per lo stesso motivo del controllo sulle voci sopra: garantirlo per
+     * qualunque chiamante della libreria (es. la futura console-api), non solo per il percorso
+     * REST. Se ancora assente, {@code applicaModifiche} puo' impostarlo liberamente.</p>
      *
      * <p>Marca anche {@code pendenza.dataUltimoAggiornamento}: {@link #aggiorna} marca il
      * timestamp della POSIZIONE e la modifica ACA di tutte le sue pendenze, ma non il
@@ -1440,9 +1583,11 @@ public class PosizioneDebitoriaService {
      * @return la pendenza aggiornata
      * @throws RisorsaNonTrovataException           se non esiste una pendenza con questa chiave
      * @throws TransizioneStatoNonAmmessaException se lo stato attuale non e' {@code NON_ESEGUITO}
-     *                                              ne' {@code ANNULLATO}, o se {@code applicaModifiche}
-     *                                              rimuove una voce esistente o ne cambia il
-     *                                              riferimento (tributo/IBAN)
+     *                                              ne' {@code ANNULLATO}, se {@code applicaModifiche}
+     *                                              cambia un {@code numeroAvviso} gia' assegnato
+     *                                              o il riferimento (tributo/IBAN) di una voce
+     *                                              esistente, o se rimuove una voce gia'
+     *                                              rendicontata
      */
     public Pendenza aggiornaPendenza(String idA2A, String idPendenza, Consumer<Pendenza> applicaModifiche) {
         Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
@@ -1452,33 +1597,72 @@ public class PosizioneDebitoriaService {
         }
         String idPosizioneDebitoria = pendenza.getOpzionePagamento().getPosizioneDebitoria()
                 .getIdPosizioneDebitoria();
+        // Snapshot a valore (String e' immutabile di per se', ma catturato PRIMA di
+        // applicaModifiche per lo stesso motivo delle voci sotto): se gia' assegnato, non puo'
+        // cambiare (mirror VER_024) — stesso controllo del mapper REST
+        // (PosizioneDebitoriaMapper#applicaPutPendenza), qui per qualunque chiamante della
+        // libreria, non solo quel percorso.
+        String numeroAvvisoPrima = pendenza.getNumeroAvviso();
+
         // Snapshot a VALORI (record immutabile), non a riferimenti di entity: VocePendenza e'
         // mutabile e applicaModifiche muta le STESSE istanze gestite, quindi un riferimento
         // qui rifletterebbe anche la mutazione successiva, rendendo il confronto "prima" vs
         // "dopo" sempre vero (bug riscontrato in fase di test: nessuna eccezione lanciata
         // anche cambiando idTributo, perche' "prima" e "dopo" erano lo stesso oggetto).
-        Map<Long, SnapshotVoce> vociPrima = pendenza.getVoci().stream()
-                .filter(v -> v.getId() != null)
-                .collect(Collectors.toMap(VocePendenza::getId, SnapshotVoce::di));
+        //
+        // Indicizzato per idVocePendenza (identita' lato business), non per l'id di database:
+        // il mapper REST (PosizioneDebitoriaMapper#sostituisciVoci) riusa la riga di una voce
+        // rimossa per una voce nuova (stesso id di database, indice, per evitare una collisione
+        // transitoria sul vincolo di unicita' DB quando Hibernate esegue gli insert prima dei
+        // delete nello stesso flush) — indicizzare per id di database tratterebbe quel riuso
+        // come se la STESSA voce avesse cambiato tributo/IBAN, bloccando una rimozione+aggiunta
+        // del tutto legittima. Per idVocePendenza invece no: la vecchia chiave non si ritrova
+        // piu' in "dopo" (la riga ora rappresenta un'altra voce, con un altro idVocePendenza) e
+        // viene trattata correttamente come rimozione.
+        //
+        // Merge function che tiene la prima occorrenza, non il default di Collectors.toMap
+        // (che lancia IllegalStateException su chiavi duplicate): due voci con lo stesso
+        // idVocePendenza non sono un caso valido, ma il rifiuto pulito (400) e' compito di
+        // ValidatorePosizioneDebitoria.validaPendenza, eseguito poco sotto da aggiorna() — non
+        // di questo confronto, che altrimenti andrebbe in crash con un 500 grezzo prima di
+        // arrivarci.
+        Map<String, SnapshotVoce> vociPrima = pendenza.getVoci().stream()
+                .collect(Collectors.toMap(VocePendenza::getIdVocePendenza, SnapshotVoce::di, (a, b) -> a));
 
         applicaModifiche.accept(pendenza);
 
-        Map<Long, VocePendenza> vociDopo = pendenza.getVoci().stream()
-                .filter(v -> v.getId() != null)
-                .collect(Collectors.toMap(VocePendenza::getId, v -> v));
-        for (Map.Entry<Long, SnapshotVoce> voceEsistente : vociPrima.entrySet()) {
+        if (numeroAvvisoPrima != null && !numeroAvvisoPrima.equals(pendenza.getNumeroAvviso())) {
+            throw new TransizioneStatoNonAmmessaException(
+                    "'numeroAvviso' non puo' cambiare rispetto all'originale [" + numeroAvvisoPrima + "]");
+        }
+
+        Map<String, VocePendenza> vociDopo = pendenza.getVoci().stream()
+                .collect(Collectors.toMap(VocePendenza::getIdVocePendenza, v -> v, (a, b) -> a));
+        for (Map.Entry<String, SnapshotVoce> voceEsistente : vociPrima.entrySet()) {
             SnapshotVoce prima = voceEsistente.getValue();
             VocePendenza dopo = vociDopo.get(voceEsistente.getKey());
             if (dopo == null) {
-                throw new TransizioneStatoNonAmmessaException("la voce [" + prima.idVocePendenza()
-                        + "] non puo' essere rimossa: le voci esistenti di una pendenza non possono essere "
-                        + "eliminate, solo aggiornate o affiancate da voci nuove");
+                // Rimossa (fisicamente, o perche' la sua riga viene riusata da una voce nuova —
+                // PosizioneDebitoriaMapper#sostituisciVoci, stesso id di database): ammesso per
+                // questo endpoint, vedi Javadoc del metodo. Ma se quella riga e' gia' referenziata
+                // da una rendicontazione, rimuoverla (o riusarla per un'altra voce) attribuirebbe
+                // lo storico sbagliato — vedi Javadoc di
+                // RendicontazioneRepository#existsByIdSingoloVersamento: puo' succedere anche
+                // senza alcun pagamento associato (rendicontazione anomala), non solo quando la
+                // pendenza e' ESEGUITO — quindi non e' coperto dal controllo di stato in testa a
+                // questo metodo.
+                if (rendicontazioneRepository.existsByIdSingoloVersamento(prima.id())) {
+                    throw new TransizioneStatoNonAmmessaException("la voce [" + prima.idVocePendenza()
+                            + "] non puo' essere rimossa: esiste una rendicontazione che la referenzia");
+                }
+                // Il minimo di una voce residua e' verificato a valle da
+                // ValidatorePosizioneDebitoria.
+                continue;
             }
             if (!Objects.equals(prima.idTributo(), dopo.getIdTributo())
-                    || !Objects.equals(prima.idIbanAccredito(), dopo.getIdIbanAccredito())
-                    || !Objects.equals(prima.idIbanAppoggio(), dopo.getIdIbanAppoggio())) {
+                    || !Objects.equals(prima.idIbanAccredito(), dopo.getIdIbanAccredito())) {
                 throw new TransizioneStatoNonAmmessaException("la voce [" + prima.idVocePendenza()
-                        + "] non puo' cambiare il riferimento (tributo/IBAN) rispetto all'originale");
+                        + "] non puo' cambiare il riferimento (tributo/IBAN di accredito) rispetto all'originale");
             }
         }
 
@@ -1491,10 +1675,10 @@ public class PosizioneDebitoriaService {
     }
 
     /** Copia a valori di una {@link VocePendenza} esistente, per {@link #aggiornaPendenza}. */
-    private record SnapshotVoce(String idVocePendenza, Long idTributo, Long idIbanAccredito, Long idIbanAppoggio) {
+    private record SnapshotVoce(Long id, String idVocePendenza, Long idTributo, Long idIbanAccredito) {
         static SnapshotVoce di(VocePendenza voce) {
-            return new SnapshotVoce(voce.getIdVocePendenza(), voce.getIdTributo(), voce.getIdIbanAccredito(),
-                    voce.getIdIbanAppoggio());
+            return new SnapshotVoce(voce.getId(), voce.getIdVocePendenza(), voce.getIdTributo(),
+                    voce.getIdIbanAccredito());
         }
     }
 

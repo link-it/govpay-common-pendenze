@@ -73,4 +73,24 @@ public interface RendicontazioneRepository extends JpaRepository<Rendicontazione
             @Param("codDominio") String codDominio,
             @Param("cursorDataOraFlusso") OffsetDateTime cursorDataOraFlusso, @Param("cursorId") Long cursorId,
             Pageable pageable);
+
+    /**
+     * Verifica se esiste una rendicontazione per questa voce, per
+     * {@code PosizioneDebitoriaService#aggiornaPendenza}: una voce la cui riga viene rimossa o
+     * riusata da un'altra (vedi Javadoc di {@code PosizioneDebitoriaMapper#sostituisciVoci})
+     * non deve perdere lo storico se e' gia' stata rendicontata — anche senza alcun
+     * {@link it.govpay.pendenze.entity.Pagamento} associato: il legacy ({@code Rendicontazioni.java})
+     * puo' registrare una rendicontazione anomala (standin, o un disservizio che la fa arrivare
+     * prima/senza il pagamento corrispondente) indipendentemente dallo stato della pendenza.
+     *
+     * <p>Confronto diretto sulla FK fisica {@link Rendicontazione#getIdSingoloVersamento()}
+     * (vedi il suo Javadoc) con l'{@code id} di database della voce — non per {@code iuv}+
+     * {@code indiceDati}: evita di dover risolvere {@code codDominio} dall'anagrafica (lo IUV
+     * da solo non e' univoco globalmente) perche' la corrispondenza e' gia' fisica, fatta a
+     * monte dalla riconciliazione del legacy stesso.</p>
+     *
+     * @param idSingoloVersamento {@code id} di database della {@link it.govpay.pendenze.entity.VocePendenza}
+     * @return {@code true} se esiste almeno una rendicontazione che referenzia questa voce
+     */
+    boolean existsByIdSingoloVersamento(Long idSingoloVersamento);
 }

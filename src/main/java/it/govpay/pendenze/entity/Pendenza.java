@@ -256,7 +256,14 @@ public class Pendenza {
     @Column(name = "data_ora_ultimo_aggiornamento", nullable = false)
     private OffsetDateTime dataUltimoAggiornamento;
 
-    @OneToMany(mappedBy = "pendenza", cascade = CascadeType.ALL)
+    /**
+     * {@code orphanRemoval}: da {@code PUT .../pendenze/{idA2A}/{idPendenza}} (sostituzione
+     * integrale) una voce puo' essere rimossa dalla richiesta — senza questo, togliere una
+     * {@link VocePendenza} da {@link #voci} non la eliminerebbe su DB (la riga resterebbe
+     * orfana con la stessa FK, {@code cascade=ALL} da solo copre solo la cancellazione
+     * dell'intero padre, non la rimozione di un singolo figlio dalla collezione).
+     */
+    @OneToMany(mappedBy = "pendenza", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("indice ASC")
     private List<VocePendenza> voci = new ArrayList<>();
 

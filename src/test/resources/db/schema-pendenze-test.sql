@@ -735,7 +735,9 @@ CREATE TABLE IF NOT EXISTS rendicontazioni
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_rendicontazioni') NOT NULL,
 	id_fr BIGINT NOT NULL,
+	id_singolo_versamento BIGINT,
 	-- fk/pk keys constraints
 	CONSTRAINT fk_rnd_id_fr FOREIGN KEY (id_fr) REFERENCES fr(id),
+	CONSTRAINT fk_rnd_id_singolo_versamento FOREIGN KEY (id_singolo_versamento) REFERENCES singoli_versamenti(id),
 	CONSTRAINT pk_rendicontazioni PRIMARY KEY (id)
 );

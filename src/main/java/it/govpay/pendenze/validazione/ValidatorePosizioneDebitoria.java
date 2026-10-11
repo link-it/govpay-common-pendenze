@@ -126,6 +126,19 @@ public final class ValidatorePosizioneDebitoria {
         }
     }
 
+    /**
+     * L'unicita' di {@code idVocePendenza} entro la pendenza non e' verificabile dal JPA/DB
+     * (nessun vincolo di unicita' sulla colonna, e comunque un confronto contro le righe gia'
+     * persistite non vedrebbe due voci duplicate nella stessa richiesta, nessuna delle due
+     * ancora su DB quando verrebbero controllate — stesso principio di
+     * {@link #validaIdPendenzaNonDuplicatoNellAggregato}): senza questo controllo, una
+     * {@code PUT .../pendenze/{idA2A}/{idPendenza}} con due voci nuove con lo stesso
+     * {@code idVocePendenza} (importi diversi, somma coerente) viene accettata e le salva
+     * entrambe; un aggiornamento successivo della stessa pendenza fallisce poi con un errore
+     * non gestito, perche' il matching per identificativo (es.
+     * {@code PosizioneDebitoriaMapper#sostituisciVoci} in govpay-pendenze-api) indicizza le voci
+     * esistenti con {@code Collectors.toMap}, che non accetta chiavi duplicate.
+     */
     private static void validaPendenza(Pendenza pendenza) {
         int numeroVoci = pendenza.getVoci().size();
         if (numeroVoci < 1 || numeroVoci > 5) {
@@ -137,8 +150,14 @@ public final class ValidatorePosizioneDebitoria {
         validaScalaImporto(BigDecimal.valueOf(pendenza.getImporto()), "la pendenza [" + pendenza.getIdPendenza() + "]");
         validaLimitiImporto(BigDecimal.valueOf(pendenza.getImporto()), "la pendenza [" + pendenza.getIdPendenza() + "]");
 
+        Set<String> idVociViste = new HashSet<>();
         BigDecimal sommaVoci = BigDecimal.ZERO;
         for (VocePendenza voce : pendenza.getVoci()) {
+            if (!idVociViste.add(voce.getIdVocePendenza())) {
+                throw new ValidazioneNonSuperataException(
+                        "la pendenza [" + pendenza.getIdPendenza() + "] ha piu' voci con lo stesso idVocePendenza ["
+                                + voce.getIdVocePendenza() + "]");
+            }
             validaScalaImporto(BigDecimal.valueOf(voce.getImporto()), "la voce [" + voce.getIdVocePendenza() + "]");
             validaLimitiImporto(BigDecimal.valueOf(voce.getImporto()), "la voce [" + voce.getIdVocePendenza() + "]");
             sommaVoci = sommaVoci.add(BigDecimal.valueOf(voce.getImporto()));
