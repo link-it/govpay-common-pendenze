@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashSet;
 import java.util.Set;
+import it.govpay.pendenze.model.StatoOpzionePagamento;
+import it.govpay.pendenze.model.StatoPendenza;
 
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
@@ -47,9 +49,38 @@ public final class ValidatorePosizioneDebitoria {
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
             validaOpzione(opzione);
         }
+        validaStati(posizione);
         validaSpeseNotificaEnotificaSend(posizione);
         validaNumeroAvvisoNonDuplicatoNellAggregato(posizione);
         validaIdPendenzaNonDuplicatoNellAggregato(posizione);
+    }
+
+    /** Verifica lo stato finale, dopo che le transizioni hanno completato tutte le cascate. */
+    public static void validaStati(PosizioneDebitoria posizione) {
+        int attivate = 0;
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            boolean tutteNonEseguite = !opzione.getPendenze().isEmpty();
+            boolean tutteAnnullate = !opzione.getPendenze().isEmpty();
+            boolean conEsito = false;
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                StatoPendenza stato = pendenza.getStato();
+                if (stato == null) throw new ValidazioneNonSuperataException("stato pendenza assente");
+                tutteNonEseguite &= stato == StatoPendenza.NON_ESEGUITO;
+                tutteAnnullate &= stato == StatoPendenza.ANNULLATO;
+                conEsito |= stato != StatoPendenza.NON_ESEGUITO && stato != StatoPendenza.ANNULLATO;
+            }
+            StatoOpzionePagamento atteso = tutteNonEseguite ? StatoOpzionePagamento.DISPONIBILE
+                    : tutteAnnullate ? StatoOpzionePagamento.ANNULLATA
+                    : conEsito ? StatoOpzionePagamento.ATTIVATA : null;
+            if (atteso == null || opzione.getStato() != atteso) {
+                throw new ValidazioneNonSuperataException("stato dell'opzione di pagamento non coerente con le sue pendenze");
+            }
+            if (atteso == StatoOpzionePagamento.ATTIVATA) attivate++;
+        }
+        if (attivate > 1 || attivate == 1 && posizione.getOpzioniPagamento().stream()
+                .anyMatch(o -> o.getStato() == StatoOpzionePagamento.DISPONIBILE)) {
+            throw new ValidazioneNonSuperataException("un'opzione ATTIVATA richiede tutte le alternative ANNULLATE");
+        }
     }
 
     /**

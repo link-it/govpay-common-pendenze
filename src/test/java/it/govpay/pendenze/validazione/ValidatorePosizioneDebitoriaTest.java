@@ -17,6 +17,8 @@ import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.DettaglioContabile;
 import it.govpay.pendenze.model.StatoVocePendenza;
+import it.govpay.pendenze.model.StatoOpzionePagamento;
+import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 
@@ -25,6 +27,42 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
  * test costruiscono gli aggregati a mano, senza {@code @DataJpaTest} ne' database.
  */
 class ValidatorePosizioneDebitoriaTest {
+
+    @Test
+    void rifiutaPendenzeMisteAnnullateENonEseguiteSenzaEsiti() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(1).setStato(StatoPendenza.ANNULLATO);
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    void rifiutaOpzioneAttivataSenzaEsiti() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        posizione.getOpzioniPagamento().get(0).setStato(StatoOpzionePagamento.ATTIVATA);
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    void unaSolaOpzioneAttivataRichiedeAlternativeAnnullate() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        OpzionePagamento attiva = posizione.getOpzioniPagamento().get(0);
+        attiva.setStato(StatoOpzionePagamento.ATTIVATA);
+        attiva.getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
+        OpzionePagamento alternativa = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1)
+                .getOpzioniPagamento().get(0);
+        posizione.addOpzionePagamento(alternativa);
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class).hasMessageContaining("alternative");
+        alternativa.setStato(StatoOpzionePagamento.ATTIVATA);
+        alternativa.getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class).hasMessageContaining("alternative");
+        alternativa.setStato(StatoOpzionePagamento.ANNULLATA);
+        alternativa.getPendenze().get(0).setStato(StatoPendenza.ANNULLATO);
+        assertThatCode(() -> ValidatorePosizioneDebitoria.validaStati(posizione)).doesNotThrowAnyException();
+    }
 
     @Test
     @DisplayName("un aggregato valido non solleva eccezioni")

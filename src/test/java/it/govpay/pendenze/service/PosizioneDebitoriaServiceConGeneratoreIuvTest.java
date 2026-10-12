@@ -1,5 +1,7 @@
 package it.govpay.pendenze.service;
 
+import it.govpay.pendenze.comando.DatiPosizioneDebitoria;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.DisplayName;
@@ -102,10 +104,10 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
-        service.crea(posizione);
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
-        assertThat(pendenza.getIuv()).isEqualTo("IUV-pendenza-1");
-        assertThat(pendenza.getNumeroAvviso()).isEqualTo("999999999999999999");
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getIuv()).isEqualTo("IUV-pendenza-1");
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso()).isEqualTo("999999999999999999");
     }
 
     @Test
@@ -149,10 +151,10 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
-        service.crea(posizione);
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
-        assertThat(pendenza.getIuv()).isEqualTo("IUV-FORNITO-DAL-CHIAMANTE");
-        assertThat(pendenza.getNumeroAvviso()).isEqualTo("111111111111111111");
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getIuv()).isEqualTo("IUV-FORNITO-DAL-CHIAMANTE");
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso()).isEqualTo("111111111111111111");
     }
 
     @Test
@@ -196,10 +198,10 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         voce.setIdTributo(42L);
         pendenza.addVocePendenza(voce);
 
-        service.crea(posizione);
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
-        assertThat(pendenza.getIuv()).isEqualTo("IUV-DA-222222222222222222");
-        assertThat(pendenza.getNumeroAvviso()).isEqualTo("222222222222222222");
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getIuv()).isEqualTo("IUV-DA-222222222222222222");
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso()).isEqualTo("222222222222222222");
     }
 
     @TestConfiguration
