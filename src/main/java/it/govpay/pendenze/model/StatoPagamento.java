@@ -1,12 +1,13 @@
 package it.govpay.pendenze.model;
 
 /**
- * Stato del pagamento di una pendenza, persistito in {@code versamenti.stato_pagamento}.
- * La codifica coincide con il nome della costante.
+ * Concetto legacy distinto da {@link StatoPendenza}, mappato su
+ * {@code versamenti.stato_pagamento}. Valori identici a {@code StatoPagamento} legacy —
+ * verificato in {@code Versamento.java} del legacy: sempre {@code NON_PAGATO} alla
+ * creazione (business layer, {@code Versamento.java:293}).
  */
 public enum StatoPagamento {
-
-    NON_PAGATO,
     PAGATO,
-    INCASSATO
+    INCASSATO,
+    NON_PAGATO
 }

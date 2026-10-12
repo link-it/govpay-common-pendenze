@@ -5,20 +5,21 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.hibernate.autoconfigure.HibernatePropertiesCustomizer;
 import org.springframework.context.annotation.Bean;
 
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
-
-import it.govpay.pendenze.codec.ProprietaPendenzaCodec;
+import it.govpay.common.repository.ApplicazioneRepository;
+import it.govpay.common.repository.DominioRepository;
+import it.govpay.pendenze.iuv.GeneratoreIuvStandard;
+import it.govpay.pendenze.iuv.GeneratoreProgressivoIuv;
+import it.govpay.pendenze.spi.GeneratoreIuv;
 
 /**
- * Autoconfigurazione della libreria: fuso orario, orologio e codec.
+ * Autoconfigurazione della libreria: fuso orario e orologio.
  */
 @AutoConfiguration
 @EnableConfigurationProperties(PendenzeProperties.class)
@@ -68,24 +69,26 @@ public class PendenzeAutoConfiguration {
     }
 
     /**
-     * Codec delle proprieta' della pendenza. Usa il mapper dell'applicazione se c'e',
-     * altrimenti se ne costruisce uno proprio: la libreria non impone al consumatore di
-     * configurare Jackson.
+     * Implementazione standard di {@link GeneratoreIuv}, condivisa fra i consumatori (vedi
+     * Javadoc di {@link GeneratoreIuv} e {@link GeneratoreIuvStandard}). Registrata solo se il
+     * consumatore ha gia' un {@link DominioRepository} di {@code govpay-common} nel contesto
+     * (per le proprie esigenze di anagrafica) e non ha gia' fornito una propria
+     * implementazione di {@link GeneratoreIuv}: se manca l'uno o l'altro, questa libreria non
+     * prova a fornire generazione IUV, esattamente come prima di questo bean.
      *
-     * <p>Si usa {@code getIfUnique} e non {@code getIfAvailable}: se il consumatore
-     * dichiara piu' di un {@code ObjectMapper} senza {@code @Primary}, quest'ultimo
-     * solleverebbe {@code NoUniqueBeanDefinitionException} facendo fallire l'avvio dentro
-     * l'autoconfigurazione della libreria. Il codec lavora sui soli nodi dell'albero
-     * JSON, quindi quale mapper sia non cambia il risultato: meglio ripiegare su un
-     * mapper interno che rompere il contesto.</p>
-     *
-     * @param objectMapper mapper JSON dell'applicazione, se disponibile e non ambiguo
-     * @return il codec
+     * @param dominioRepository      repository dell'anagrafica dominio di govpay-common
+     * @param applicazioneRepository repository dell'anagrafica applicazione di govpay-common,
+     *                               per risolvere il placeholder {@code %(a)} del prefisso IUV
+     * @param generatoreProgressivo  allocatore dei progressivi IUV con buffer per chiave
+     * @param clock                  orologio della libreria, per risolvere {@code %(Y)}/{@code %(y)}
+     * @return l'implementazione standard di {@link GeneratoreIuv}
      */
     @Bean
-    @ConditionalOnMissingBean
-    public ProprietaPendenzaCodec proprietaPendenzaCodec(ObjectProvider<ObjectMapper> objectMapper) {
-        return new ProprietaPendenzaCodec(
-                objectMapper.getIfUnique(() -> JsonMapper.builder().build()));
+    @ConditionalOnMissingBean(GeneratoreIuv.class)
+    @ConditionalOnBean(DominioRepository.class)
+    public GeneratoreIuv generatoreIuvStandard(DominioRepository dominioRepository,
+            ApplicazioneRepository applicazioneRepository, GeneratoreProgressivoIuv generatoreProgressivo,
+            Clock clock) {
+        return new GeneratoreIuvStandard(dominioRepository, applicazioneRepository, generatoreProgressivo, clock);
     }
 }

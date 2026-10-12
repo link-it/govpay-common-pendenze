@@ -4,6 +4,8 @@ import java.time.ZoneId;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import it.govpay.common.utils.DateTimePatterns;
+
 /**
  * Configurazione della libreria di gestione delle pendenze.
  *
@@ -15,8 +17,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties("govpay.pendenze")
 public record PendenzeProperties(ZoneId fusoOrario) {
 
-    /** Fuso applicato quando la property non e' valorizzata. */
-    public static final ZoneId FUSO_ORARIO_DEFAULT = ZoneId.of("Europe/Rome");
+    /**
+     * Fuso applicato quando la property non e' valorizzata. Stesso valore di
+     * {@link DateTimePatterns#DEFAULT_TIME_ZONE} (di {@code govpay-common}): riusato,
+     * non duplicato come letterale a se stante.
+     */
+    public static final ZoneId FUSO_ORARIO_DEFAULT = ZoneId.of(DateTimePatterns.DEFAULT_TIME_ZONE);
 
     public PendenzeProperties {
         fusoOrario = fusoOrario == null ? FUSO_ORARIO_DEFAULT : fusoOrario;

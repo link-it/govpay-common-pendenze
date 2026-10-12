@@ -1,3 +1,8 @@
+> **ARCHIVIATO** — Disegno mai implementato, superato dalla decisione di andare
+> direttamente al modello nativo v3 (multi-debitore, `OpzionePagamento`), niente
+> porting retrocompatibile del modello attuale. Vedi
+> [issue #8](https://github.com/link-it/govpay-common-pendenze/issues/8).
+
 # F2 — Repository, ricerca e lettura: disegno di dettaglio
 
 Riferimenti: [proposta-libreria-pendenze.md](proposta-libreria-pendenze.md) §2, §3.2, §5, §7,
