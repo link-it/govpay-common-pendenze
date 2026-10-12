@@ -658,7 +658,9 @@ CREATE TABLE IF NOT EXISTS rpt
 	ccp VARCHAR(35) NOT NULL,
 	cod_dominio VARCHAR(35) NOT NULL,
 	xml_rt BYTEA,
+	xml_rpt BYTEA,
 	data_msg_ricevuta TIMESTAMP,
+	data_msg_richiesta TIMESTAMP,
 	cod_esito_pagamento INT,
 	versione VARCHAR(35) NOT NULL,
 	-- fk/pk columns

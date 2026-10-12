@@ -79,6 +79,18 @@ public class Rpt {
     @Column(name = "data_msg_ricevuta")
     private OffsetDateTime dataMsgRicevuta;
 
+    /**
+     * Data della richiesta di pagamento (RPT) — colonna fisica NOT NULL in produzione, non
+     * vincolata qui perche' questa libreria non scrive mai righe {@code rpt} (solo lettura).
+     * Fonte per {@code dataOperazione} nella stampa PDF della ricevuta in formato SANP_230
+     * (vedi {@link it.govpay.pendenze.ricevuta.RicevutaPdfPayloadMapper}): e' la stessa
+     * colonna da cui il legacy popola il campo omonimo dell'XML della RPT in uscita
+     * ({@code MessaggiPagoPAUtils.setDataOraMessaggioRichiesta(..., rpt.getDataMsgRichiesta())}),
+     * quindi equivalente anche quando l'XML della RPT originale non e' disponibile.
+     */
+    @Column(name = "data_msg_richiesta")
+    private OffsetDateTime dataMsgRichiesta;
+
     /** Esito del pagamento secondo la codifica pagoPA (0/1/2/3/4 — non interpretato qui). */
     @Column(name = "cod_esito_pagamento")
     private Integer codEsitoPagamento;
@@ -143,6 +155,14 @@ public class Rpt {
 
     public void setDataMsgRicevuta(OffsetDateTime dataMsgRicevuta) {
         this.dataMsgRicevuta = dataMsgRicevuta;
+    }
+
+    public OffsetDateTime getDataMsgRichiesta() {
+        return dataMsgRichiesta;
+    }
+
+    public void setDataMsgRichiesta(OffsetDateTime dataMsgRichiesta) {
+        this.dataMsgRichiesta = dataMsgRichiesta;
     }
 
     public Integer getCodEsitoPagamento() {

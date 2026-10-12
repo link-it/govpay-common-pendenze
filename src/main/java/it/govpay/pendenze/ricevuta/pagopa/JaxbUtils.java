@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 
 import javax.xml.transform.stream.StreamSource;
 
+import it.gov.digitpa.schemas._2011.pagamenti.RPT;
 import it.gov.digitpa.schemas._2011.pagamenti.RT;
 import it.gov.pagopa.pagopa_api.pa.pafornode.PaSendRTReq;
 import it.gov.pagopa.pagopa_api.pa.pafornode.PaSendRTV2Request;
@@ -12,10 +13,14 @@ import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Unmarshaller;
 
 /**
- * Unmarshalling JAXB dei tracciati XML PagoPA (RT) verso i modelli generati — stesso pattern
- * e stesse XSD vendorizzate di {@code govpay-console-api.JaxbUtils}, qui ridotto alle sole
- * varianti RT: questa libreria modella ricevute di pagamento ({@link it.govpay.pendenze.entity.Rpt}),
- * non richieste (RPT).
+ * Unmarshalling JAXB dei tracciati XML PagoPA (RT, e RPT per il solo SANP_230) verso i modelli
+ * generati — stesso pattern e stesse XSD vendorizzate di {@code govpay-console-api.JaxbUtils}.
+ *
+ * <p>{@link #toRPT(byte[])} e' l'unica variante RPT: serve solo a leggere
+ * {@code dataOraMessaggioRichiesta} per la stampa PDF della ricevuta in formato SANP_230 (vedi
+ * {@code RicevutaPdfPayloadMapper} in {@code govpay-pendenze-api}) — per {@code ctReceipt}/
+ * {@code ctReceiptV2} lo stesso dato e' gia' nella RT ({@code paymentDateTime}), nessuna
+ * variante RPT di quei due formati e' mai stata necessaria.</p>
  *
  * <p>Solo lettura: l'XML proviene dal DB e non viene validato contro gli XSD (la validazione
  * e' gia' garantita a monte dal Nodo).</p>
@@ -46,6 +51,10 @@ public final class JaxbUtils {
 
     public static RT toRT(byte[] xml) throws JAXBException {
         return unmarshal(RPT_RT_CONTEXT, xml, RT.class);
+    }
+
+    public static RPT toRPT(byte[] xml) throws JAXBException {
+        return unmarshal(RPT_RT_CONTEXT, xml, RPT.class);
     }
 
     public static PaSendRTReq toPaSendRTReqRT(byte[] xml) throws JAXBException {
