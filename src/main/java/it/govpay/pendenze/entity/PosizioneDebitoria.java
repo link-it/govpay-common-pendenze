@@ -107,7 +107,12 @@ public class PosizioneDebitoria {
     @Column(name = "id_unita_operativa")
     private Long idUnitaOperativa;
 
-    @Column(name = "descrizione", nullable = false, length = 255)
+    /**
+     * Ampliata da 255 a 1024 (stessa lunghezza di {@code versamenti.causale_versamento}): la
+     * migrazione dati da un DB v2 scrive qui la causale legacy decodificata per i documenti
+     * sintetizzati da versamenti orfani, e il cruscotto la vuole intera, non troncata.
+     */
+    @Column(name = "descrizione", nullable = false, length = 1024)
     private String descrizione;
 
     /**

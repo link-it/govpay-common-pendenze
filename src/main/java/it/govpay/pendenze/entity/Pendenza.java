@@ -189,6 +189,14 @@ public class Pendenza {
     @Enumerated(EnumType.STRING)
     private StatoPagamento statoPagamento = StatoPagamento.NON_PAGATO;
 
+    /**
+     * Motivazione testuale libera di {@link #stato}, impostata dal chiamante (es. in fase di
+     * annullamento). Colonna legacy gia' esistente, non ancora mappata prima d'ora: serve al
+     * wrapper verso i client v2, che la espone nel campo omonimo della risposta REST legacy.
+     */
+    @Column(name = "descrizione_stato")
+    private String descrizioneStato;
+
     /** Sempre {@code "DOVUTO"}: v3 carica solo pendenze DOVUTO. */
     @Column(name = "tipo", nullable = false, length = 35)
     private String tipo = "DOVUTO";
@@ -438,6 +446,14 @@ public class Pendenza {
 
     public void setStatoPagamento(StatoPagamento statoPagamento) {
         this.statoPagamento = statoPagamento;
+    }
+
+    public String getDescrizioneStato() {
+        return descrizioneStato;
+    }
+
+    public void setDescrizioneStato(String descrizioneStato) {
+        this.descrizioneStato = descrizioneStato;
     }
 
     public String getTipo() {
