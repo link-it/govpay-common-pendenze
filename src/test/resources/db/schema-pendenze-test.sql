@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS tributi
 CREATE TABLE IF NOT EXISTS documenti
 (
 	cod_documento VARCHAR(35) NOT NULL,
-	descrizione VARCHAR(255) NOT NULL,
+	descrizione VARCHAR(1024) NOT NULL,
 	-- aggiunte additive per PosizioneDebitoria (assenti nel legacy)
 	data_pubblicazione DATE,
 	notifica_send BOOLEAN NOT NULL,
