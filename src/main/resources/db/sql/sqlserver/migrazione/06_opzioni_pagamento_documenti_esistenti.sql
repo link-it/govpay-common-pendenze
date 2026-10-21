@@ -1,0 +1,107 @@
+-- ---------------------------------------------------------------------------
+-- Stessa logica di postgresql/migrazione/06_opzioni_pagamento_documenti_esistenti.sql
+-- (leggere quel file per il ragionamento completo, verificato con dati di
+-- esempio su un'istanza PostgreSQL reale) — qui la sintassi SQL Server, NON
+-- verificata contro un'istanza reale.
+--
+-- Niente REGEXP nativo in T-SQL: i pattern su cod_rata sono espressi con
+-- LIKE/SUBSTRING. La classificazione viene materializzata in tabelle
+-- temporanee locali (#tmp, droppate automaticamente a fine sessione,
+-- comunque droppate esplicitamente in fondo).
+-- ---------------------------------------------------------------------------
+
+SELECT
+    v.id,
+    v.id_documento,
+    v.stato_versamento,
+    CASE WHEN v.cod_rata IS NULL THEN 1 ELSE 0 END AS flag_null,
+    CASE WHEN v.cod_rata IS NOT NULL AND v.cod_rata NOT LIKE '%[^0-9]%' AND v.cod_rata NOT LIKE '0%'
+         THEN 1 ELSE 0 END AS flag_numerico,
+    CASE WHEN v.cod_rata IS NOT NULL AND v.cod_rata NOT LIKE '%[^0-9]%' AND v.cod_rata NOT LIKE '0%'
+         THEN CAST(v.cod_rata AS INT) END AS valore_numerico,
+    CASE WHEN v.cod_rata IN ('RIDOTTO', 'SCONTATO')
+           OR (v.cod_rata LIKE 'ENTRO[0-9]%' AND SUBSTRING(v.cod_rata, 6, 8000) NOT LIKE '%[^0-9]%')
+           OR (v.cod_rata LIKE 'OLTRE[0-9]%' AND SUBSTRING(v.cod_rata, 6, 8000) NOT LIKE '%[^0-9]%')
+         THEN 1 ELSE 0 END AS flag_riconosciuto
+INTO #tmp_vrs_rata
+FROM versamenti v
+WHERE v.id_documento IS NOT NULL
+  AND v.id_opzione_pagamento IS NULL;
+
+SELECT
+    aggr.*,
+    CASE WHEN aggr.n_null = aggr.totale THEN 'SOLUZIONE_UNICA'
+         WHEN aggr.n_numerico = aggr.totale AND aggr.n_numerico_distinti = aggr.totale THEN 'PIANO_RATEALE'
+    END AS tipologia,
+    -- Vedi tabella "derivazione dello stato" in proposta-modello-nativo-v3.md
+    -- §28: il mix NON_ESEGUITO+ANNULLATO senza altro stato (n_altro=0) non
+    -- rientra in nessuna delle tre categorie ammesse -> stato NULL.
+    CASE WHEN aggr.n_non_eseguito = aggr.totale THEN 'DISPONIBILE'
+         WHEN aggr.n_annullato = aggr.totale THEN 'ANNULLATA'
+         WHEN aggr.n_altro > 0 THEN 'ATTIVATA'
+    END AS stato
+INTO #tmp_classificazione
+FROM (
+    SELECT
+        id_documento,
+        COUNT(*) AS totale,
+        SUM(flag_null) AS n_null,
+        SUM(flag_numerico) AS n_numerico,
+        COUNT(DISTINCT valore_numerico) AS n_numerico_distinti,
+        SUM(CASE WHEN stato_versamento = 'NON_ESEGUITO' THEN 1 ELSE 0 END) AS n_non_eseguito,
+        SUM(CASE WHEN stato_versamento = 'ANNULLATO' THEN 1 ELSE 0 END) AS n_annullato,
+        SUM(CASE WHEN stato_versamento NOT IN ('NON_ESEGUITO', 'ANNULLATO') THEN 1 ELSE 0 END) AS n_altro,
+        SUM(flag_riconosciuto) AS n_riconosciuto
+    FROM #tmp_vrs_rata
+    GROUP BY id_documento
+) aggr;
+
+SELECT id_documento, tipologia, stato, NEXT VALUE FOR seq_opzioni_pagamento AS id
+INTO #tmp_nuove_opzioni
+FROM #tmp_classificazione
+WHERE tipologia IS NOT NULL AND stato IS NOT NULL;
+
+INSERT INTO opzioni_pagamento
+    (id, id_opzione_pagamento, id_documento, tipologia, stato, versione,
+     data_creazione, data_ultimo_aggiornamento)
+SELECT id, NEWID(), id_documento, tipologia, stato, 0, SYSDATETIME(), SYSDATETIME()
+FROM #tmp_nuove_opzioni;
+
+-- numero_rata: valore dichiarato preservato (PIANO_RATEALE) oppure, per
+-- SOLUZIONE_UNICA (cod_rata NULL), posizione 1-based per id crescente dentro
+-- il documento — solo per garantire indici distinti.
+UPDATE v
+SET v.id_opzione_pagamento = no.id,
+    v.numero_rata = vn.numero_rata_calcolato
+FROM versamenti v
+JOIN #tmp_nuove_opzioni no ON no.id_documento = v.id_documento
+JOIN (
+    SELECT id, id_documento,
+           COALESCE(valore_numerico, ROW_NUMBER() OVER (PARTITION BY id_documento ORDER BY id)) AS numero_rata_calcolato
+    FROM #tmp_vrs_rata
+) vn ON vn.id = v.id;
+
+-- ---------------------------------------------------------------------------
+-- Report diagnostico sui documenti esclusi — da eseguire ed esaminare DOPO
+-- lo script, non parte dell'automazione.
+-- ---------------------------------------------------------------------------
+
+-- 1) Pattern legacy riconosciuti ma non ancora mappati (RIDOTTO/SCONTATO,
+--    ENTRO/OLTRE espliciti).
+SELECT id_documento FROM #tmp_classificazione
+WHERE n_riconosciuto = totale AND tipologia IS NULL;
+
+-- 2) Documenti con cod_rata genuinamente anomalo.
+SELECT id_documento, totale, n_null, n_numerico, n_numerico_distinti, n_riconosciuto
+FROM #tmp_classificazione
+WHERE tipologia IS NULL AND n_riconosciuto < totale;
+
+-- 3) Documenti con pattern cod_rata riconosciuto ma stati storici
+--    incompatibili con le 3 categorie ammesse.
+SELECT id_documento, n_non_eseguito, n_annullato, n_altro, totale
+FROM #tmp_classificazione
+WHERE tipologia IS NOT NULL AND stato IS NULL;
+
+DROP TABLE #tmp_vrs_rata;
+DROP TABLE #tmp_classificazione;
+DROP TABLE #tmp_nuove_opzioni;

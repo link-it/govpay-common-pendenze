@@ -71,6 +71,45 @@ public class Rpt {
     @Column(name = "cod_dominio", nullable = false, length = 35)
     private String codDominio;
 
+    /**
+     * Stazione del dominio al momento dell'invio della RPT — colonna fisica NOT NULL in
+     * produzione, non vincolata qui per lo stesso motivo di {@link #dataMsgRichiesta} (sola
+     * lettura). Denormalizzata direttamente su {@code rpt}, non serve risalire a
+     * {@code Dominio.getStazione()}: serve al wrapper verso i client v2 per ricostruire
+     * {@code CtDominio.identificativoStazioneRichiedente} quando ricostruisce l'intera RPT in
+     * formato V1 (nessun consumatore v3-nativo la legge).
+     */
+    @Column(name = "cod_stazione", length = 35)
+    private String codStazione;
+
+    /**
+     * Identificativo del messaggio RPT usato come riferimento nell'RT — colonna legacy gia'
+     * esistente, non ancora mappata prima d'ora. Stesso ambito di {@link #codStazione}: serve
+     * solo al wrapper verso i client v2 per la ricostruzione in formato V1.
+     */
+    @Column(name = "cod_msg_richiesta", length = 35)
+    private String codMsgRichiesta;
+
+    /**
+     * Canale di pagamento usato (codifica legacy, es. {@code BBT}/{@code BP}/{@code AD}) —
+     * stesso ambito di {@link #codStazione}: serve solo al wrapper verso i client v2.
+     */
+    @Column(name = "tipo_versamento", length = 35)
+    private String tipoVersamento;
+
+    /**
+     * Stato di trasporto della RPT verso il Nodo dei Pagamenti (codifica legacy {@code StatoRpt},
+     * ~11 valori — non un enum qui, nessun consumatore v3-nativo distingue i singoli valori:
+     * il wrapper verso i client v2 lo passa semplicemente attraverso, come fa il legacy
+     * stesso ({@code RptConverter.setStato(rpt.getStato().toString())}).
+     */
+    @Column(name = "stato", length = 35)
+    private String stato;
+
+    /** Dettaglio testuale libero di {@link #stato} — stesso ambito, solo per il wrapper v2. */
+    @Column(name = "descrizione_stato")
+    private String descrizioneStato;
+
     /** Corpo della ricevuta (RT), XML grezzo esattamente come prodotto da pagoPA. */
     @Column(name = "xml_rt")
     private byte[] xmlRt;
@@ -139,6 +178,46 @@ public class Rpt {
 
     public void setCodDominio(String codDominio) {
         this.codDominio = codDominio;
+    }
+
+    public String getCodStazione() {
+        return codStazione;
+    }
+
+    public void setCodStazione(String codStazione) {
+        this.codStazione = codStazione;
+    }
+
+    public String getCodMsgRichiesta() {
+        return codMsgRichiesta;
+    }
+
+    public void setCodMsgRichiesta(String codMsgRichiesta) {
+        this.codMsgRichiesta = codMsgRichiesta;
+    }
+
+    public String getTipoVersamento() {
+        return tipoVersamento;
+    }
+
+    public void setTipoVersamento(String tipoVersamento) {
+        this.tipoVersamento = tipoVersamento;
+    }
+
+    public String getStato() {
+        return stato;
+    }
+
+    public void setStato(String stato) {
+        this.stato = stato;
+    }
+
+    public String getDescrizioneStato() {
+        return descrizioneStato;
+    }
+
+    public void setDescrizioneStato(String descrizioneStato) {
+        this.descrizioneStato = descrizioneStato;
     }
 
     public byte[] getXmlRt() {

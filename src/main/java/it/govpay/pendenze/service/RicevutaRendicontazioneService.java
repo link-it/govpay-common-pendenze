@@ -17,10 +17,12 @@ import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.Rendicontazione;
 import it.govpay.pendenze.entity.Rpt;
+import it.govpay.pendenze.entity.RptXmlRptEntity;
 import it.govpay.pendenze.repository.PendenzaRepository;
 import it.govpay.pendenze.repository.RendicontazioneRepository;
 import it.govpay.pendenze.repository.RicevutaElenco;
 import it.govpay.pendenze.repository.RptRepository;
+import it.govpay.pendenze.repository.RptXmlRptRepository;
 
 /**
  * Letture di {@link Rpt}/{@link Rendicontazione} di una pendenza.
@@ -58,13 +60,16 @@ public class RicevutaRendicontazioneService {
 
     private final PendenzaRepository pendenzaRepository;
     private final RptRepository rptRepository;
+    private final RptXmlRptRepository rptXmlRptRepository;
     private final RendicontazioneRepository rendicontazioneRepository;
     private final DominioRepository dominioRepository;
 
     public RicevutaRendicontazioneService(PendenzaRepository pendenzaRepository, RptRepository rptRepository,
-            RendicontazioneRepository rendicontazioneRepository, DominioRepository dominioRepository) {
+            RptXmlRptRepository rptXmlRptRepository, RendicontazioneRepository rendicontazioneRepository,
+            DominioRepository dominioRepository) {
         this.pendenzaRepository = pendenzaRepository;
         this.rptRepository = rptRepository;
+        this.rptXmlRptRepository = rptXmlRptRepository;
         this.rendicontazioneRepository = rendicontazioneRepository;
         this.dominioRepository = dominioRepository;
     }
@@ -115,6 +120,23 @@ public class RicevutaRendicontazioneService {
      */
     public Optional<Rpt> trovaRicevuta(Long idPendenza, String iur) {
         return rptRepository.findByIdVersamentoAndIurAndDataMsgRicevutaIsNotNull(idPendenza, iur);
+    }
+
+    /**
+     * XML grezzo della richiesta di pagamento ({@code rpt.xml_rpt}), se presente — serve al
+     * wrapper verso i client v2 per popolare il campo {@code rpt} della ricevuta (vedi
+     * {@link it.govpay.pendenze.ricevuta.pagopa.JaxbUtils#toPaGetPaymentResRPT} e
+     * {@link it.govpay.pendenze.ricevuta.pagopa.RicostruttoreRichiestaPagamento} per il caso,
+     * tutt'altro che raro nei formati paForNode, in cui questa colonna e' {@code null} e va
+     * ricostruita dalla RT. Proiezione separata da {@link Rpt} apposta — vedi Javadoc di
+     * {@link RptXmlRptEntity}: non ha senso caricare questo BLOB per ogni lettura di
+     * {@link #trovaRicevuta}, lo richiede solo chi deve davvero mostrare la richiesta.
+     *
+     * @param idRpt {@code Rpt.getId()} della ricevuta gia' trovata (stessa riga, stesso id)
+     * @return i byte dell'XML, se la colonna e' popolata
+     */
+    public Optional<byte[]> trovaXmlRichiestaPagamento(Long idRpt) {
+        return rptXmlRptRepository.findById(idRpt).map(RptXmlRptEntity::getXmlRpt);
     }
 
     /**

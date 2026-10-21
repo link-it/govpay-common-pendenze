@@ -73,4 +73,19 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * @return la ricevuta, se esiste ed e' stata acquisita
      */
     Optional<Rpt> findByIdVersamentoAndIurAndDataMsgRicevutaIsNotNull(Long idVersamento, String iur);
+
+    /**
+     * Elenco COMPLETO delle richieste di pagamento di una pendenza, RT acquisita o no — a
+     * differenza di {@link #findElencoByIdVersamento}, che richiede {@code dataMsgRicevuta}
+     * non nullo. Nessun consumer v3-nativo ne ha ancora bisogno: lo usa il wrapper v2
+     * ({@code it.govpay.pendenze.v2.ricevuta.RppMapper} in govpay-pendenze-api) per
+     * {@code Pendenza.rpp[]}, che mostra anche una richiesta inviata al Nodo ma non ancora
+     * riscontrata (stesso comportamento del legacy). Ordine per {@code dataMsgRichiesta}
+     * crescente, stesso ordinamento del legacy ({@code MessaggiPagoPARptUtils}/
+     * {@code PendenzeDAO}, {@code DATA_MSG_RICHIESTA ASC}).
+     *
+     * @param idVersamento chiave interna della pendenza ({@code Rpt.idVersamento})
+     * @return tutte le richieste di pagamento della pendenza, in ordine cronologico di invio
+     */
+    List<Rpt> findByIdVersamentoOrderByDataMsgRichiestaAsc(Long idVersamento);
 }

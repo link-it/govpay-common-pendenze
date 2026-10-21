@@ -136,7 +136,7 @@ class PosizioneDebitoriaServiceTest {
 
         OpzionePagamento scelta = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "2");
-        opzioneConPendenza(alternativa, "3"); // seconda rata, per rispettare il minimo di 2 di PIANO_RATEALE
+        opzioneConPendenza(alternativa, "3"); // seconda rata, per un piano rateale realistico
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
         em.flush();
@@ -649,7 +649,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.addSoggettoDebitore(soggettoDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
         OpzionePagamento b = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
-        opzioneConPendenza(b, "b2"); // minimo 2 pendenze per PIANO_RATEALE
+        opzioneConPendenza(b, "b2"); // seconda rata, per un piano rateale realistico
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
         UUID idB = salvata.getOpzioniPagamento().get(1).getIdOpzionePagamento();
@@ -690,7 +690,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.addSoggettoDebitore(soggettoDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
-        opzioneConPendenza(alternativa, "b2"); // minimo 2 pendenze per PIANO_RATEALE
+        opzioneConPendenza(alternativa, "b2"); // seconda rata, per un piano rateale realistico
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
         String idA2A = codApplicazioneDi(salvata);
@@ -1004,8 +1004,9 @@ class PosizioneDebitoriaServiceTest {
     @DisplayName("aggiungiPendenza funziona anche su PIANO_RATEALE (non solo SOLUZIONE_UNICA): "
             + "nessuna delle due tipologie ha un limite massimo di pendenze")
     void aggiungiPendenzaAggiungeAOpzionePianoRatealeEsistente() {
-        // PIANO_RATEALE richiede almeno 2 pendenze fin dalla creazione (cardinalitaPendenzeMinima):
-        // posizioneConUnaOpzione ne crea solo una, va completata prima di service.crea.
+        // Due pendenze fin dalla creazione, per uno scenario di piano rateale realistico
+        // (il minimo di 2 e' comunque solo nel contratto REST v3, non in questa libreria —
+        // vedi cardinalitaPendenzeMinima).
         PosizioneDebitoria posizioneDaCreare = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
         opzioneConPendenza(posizioneDaCreare.getOpzioniPagamento().get(0), "2");
         PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneDaCreare));

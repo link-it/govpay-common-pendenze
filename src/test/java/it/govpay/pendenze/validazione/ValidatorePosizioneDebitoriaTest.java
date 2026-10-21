@@ -95,13 +95,17 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
-    @DisplayName("PIANO_RATEALE con una sola pendenza viola il minimo di 2")
-    void pianoRatealeSottoMinimo() {
+    @DisplayName("PIANO_RATEALE con una sola pendenza e' ammesso in questa libreria")
+    void pianoRatealeConUnaSolaPendenzaAmmesso() {
+        // Il minimo di 2 rate per un vero piano rateale resta nel contratto REST v3
+        // (NuovaOpzionePagamentoPianoRateale.pendenze, minItems: 2, applicato da Spring con
+        // @Valid prima che la richiesta arrivi qui) — questa libreria resta piu' permissiva
+        // perche' serve anche chiamanti diretti in Java che costruiscono l'aggregato un passo
+        // alla volta (es. il wrapper verso i client v2), dove la prima rata va persistita da
+        // sola prima che arrivi la seconda.
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 1);
 
-        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("almeno 2");
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
     }
 
     @Test

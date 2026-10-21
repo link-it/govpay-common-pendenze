@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tns:paSendRTV2Request xmlns:tns="http://pagopa-api.pagopa.gov.it/pa/paForNode.xsd">
+  <idPA>12345678901</idPA>
+  <idBrokerPA>INTERMEDIARIO_FIXTURE</idBrokerPA>
+  <idStation>STAZIONE_FIXTURE</idStation>
+  <receipt>
+    <receiptId>RT900000001</receiptId>
+    <noticeNumber>311000000000000001</noticeNumber>
+    <fiscalCode>12345678901</fiscalCode>
+    <outcome>OK</outcome>
+    <creditorReferenceId>IUV900000001</creditorReferenceId>
+    <paymentAmount>10.00</paymentAmount>
+    <description>Pagamento TARI 2026</description>
+    <companyName>Comune di Prova</companyName>
+    <officeName>Ufficio Tributi</officeName>
+    <debtor>
+      <uniqueIdentifier>
+        <entityUniqueIdentifierType>F</entityUniqueIdentifierType>
+        <entityUniqueIdentifierValue>RSSMRA80A01H501U</entityUniqueIdentifierValue>
+      </uniqueIdentifier>
+      <fullName>Mario Rossi</fullName>
+      <streetName>Via Roma 1</streetName>
+      <postalCode>00100</postalCode>
+      <city>Roma</city>
+      <stateProvinceRegion>RM</stateProvinceRegion>
+      <country>IT</country>
+    </debtor>
+    <transferList>
+      <transfer>
+        <idTransfer>1</idTransfer>
+        <transferAmount>10.00</transferAmount>
+        <fiscalCodePA>12345678901</fiscalCodePA>
+        <IBAN>IT60X0542811101000000123456</IBAN>
+        <remittanceInformation>TARI 2026 saldo</remittanceInformation>
+        <transferCategory>9/0101108TS/</transferCategory>
+      </transfer>
+    </transferList>
+    <idPSP>PSP_FIXTURE</idPSP>
+    <PSPCompanyName>PSP di Prova SpA</PSPCompanyName>
+    <idChannel>CHANNEL_FIXTURE</idChannel>
+    <channelDescription>App IO</channelDescription>
+    <paymentMethod>AD</paymentMethod>
+    <paymentDateTime>2026-09-01T10:00:00.000+02:00</paymentDateTime>
+    <applicationDate>2026-09-01</applicationDate>
+    <transferDate>2026-09-01</transferDate>
+    <standIn>false</standIn>
+  </receipt>
+</tns:paSendRTV2Request>

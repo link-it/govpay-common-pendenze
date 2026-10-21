@@ -7,8 +7,9 @@ package it.govpay.pendenze.model;
  * <p>Le 4 tipologie condividono la stessa tabella ({@code opzioni_pagamento}): non
  * differiscono per struttura ma solo per la presenza di {@code giorni} (richiesto solo da
  * {@link #SOLUZIONE_UNICA_ENTRO} e {@link #SOLUZIONE_UNICA_OLTRE}, vedi
- * {@link #richiedeGiorni()}) e per la cardinalita' ammessa dell'elenco pendenze (validata
- * in applicazione, non a livello di schema).</p>
+ * {@link #richiedeGiorni()}) e per la cardinalita' massima ammessa dell'elenco pendenze
+ * (vedi {@link #cardinalitaPendenzeMassima()}) — la cardinalita' minima e' invece sempre 1
+ * in questa libreria, vedi {@link #cardinalitaPendenzeMinima()}.</p>
  *
  * <p><b>{@link #SOLUZIONE_UNICA} senza limite di pendenze</b>: un dovuto con piu' di 5
  * voci richiede piu' di un avviso di pagamento (ogni {@code Pendenza} ammette al
@@ -34,10 +35,19 @@ public enum TipologiaOpzionePagamento {
     }
 
     /**
-     * @return il numero minimo di pendenze ammesse per questa tipologia
+     * @return il numero minimo di pendenze ammesse per questa tipologia — sempre 1. Per
+     *         {@link #PIANO_RATEALE} il vincolo "servono almeno due rate, altrimenti si usi
+     *         {@link #SOLUZIONE_UNICA}" resta valido ma vive nel contratto REST v3
+     *         ({@code NuovaOpzionePagamentoPianoRateale.pendenze}, {@code minItems: 2},
+     *         applicato da Spring tramite {@code @Valid} sul controller prima che la
+     *         richiesta arrivi a questa libreria): qui non e' imposto perche' questa libreria
+     *         e' usata anche da chiamanti diretti in Java che costruiscono l'aggregato un
+     *         passo alla volta (es. il wrapper verso i client v2: una rata per chiamata, la
+     *         prima persistita subito come {@code PIANO_RATEALE} di 1 sola pendenza, che
+     *         diventa 2+ solo con la seconda chiamata).
      */
     public int cardinalitaPendenzeMinima() {
-        return this == PIANO_RATEALE ? 2 : 1;
+        return 1;
     }
 
     /**
