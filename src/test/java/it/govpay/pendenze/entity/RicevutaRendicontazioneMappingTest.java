@@ -258,7 +258,7 @@ class RicevutaRendicontazioneMappingTest {
     private Pendenza pendenzaPersistita() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(1L);
-        posizione.setIdPosizioneDebitoria("pos-ric-rend-" + UUID.randomUUID().toString().substring(0, 8));
+        posizione.setCodDocumento("pos-ric-rend-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
         posizione.setNotificaSend(false);

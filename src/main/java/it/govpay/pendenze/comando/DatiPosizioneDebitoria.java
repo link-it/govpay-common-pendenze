@@ -6,7 +6,7 @@ import java.time.LocalDate;
 
 /** Dati di ingresso a valore: nessuno stato, identita JPA o riferimento all'aggregato gestito. */
 public record DatiPosizioneDebitoria(
-        String idPosizioneDebitoria,
+        String codDocumento,
         Long idApplicazione,
         Long idDominio,
         Long idUnitaOperativa,
@@ -23,7 +23,7 @@ public record DatiPosizioneDebitoria(
 
     /** Copia i soli campi ammessi; successive modifiche all'entita non modificano il comando. */
     public static DatiPosizioneDebitoria da(PosizioneDebitoria e) {
-        return new DatiPosizioneDebitoria(e.getIdPosizioneDebitoria(),
+        return new DatiPosizioneDebitoria(e.getCodDocumento(),
                 e.getIdApplicazione(),
                 e.getIdDominio(),
                 e.getIdUnitaOperativa(),

@@ -1,1 +1,2 @@
 it.govpay.pendenze.config.PendenzeAutoConfiguration
+it.govpay.pendenze.config.GeneratoreIuvAutoConfiguration

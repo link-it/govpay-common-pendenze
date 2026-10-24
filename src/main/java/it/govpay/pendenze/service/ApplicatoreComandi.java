@@ -79,7 +79,7 @@ final class ApplicatoreComandi {
 
     static PosizioneDebitoria posizioneDebitoria(DatiPosizioneDebitoria dati) {
         PosizioneDebitoria e = new PosizioneDebitoria();
-        e.setIdPosizioneDebitoria(dati.idPosizioneDebitoria());
+        e.setCodDocumento(dati.codDocumento());
         e.setIdApplicazione(dati.idApplicazione());
         e.setIdDominio(dati.idDominio());
         e.setIdUnitaOperativa(dati.idUnitaOperativa());

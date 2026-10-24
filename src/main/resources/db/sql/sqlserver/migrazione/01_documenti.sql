@@ -52,10 +52,8 @@ ALTER TABLE documenti ADD data_ultimo_aggiornamento DATETIME2 NOT NULL DEFAULT '
 -- senza che nessuno dei due veda le modifiche dell'altro.
 ALTER TABLE documenti ADD versione BIGINT NOT NULL DEFAULT 0;
 
--- Unicita' della posizione per applicativo, anche tra domini diversi.
--- La creazione fallisce se esistono duplicati: risolverli prima di riprovare.
--- Diagnostica:
--- SELECT cod_documento, id_applicazione, COUNT(*)
--- FROM documenti GROUP BY cod_documento, id_applicazione HAVING COUNT(*) > 1;
-ALTER TABLE documenti ADD CONSTRAINT unique_documenti_applicazione
-    UNIQUE (cod_documento, id_applicazione);
+-- Nessun vincolo aggiuntivo da aggiungere qui: l'identita' pubblica (idPosizioneDebitoria,
+-- l'IUPD standard pagoPA GPD) si deriva al volo da idA2A+idDominio+cod_documento, che
+-- incorpora gia' tutte e tre le colonne del vincolo legacy unique_documenti_1
+-- (cod_documento+id_applicazione+id_dominio) — nessun duplicato pubblico puo' esistere senza
+-- che quel vincolo lo impedisca gia'.

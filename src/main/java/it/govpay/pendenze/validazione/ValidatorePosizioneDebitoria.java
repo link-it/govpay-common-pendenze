@@ -55,24 +55,37 @@ public final class ValidatorePosizioneDebitoria {
         validaIdPendenzaNonDuplicatoNellAggregato(posizione);
     }
 
-    /** Verifica lo stato finale, dopo che le transizioni hanno completato tutte le cascate. */
+    /**
+     * Verifica lo stato finale, dopo che le transizioni hanno completato tutte le cascate.
+     *
+     * <p><b>{@code DISPONIBILE} copre anche il mix {@code NON_ESEGUITO}/{@code ANNULLATO}</b>
+     * (nessuna pendenza eseguita, ma non tutte annullate): prima richiedeva che fossero
+     * TUTTE {@code NON_ESEGUITO}, lasciando senza esito (eccezione sempre, qualunque stato
+     * si scrivesse) un'opzione con una pendenza annullata singolarmente e le altre ancora
+     * da eseguire — scenario reale sui dati migrati da v2, dove l'annullamento di una
+     * singola pendenza era indipendente, senza cascata sui "fratelli" (a differenza di v3,
+     * che non espone piu' un annullamento indipendente della singola pendenza — vedi
+     * Javadoc di {@code PosizioneDebitoriaService#annulla(UUID)} — quindi questo mix non
+     * puo' piu' essere prodotto da una scrittura v3-nativa, esiste solo come artefatto di
+     * dati storici). Semanticamente corretto comunque: l'opzione non e' mai stata
+     * "esercitata" (nessun pagamento registrato), indipendentemente dal fatto che una sua
+     * rata sia stata cancellata a parte.</p>
+     */
     public static void validaStati(PosizioneDebitoria posizione) {
         int attivate = 0;
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
-            boolean tutteNonEseguite = !opzione.getPendenze().isEmpty();
             boolean tutteAnnullate = !opzione.getPendenze().isEmpty();
             boolean conEsito = false;
             for (Pendenza pendenza : opzione.getPendenze()) {
                 StatoPendenza stato = pendenza.getStato();
                 if (stato == null) throw new ValidazioneNonSuperataException("stato pendenza assente");
-                tutteNonEseguite &= stato == StatoPendenza.NON_ESEGUITO;
                 tutteAnnullate &= stato == StatoPendenza.ANNULLATO;
                 conEsito |= stato != StatoPendenza.NON_ESEGUITO && stato != StatoPendenza.ANNULLATO;
             }
-            StatoOpzionePagamento atteso = tutteNonEseguite ? StatoOpzionePagamento.DISPONIBILE
-                    : tutteAnnullate ? StatoOpzionePagamento.ANNULLATA
-                    : conEsito ? StatoOpzionePagamento.ATTIVATA : null;
-            if (atteso == null || opzione.getStato() != atteso) {
+            StatoOpzionePagamento atteso = tutteAnnullate ? StatoOpzionePagamento.ANNULLATA
+                    : conEsito ? StatoOpzionePagamento.ATTIVATA
+                    : StatoOpzionePagamento.DISPONIBILE;
+            if (opzione.getStato() != atteso) {
                 throw new ValidazioneNonSuperataException("stato dell'opzione di pagamento non coerente con le sue pendenze");
             }
             if (atteso == StatoOpzionePagamento.ATTIVATA) attivate++;

@@ -70,7 +70,7 @@ class PosizioneDebitoriaMappingTest {
         PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
 
         assertThat(riletta.getIdApplicazione()).isEqualTo(1L);
-        assertThat(riletta.getIdPosizioneDebitoria()).isEqualTo("abcdef12345");
+        assertThat(riletta.getCodDocumento()).isEqualTo("abcdef12345");
         assertThat(riletta.getDataCreazione().toInstant()).isEqualTo(ADESSO.toInstant());
         assertThat(riletta.getDataPubblicazione()).isEqualTo(LocalDate.of(2026, 8, 1));
         assertThat(riletta.isNotificaSend()).isFalse();
@@ -174,7 +174,7 @@ class PosizioneDebitoriaMappingTest {
     private PosizioneDebitoria posizioneMinima() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(1L);
-        posizione.setIdPosizioneDebitoria("abcdef12345");
+        posizione.setCodDocumento("abcdef12345");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("Sanzione CdS n. abc00000");
         posizione.setDataPubblicazione(LocalDate.of(2026, 8, 1));

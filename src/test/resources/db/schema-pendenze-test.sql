@@ -325,7 +325,6 @@ CREATE TABLE IF NOT EXISTS documenti
 	id_applicazione BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_documenti_1 UNIQUE (cod_documento, id_applicazione, id_dominio),
-	CONSTRAINT unique_documenti_applicazione UNIQUE (cod_documento, id_applicazione),
 	-- fk/pk keys constraints
 	-- Nessuna FK verso applicazioni (M4, coerente con id_dominio sopra): a differenza del
 	-- legacy reale, che la ha (fk_doc_id_applicazione) — tolta qui per la stessa ragione

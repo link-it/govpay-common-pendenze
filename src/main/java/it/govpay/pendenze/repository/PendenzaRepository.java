@@ -11,6 +11,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import it.govpay.pendenze.entity.Pendenza;
+import it.govpay.pendenze.model.StatoPagamento;
+import it.govpay.pendenze.model.StatoPendenza;
 
 /**
  * Repository Spring Data per {@link Pendenza}.
@@ -18,14 +20,104 @@ import it.govpay.pendenze.entity.Pendenza;
 public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
 
     /**
+     * Ricerca generica per {@code idApplicazione} con filtri opzionali — usata dal wrapper v2
+     * ({@code GET /pendenze} dello YAML v2, {@code it.govpay.pendenze.v2.pendenza
+     * .PendenzaV2Controller#findPendenze} in govpay-pendenze-api) per replicare il filtro di
+     * ricerca del legacy ({@code PendenzeDAO.listaPendenze}/{@code VersamentoFilter}), molto
+     * piu' ampio di {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}
+     * (solo numero avviso).
+     *
+     * <p>Ogni filtro e' opzionale (un parametro {@code null} lo disattiva): questo metodo
+     * esprime solo le condizioni di basso livello sui campi reali di {@link Pendenza} — la
+     * traduzione di un concetto applicativo v2 (es. l'enum {@code StatoPendenza} dello YAML v2)
+     * in questi parametri e' responsabilita' del chiamante (il wrapper), non di questa
+     * libreria v3-nativa (vedi {@code it.govpay.pendenze.v2.package-info}: "mai duplicare
+     * regole di dominio").</p>
+     *
+     * <p><b>{@code statoVersamento}/{@code statoVersamentoAlternativo}</b>: due valori invece
+     * di una lista, solo per il caso "o l'uno o l'altro" (es. {@code ESEGUITO} OR
+     * {@code ESEGUITO_SENZA_RPT}, per lo stato v2 {@code INCASSATA}) — {@code null} per non
+     * usare la seconda alternativa. <b>{@code scaduta}</b>: {@code null} nessun filtro sulla
+     * scadenza, altrimenti {@code true}/{@code false} filtra le pendenze
+     * {@code NON_ESEGUITO} rispettivamente scadute/non scadute rispetto a
+     * {@code oggiInizioGiorno} (mezzanotte del giorno corrente, stessa soglia di
+     * {@code PendenzaV2Mapper#isScaduta}: scaduta solo dal giorno DOPO la data di scadenza).</p>
+     *
+     * <p><b>Non esclude le pendenze senza {@code opzionePagamento}</b> (a differenza di
+     * {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}): il legacy
+     * stesso non le esclude mai dalla ricerca (fedelta' richiesta per il wrapper v2, vedi
+     * memoria {@code feedback_wrapper_v2_fedelta_legacy}).</p>
+     */
+    @Query("select p from Pendenza p where p.idApplicazione = :idApplicazione "
+            + "and (:idDominio is null or p.idDominio = :idDominio) "
+            + "and (:idDebitore is null or upper(p.srcDebitoreIdentificativo) = upper(:idDebitore)) "
+            + "and (:direzione is null or p.direzione = :direzione) "
+            + "and (:divisione is null or p.divisione = :divisione) "
+            + "and (:dataDa is null or p.dataCreazione >= :dataDa) "
+            + "and (:dataA is null or p.dataCreazione <= :dataA) "
+            + "and (:statoVersamento is null or p.stato = :statoVersamento "
+            + "     or p.stato = :statoVersamentoAlternativo) "
+            + "and (:statoPagamento is null or p.statoPagamento = :statoPagamento) "
+            + "and (:scaduta is null "
+            + "     or (:scaduta = true and p.dataScadenzaAvviso is not null "
+            + "         and p.dataScadenzaAvviso < :oggiInizioGiorno) "
+            + "     or (:scaduta = false and (p.dataScadenzaAvviso is null "
+            + "         or p.dataScadenzaAvviso >= :oggiInizioGiorno)))")
+    Page<Pendenza> cercaFiltrate(@Param("idApplicazione") Long idApplicazione, @Param("idDominio") Long idDominio,
+            @Param("idDebitore") String idDebitore, @Param("direzione") String direzione,
+            @Param("divisione") String divisione, @Param("dataDa") OffsetDateTime dataDa,
+            @Param("dataA") OffsetDateTime dataA, @Param("statoVersamento") StatoPendenza statoVersamento,
+            @Param("statoVersamentoAlternativo") StatoPendenza statoVersamentoAlternativo,
+            @Param("statoPagamento") StatoPagamento statoPagamento, @Param("scaduta") Boolean scaduta,
+            @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno, Pageable pageable);
+
+    /** Come {@link #cercaFiltrate}, ma senza {@code COUNT(*)} — stesso meccanismo "limit+1" di
+     *  {@link #findAllByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}. */
+    @Query("select p from Pendenza p where p.idApplicazione = :idApplicazione "
+            + "and (:idDominio is null or p.idDominio = :idDominio) "
+            + "and (:idDebitore is null or upper(p.srcDebitoreIdentificativo) = upper(:idDebitore)) "
+            + "and (:direzione is null or p.direzione = :direzione) "
+            + "and (:divisione is null or p.divisione = :divisione) "
+            + "and (:dataDa is null or p.dataCreazione >= :dataDa) "
+            + "and (:dataA is null or p.dataCreazione <= :dataA) "
+            + "and (:statoVersamento is null or p.stato = :statoVersamento "
+            + "     or p.stato = :statoVersamentoAlternativo) "
+            + "and (:statoPagamento is null or p.statoPagamento = :statoPagamento) "
+            + "and (:scaduta is null "
+            + "     or (:scaduta = true and p.dataScadenzaAvviso is not null "
+            + "         and p.dataScadenzaAvviso < :oggiInizioGiorno) "
+            + "     or (:scaduta = false and (p.dataScadenzaAvviso is null "
+            + "         or p.dataScadenzaAvviso >= :oggiInizioGiorno)))")
+    List<Pendenza> cercaFiltrateSenzaConteggio(@Param("idApplicazione") Long idApplicazione,
+            @Param("idDominio") Long idDominio, @Param("idDebitore") String idDebitore,
+            @Param("direzione") String direzione, @Param("divisione") String divisione,
+            @Param("dataDa") OffsetDateTime dataDa, @Param("dataA") OffsetDateTime dataA,
+            @Param("statoVersamento") StatoPendenza statoVersamento,
+            @Param("statoVersamentoAlternativo") StatoPendenza statoVersamentoAlternativo,
+            @Param("statoPagamento") StatoPagamento statoPagamento, @Param("scaduta") Boolean scaduta,
+            @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno, Pageable pageable);
+
+    /**
      * IUV e NAV sono univoci **per dominio**, non globalmente (vedi la nota di classe su
      * {@link Pendenza}): la ricerca richiede sempre entrambi, mai il solo NAV.
      *
+     * <p><b>Ritorna una lista, non un {@code Optional}</b>: {@code numeroAvviso} NON e'
+     * garantito univoco per dominio nonostante il nome del metodo suggerisca una ricerca
+     * puntuale — lo stesso NAV e' condiviso, legittimamente, da tutte le rate di un piano
+     * rateale con avviso cumulativo (GovPay deriva lo stesso {@code iuv}/{@code numeroAvviso}
+     * da quello fornito dal chiamante, non ne genera uno nuovo per ogni rata). Nessun vincolo
+     * DB impedisce questa situazione (solo un indice non univoco su
+     * {@code iuv_versamento, id_dominio}). Un {@code Optional} qui farebbe fallire la query a
+     * runtime con {@code IncorrectResultSizeDataAccessException} proprio nel caso — comune,
+     * non raro — di un piano rateale: il chiamante deve gestire esplicitamente 0, 1 o piu'
+     * risultati.
+     *
      * @param idDominio    dominio creditore
      * @param numeroAvviso NAV: identificativo dell'avviso di pagamento pagoPA
-     * @return la pendenza, se esiste
+     * @return le pendenze con questo numero avviso in questo dominio (tipicamente 0 o 1, ma
+     *         puo' essere piu' di 1 per le rate di un piano rateale con NAV condiviso)
      */
-    Optional<Pendenza> findByIdDominioAndNumeroAvviso(Long idDominio, String numeroAvviso);
+    List<Pendenza> findByIdDominioAndNumeroAvviso(Long idDominio, String numeroAvviso);
 
     /**
      * {@code idPendenza} e' univoco per applicazione, non per posizione (vincolo reale
@@ -79,7 +171,7 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
      * {@code idApplicazione}, non piu' passando per {@code opzionePagamento}.
      *
      * <p><b>Non filtra per {@code PosizioneDebitoria.dataPubblicazione}</b> — vedi Javadoc di
-     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndIdPosizioneDebitoria} per il
+     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndIdDominioAndCodDocumento} per il
      * ragionamento completo: ogni chiamante di questo metodo e' sempre l'applicazione
      * proprietaria, mai un consumatore esterno, e la spec dice che a lei la posizione deve
      * restare sempre visibile.</p>

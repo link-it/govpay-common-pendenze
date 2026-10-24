@@ -49,20 +49,26 @@ import jakarta.persistence.Version;
  * pura) — quelle colonne restano {@code NOT NULL} in produzione ma valorizzate con placeholder
  * fissi, vedi Javadoc di {@link Pendenza}.</p>
  *
- * <p><b>{@code unique_documenti_applicazione}</b> ({@code cod_documento}+{@code id_applicazione},
- * senza {@code id_dominio}): vincolo aggiunto in migrazione
- * per far corrispondere l'identita' pubblica di {@code idPosizioneDebitoria} (chiavata solo su
- * {@code idA2A}+{@code idPosizioneDebitoria} nello YAML v3) al vincolo DB reale — senza,
- * {@link it.govpay.pendenze.repository.PosizioneDebitoriaRepository#findByIdApplicazioneAndIdPosizioneDebitoria}
- * potrebbe trovare piu' righe (stesso {@code idPosizioneDebitoria} su domini diversi) e il
- * controllo applicativo in {@code PosizioneDebitoriaService#crea} da solo non basterebbe
- * contro creazioni concorrenti. Il vincolo storico {@code unique_documenti_1} (con
- * {@code id_dominio}) resta, ridondante ma innocuo.</p>
+ * <p><b>{@code idPosizioneDebitoria} dello YAML v3 non e' una colonna</b>: e' l'IUPD (standard
+ * pagoPA GPD, {@code gpd-4-aca.json}) e si deriva al volo concatenando, senza separatore,
+ * {@code idA2A}+{@code idDominio}+{@link #codDocumento} — mai persistito, mai una colonna
+ * propria di questa entita'. Questa entita' espone solo {@link #codDocumento} (la parte scelta
+ * liberamente dal gestionale); la composizione/decomposizione del valore pubblico e' compito di
+ * {@code PosizioneDebitoriaService#idPosizioneDebitoriaPubblica} e di
+ * {@code it.govpay.pendenze.identificativo.IdentificatorePosizioneDebitoria}. La decomposizione e'
+ * deterministica senza separatore solo perche' {@code idDominio} ha lunghezza fissa (11 cifre,
+ * codice fiscale ente pagoPA) e {@code idA2A} e' sempre gia' noto a priori (arriva separatamente
+ * dal path HTTP): nessuna ambiguita' di parsing.</p>
+ *
+ * <p><b>Vincolo di unicita'</b>: solo quello legacy, {@code unique_documenti_1}
+ * ({@code cod_documento}+{@code id_applicazione}+{@code id_dominio}) — nessun vincolo aggiuntivo
+ * serve, perche' l'identita' pubblica (IUPD) incorpora gia' tutte e tre le colonne per
+ * costruzione: due righe con lo stesso {@code cod_documento}+{@code id_applicazione}+
+ * {@code id_dominio} avrebbero comunque lo stesso IUPD, e il vincolo legacy le impedisce gia'.</p>
  */
 @Entity
 @Table(name = "documenti", uniqueConstraints = {
-        @UniqueConstraint(name = "unique_documenti_1", columnNames = {"cod_documento", "id_applicazione", "id_dominio"}),
-        @UniqueConstraint(name = "unique_documenti_applicazione", columnNames = {"cod_documento", "id_applicazione"})})
+        @UniqueConstraint(name = "unique_documenti_1", columnNames = {"cod_documento", "id_applicazione", "id_dominio"})})
 @SequenceGenerator(name = "seq_documenti", sequenceName = "seq_documenti", allocationSize = 1)
 public class PosizioneDebitoria {
 
@@ -92,9 +98,9 @@ public class PosizioneDebitoria {
     @Column(name = "versione", nullable = false)
     private long versione;
 
-    /** {@code idPosizioneDebitoria} dello YAML v3. */
+    /** Business key scelta dal gestionale — vedi Javadoc di classe per {@code idPosizioneDebitoria}. */
     @Column(name = "cod_documento", nullable = false, length = 35)
-    private String idPosizioneDebitoria;
+    private String codDocumento;
 
     /** FK piatta verso l'anagrafica esterna di govpay-common (M4) — corrisponde a {@code idA2A}. */
     @Column(name = "id_applicazione", nullable = false)
@@ -247,12 +253,12 @@ public class PosizioneDebitoria {
         return versione;
     }
 
-    public String getIdPosizioneDebitoria() {
-        return idPosizioneDebitoria;
+    public String getCodDocumento() {
+        return codDocumento;
     }
 
-    public void setIdPosizioneDebitoria(String idPosizioneDebitoria) {
-        this.idPosizioneDebitoria = idPosizioneDebitoria;
+    public void setCodDocumento(String codDocumento) {
+        this.codDocumento = codDocumento;
     }
 
     public Long getIdApplicazione() {

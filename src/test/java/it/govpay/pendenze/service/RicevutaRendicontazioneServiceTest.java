@@ -400,7 +400,7 @@ class RicevutaRendicontazioneServiceTest {
     private Pendenza pendenzaPersistita(String idPendenza, Long idDominio) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(1L);
-        posizione.setIdPosizioneDebitoria("pos-" + idPendenza + "-" + UUID.randomUUID().toString().substring(0, 8));
+        posizione.setCodDocumento("pos-" + idPendenza + "-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(idDominio);
         posizione.setDescrizione("test");
         posizione.setNotificaSend(false);

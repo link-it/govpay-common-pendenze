@@ -88,4 +88,21 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * @return tutte le richieste di pagamento della pendenza, in ordine cronologico di invio
      */
     List<Rpt> findByIdVersamentoOrderByDataMsgRichiestaAsc(Long idVersamento);
+
+    /**
+     * Identificazione della RPT per la chiave pagoPA ({@code GET /rpp/{idDominio}/{iuv}/{ccp}}
+     * e varianti {@code /rpt}/{@code /rt} dello YAML v2) — stesso vincolo fisico della tabella
+     * ({@code unique_rpt_id_transazione} su {@code iuv, ccp, cod_dominio}), usato dal wrapper v2
+     * ({@code it.govpay.pendenze.v2.transazione.RppV2Controller} in govpay-pendenze-api) al
+     * posto della chiave interna {@code idVersamento}: a differenza di
+     * {@link #findByIdVersamentoOrderByDataMsgRichiestaAsc}, qui non si parte gia' da una
+     * pendenza nota, e' questa ricerca stessa a risolverla (tramite {@code idVersamento}).
+     *
+     * @param codDominio dominio creditore (colonna fisica {@code cod_dominio})
+     * @param iuv        identificativo univoco di versamento
+     * @param iur        identificativo univoco di riscossione (colonna fisica {@code ccp} —
+     *                   vedi Javadoc di classe di {@link Rpt})
+     * @return la RPT, se esiste
+     */
+    Optional<Rpt> findByCodDominioAndIuvAndIur(String codDominio, String iuv, String iur);
 }

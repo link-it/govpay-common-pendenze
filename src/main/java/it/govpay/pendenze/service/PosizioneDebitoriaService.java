@@ -31,7 +31,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import it.govpay.common.entity.ApplicazioneEntity;
+import it.govpay.common.entity.DominioEntity;
 import it.govpay.common.repository.ApplicazioneRepository;
+import it.govpay.common.repository.DominioRepository;
+import it.govpay.pendenze.criteri.FiltriPendenze;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
 import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
@@ -45,7 +48,10 @@ import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
+import it.govpay.pendenze.identificativo.IdentificatorePosizioneDebitoria;
+import it.govpay.pendenze.identificativo.IdentificatorePosizioneDebitoria.ComponentiIdentificativo;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
+import it.govpay.pendenze.model.StatoPagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.OpzionePagamentoRepository;
@@ -76,6 +82,7 @@ public class PosizioneDebitoriaService {
     private final OpzionePagamentoRepository opzionePagamentoRepository;
     private final PendenzaRepository pendenzaRepository;
     private final ApplicazioneRepository applicazioneRepository;
+    private final DominioRepository dominioRepository;
     private final RendicontazioneRepository rendicontazioneRepository;
     private final Clock clock;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
@@ -101,12 +108,14 @@ public class PosizioneDebitoriaService {
      */
     public PosizioneDebitoriaService(PosizioneDebitoriaRepository posizioneDebitoriaRepository,
             OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository,
-            ApplicazioneRepository applicazioneRepository, RendicontazioneRepository rendicontazioneRepository,
+            ApplicazioneRepository applicazioneRepository, DominioRepository dominioRepository,
+            RendicontazioneRepository rendicontazioneRepository,
             Clock clock, ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
         this.pendenzaRepository = pendenzaRepository;
         this.applicazioneRepository = applicazioneRepository;
+        this.dominioRepository = dominioRepository;
         this.rendicontazioneRepository = rendicontazioneRepository;
         this.clock = clock;
         this.generatoreIuvProvider = generatoreIuvProvider;
@@ -140,6 +149,58 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Risoluzione inversa di {@link #risolviIdDominio}, stesso principio di {@link #risolviIdA2A}
+     * (percorso di composizione dell'identita' pubblica: un dominio ignoto qui e' un'incoerenza
+     * dei dati, non un caso di ricerca legittimo).
+     */
+    private String risolviCodDominio(Long idDominio) {
+        return dominioRepository.findById(idDominio)
+                .map(DominioEntity::getCodDominio)
+                .orElseThrow(
+                        () -> new IllegalStateException("Dominio [id:" + idDominio + "] non trovato in anagrafica"));
+    }
+
+    /**
+     * Risoluzione inversa di {@link #risolviCodDominio}, stesso principio di
+     * {@link #risolviIdApplicazione}: un {@code idDominio} (business code) sconosciuto e' un caso
+     * legittimo di ricerca (es. decomposto da un {@code idPosizioneDebitoria} malformato o
+     * riferito a un dominio inesistente), non un errore di configurazione.
+     */
+    private Optional<Long> risolviIdDominio(String idDominio) {
+        return dominioRepository.findByCodDominio(idDominio).map(DominioEntity::getId);
+    }
+
+    /**
+     * Compone l'{@code idPosizioneDebitoria} pubblico (IUPD, {@code idA2A}+{@code idDominio}+
+     * {@link PosizioneDebitoria#getCodDocumento()} senza separatore — vedi Javadoc di
+     * {@link PosizioneDebitoria}) a partire da un'entita' gestita. Usato dal livello REST per
+     * popolare la risposta e il {@code Location} header, mai persistito da questa libreria.
+     */
+    public String idPosizioneDebitoriaPubblica(PosizioneDebitoria posizione) {
+        return IdentificatorePosizioneDebitoria.comporre(risolviIdA2A(posizione.getIdApplicazione()),
+                risolviCodDominio(posizione.getIdDominio()), posizione.getCodDocumento());
+    }
+
+    /**
+     * Risolve una posizione dall'identita' pubblica opaca che arriva dal path HTTP
+     * ({@code idA2A}+{@code idPosizioneDebitoria}): decompone il secondo (vedi
+     * {@link IdentificatorePosizioneDebitoria#scomponi}), risolve {@code idA2A}/{@code idDominio}
+     * nelle rispettive FK, e interroga il repository sulla chiave reale a tre colonne. Un
+     * {@code idA2A} ignoto, un {@code idPosizioneDebitoria} sintatticamente malformato per questo
+     * schema, o un {@code idDominio} decomposto che non corrisponde a nessun dominio censito sono
+     * tutti trattati allo stesso modo: nessuna posizione corrisponde, {@link Optional#empty()} —
+     * mai un'eccezione diversa da "non trovato", perche' nessuno di questi casi e' distinguibile
+     * da un vero "non esiste" per un chiamante esterno.
+     */
+    private Optional<PosizioneDebitoria> trovaPerIdentificativoInterno(String idA2A, String idPosizioneDebitoria) {
+        return risolviIdApplicazione(idA2A).flatMap(idApplicazione -> IdentificatorePosizioneDebitoria
+                .scomponi(idA2A, idPosizioneDebitoria)
+                .flatMap(componenti -> risolviIdDominio(componenti.idDominio())
+                        .flatMap(idDominio -> posizioneDebitoriaRepository.findByIdApplicazioneAndIdDominioAndCodDocumento(
+                                idApplicazione, idDominio, componenti.codDocumento()))));
+    }
+
+    /**
      * Crea l'aggregato a partire da dati a valore, privi di stati e identita JPA.
      * Il servizio costruisce nuove entita, inizializza opzioni DISPONIBILI e pendenze
      * NON_ESEGUITO, assegna UUID/indici/date e genera o verifica IUV e numero avviso.
@@ -148,11 +209,11 @@ public class PosizioneDebitoriaService {
      */
     public PosizioneDebitoria crea(DatiPosizioneDebitoria comando) {
         PosizioneDebitoria posizione = ApplicatoreComandi.posizioneDebitoria(comando);
-        if (posizioneDebitoriaRepository.existsByIdApplicazioneAndIdPosizioneDebitoria(
-                posizione.getIdApplicazione(), posizione.getIdPosizioneDebitoria())) {
+        if (posizioneDebitoriaRepository.existsByIdApplicazioneAndIdDominioAndCodDocumento(
+                posizione.getIdApplicazione(), posizione.getIdDominio(), posizione.getCodDocumento())) {
             throw new RisorsaGiaEsistenteException(
-                    "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
-                            + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
+                    "esiste gia' una posizione debitoria con codDocumento ["
+                            + posizione.getCodDocumento() + "] per questa applicazione e questo dominio");
         }
         ValidatorePosizioneDebitoria.valida(posizione);
         assegnaIndici(posizione);
@@ -214,11 +275,9 @@ public class PosizioneDebitoriaService {
             return posizioneDebitoriaRepository.saveAndFlush(posizione);
         } catch (DataIntegrityViolationException e) {
             // Rete di sicurezza contro le creazioni concorrenti: il controllo existsBy...
-            // sopra e' un check-then-act, non atomico — due richieste
-            // concorrenti con lo stesso idA2A+idPosizioneDebitoria possono superarlo entrambe.
-            // La garanzia reale e' il vincolo DB unique_documenti_applicazione (migrazione
-            // 01_documenti.sql, cod_documento+id_applicazione senza id_dominio, per far
-            // corrispondere l'identita' pubblica al vincolo): qui se ne traduce la violazione
+            // sopra e' un check-then-act, non atomico — due richieste concorrenti con lo stesso
+            // codDocumento+idApplicazione+idDominio possono superarlo entrambe. La garanzia
+            // reale e' il vincolo DB legacy unique_documenti_1: qui se ne traduce la violazione
             // nella stessa eccezione del controllo esplicito, cosi' il chiamante vede sempre
             // RisorsaGiaEsistenteException e non un'eccezione di persistenza generica.
             //
@@ -227,10 +286,10 @@ public class PosizioneDebitoriaService {
             // altro vincolo violato (es. NOT NULL su una colonna non valorizzata, un bug
             // diverso) verrebbe mascherato da un 409 fuorviante invece di propagarsi come
             // l'errore che e' davvero.
-            if (violaVincolo(e, VINCOLI_UNICITA_IDENTIFICATIVO)) {
+            if (violaVincolo(e, VINCOLO_UNICITA_IDENTIFICATIVO)) {
                 throw new RisorsaGiaEsistenteException(
-                        "esiste gia' una posizione debitoria con idPosizioneDebitoria ["
-                                + posizione.getIdPosizioneDebitoria() + "] per questa applicazione");
+                        "esiste gia' una posizione debitoria con codDocumento ["
+                                + posizione.getCodDocumento() + "] per questa applicazione e questo dominio");
             }
             // Stessa rete di sicurezza, stessa motivazione, per il duplicato di idPendenza:
             // il controllo proattivo verificaIdPendenzaNonDuplicato
@@ -244,19 +303,12 @@ public class PosizioneDebitoriaService {
     }
 
     /**
-     * Entrambi i vincoli UNIQUE reali su {@code documenti} che possono segnalare lo stesso
-     * duplicato pubblico ({@code idA2A}+{@code idPosizioneDebitoria}): {@code
-     * unique_documenti_applicazione} (cod_documento+id_applicazione, aggiunto in migrazione
-     * per l'identita' pubblica) e {@code unique_documenti_1}
-     * (cod_documento+id_applicazione+id_dominio, gia' presente nello schema legacy). Quando
-     * il duplicato ha anche lo stesso {@code id_dominio}, ENTRAMBI i vincoli sono violati
-     * dalla stessa riga — quale dei due il motore segnali dipende dall'ordine con cui
-     * valuta gli indici, non e' deterministico lato applicativo: riconoscere solo
-     * {@code unique_documenti_applicazione} lascerebbe questo caso — duplicato sullo stesso
-     * dominio, individuato solo al flush — propagarsi come 500 anziche' 409.
+     * Unico vincolo UNIQUE reale su {@code documenti} che segnala il duplicato pubblico
+     * (codDocumento+idApplicazione+idDominio, gia' presente nello schema legacy) —
+     * l'identita' pubblica (IUPD) incorpora tutte e tre le colonne per costruzione, quindi
+     * nessun vincolo aggiuntivo serve (vedi Javadoc di {@link PosizioneDebitoria}).
      */
-    private static final List<String> VINCOLI_UNICITA_IDENTIFICATIVO = List.of(
-            "unique_documenti_applicazione", "unique_documenti_1");
+    private static final String VINCOLO_UNICITA_IDENTIFICATIVO = "unique_documenti_1";
 
     /**
      * Vincolo UNIQUE reale su {@code versamenti} ({@code cod_versamento_ente, id_applicazione}):
@@ -350,16 +402,22 @@ public class PosizioneDebitoriaService {
      * nuovo su {@code versamenti}, coerente con "minimizza le
      * variazioni al DB" — IUV/numeroAvviso generati da {@link GeneratoreIuv} non passano da
      * qui, la loro unicita' e' gia' garantita per costruzione dal progressivo atomico.
+     *
+     * <p>{@link PendenzaRepository#findByIdDominioAndNumeroAvviso} ritorna una lista, non un
+     * {@code Optional}: una o piu' corrispondenze sono comunque un duplicato da rifiutare, ma
+     * un {@code Optional} qui farebbe fallire con un'eccezione di persistenza non gestita
+     * proprio nel caso — dati migrati da v2 con NAV condiviso tra le rate di un piano rateale
+     * — in cui questo controllo serve di piu'.</p>
      */
     private void verificaNumeroAvvisoNonDuplicato(PosizioneDebitoria posizione, Pendenza pendenza) {
-        pendenzaRepository.findByIdDominioAndNumeroAvviso(posizione.getIdDominio(), pendenza.getNumeroAvviso())
-                .ifPresent(esistente -> {
-                    throw new ValidazioneNonSuperataException(
-                            "la pendenza [" + pendenza.getIdPendenza() + "] ha numeroAvviso ["
-                                    + pendenza.getNumeroAvviso()
-                                    + "] gia' usato da un'altra pendenza dello stesso dominio ["
-                                    + esistente.getIdPendenza() + "]");
-                });
+        List<Pendenza> esistenti = pendenzaRepository.findByIdDominioAndNumeroAvviso(posizione.getIdDominio(),
+                pendenza.getNumeroAvviso());
+        if (!esistenti.isEmpty()) {
+            throw new ValidazioneNonSuperataException(
+                    "la pendenza [" + pendenza.getIdPendenza() + "] ha numeroAvviso [" + pendenza.getNumeroAvviso()
+                            + "] gia' usato da un'altra pendenza dello stesso dominio ["
+                            + esistenti.get(0).getIdPendenza() + "]");
+        }
     }
 
     /**
@@ -467,9 +525,7 @@ public class PosizioneDebitoriaService {
      */
     @Transactional(readOnly = true)
     public Optional<PosizioneDebitoria> trovaPerIdentificativo(String idA2A, String idPosizioneDebitoria) {
-        return risolviIdApplicazione(idA2A)
-                .flatMap(idApplicazione -> posizioneDebitoriaRepository
-                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria));
+        return trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria);
     }
 
     /**
@@ -504,9 +560,7 @@ public class PosizioneDebitoriaService {
      */
     public PosizioneDebitoria aggiorna(String idA2A, String idPosizioneDebitoria,
             AggiornamentoPosizioneDebitoria comando) {
-        PosizioneDebitoria posizione = risolviIdApplicazione(idA2A)
-                .flatMap(idApplicazione -> posizioneDebitoriaRepository
-                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria))
+        PosizioneDebitoria posizione = trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria)
                 .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
                         + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
 
@@ -573,9 +627,7 @@ public class PosizioneDebitoriaService {
      */
     public OpzionePagamento aggiungiOpzionePagamento(String idA2A, String idPosizioneDebitoria,
             DatiOpzionePagamento comando) {
-        PosizioneDebitoria posizione = risolviIdApplicazione(idA2A)
-                .flatMap(idApplicazione -> posizioneDebitoriaRepository
-                        .findByIdApplicazioneAndIdPosizioneDebitoria(idApplicazione, idPosizioneDebitoria))
+        PosizioneDebitoria posizione = trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria)
                 .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
                         + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
 
@@ -672,9 +724,7 @@ public class PosizioneDebitoriaService {
             DatiPendenza comando) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
         PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
-        boolean appartiene = idPosizioneDebitoria.equals(posizione.getIdPosizioneDebitoria())
-                && idA2A.equals(risolviIdA2A(posizione.getIdApplicazione()));
-        if (!appartiene) {
+        if (!appartiene(posizione, idA2A, idPosizioneDebitoria)) {
             throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
                     + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
         }
@@ -889,6 +939,61 @@ public class PosizioneDebitoriaService {
                 : pendenzaRepository.findByIdApplicazioneAndNumeroAvvisoAndIdDominioDaCursore(idApplicazione,
                         numeroAvviso, idDominio, cursorDataCreazione, cursorId, pageable);
         return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, limit);
+    }
+
+    /**
+     * Ricerca generica per {@code idApplicazione} con filtri opzionali ({@link FiltriPendenze}) —
+     * usata dal wrapper v2 ({@code GET /pendenze} dello YAML v2) per replicare il filtro di
+     * ricerca del legacy, molto piu' ampio di {@link #cercaPendenze} (solo numero avviso). Vedi
+     * Javadoc di {@link PendenzaRepository#cercaFiltrate} per il significato di ciascun filtro
+     * e per la scelta deliberata di non escludere le pendenze senza {@code opzionePagamento}.
+     *
+     * @param idA2A    identificativo del gestionale responsabile
+     * @param filtri   filtri opzionali (ogni campo {@code null} lo disattiva)
+     * @param pageable paginazione/ordinamento richiesti
+     * @return la pagina di pendenze che rispettano il filtro
+     */
+    @Transactional(readOnly = true)
+    public PaginaRisultati<Pendenza> cercaPendenzeFiltrate(String idA2A, FiltriPendenze filtri, Pageable pageable) {
+        Optional<Long> idApplicazioneOpt = risolviIdApplicazione(idA2A);
+        if (idApplicazioneOpt.isEmpty()) {
+            return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
+        }
+        Page<Pendenza> pagina = pendenzaRepository.cercaFiltrate(idApplicazioneOpt.get(), filtri.idDominio(),
+                filtri.idDebitore(), filtri.direzione(), filtri.divisione(), filtri.dataDa(), filtri.dataA(),
+                filtri.statoVersamento(), filtri.statoVersamentoAlternativo(), filtri.statoPagamento(),
+                filtri.scaduta(), inizioGiornoCorrente(), pageable);
+        return paginaDa(pagina, pageable);
+    }
+
+    /** Come {@link #cercaPendenzeFiltrate}, ma senza {@code COUNT(*)} — stesso meccanismo
+     *  "limit+1" di {@link #cercaPendenzeSenzaConteggio}. */
+    @Transactional(readOnly = true)
+    public PaginaSenzaConteggio<Pendenza> cercaPendenzeFiltrateSenzaConteggio(String idA2A, FiltriPendenze filtri,
+            Pageable pageable) {
+        Optional<Long> idApplicazioneOpt = risolviIdApplicazione(idA2A);
+        if (idApplicazioneOpt.isEmpty()) {
+            return new PaginaSenzaConteggio<>(List.of(), false);
+        }
+        Pageable pageablePiuUno = OffsetPageRequest.of(pageable.getOffset(), pageable.getPageSize() + 1,
+                pageable.getSort());
+        List<Pendenza> grezzi = pendenzaRepository.cercaFiltrateSenzaConteggio(idApplicazioneOpt.get(),
+                filtri.idDominio(), filtri.idDebitore(), filtri.direzione(), filtri.divisione(), filtri.dataDa(),
+                filtri.dataA(), filtri.statoVersamento(), filtri.statoVersamentoAlternativo(),
+                filtri.statoPagamento(), filtri.scaduta(), inizioGiornoCorrente(), pageablePiuUno);
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
+    }
+
+    /**
+     * Mezzanotte del giorno corrente secondo il {@link Clock} della libreria — soglia di
+     * "scaduta" per {@link FiltriPendenze#scaduta()}, stessa convenzione (scaduta solo dal
+     * giorno DOPO la data di scadenza) di {@code PendenzaV2Mapper#isScaduta} nel wrapper v2,
+     * qui espressa dal clock iniettato invece di {@code LocalDate.now()} per restare
+     * testabile (vedi Javadoc di classe).
+     */
+    private OffsetDateTime inizioGiornoCorrente() {
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        return adesso.toLocalDate().atStartOfDay().atOffset(adesso.getOffset());
     }
 
     /**
@@ -1234,9 +1339,7 @@ public class PosizioneDebitoriaService {
     public OpzionePagamento annulla(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
         PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
-        boolean appartiene = idPosizioneDebitoria.equals(posizione.getIdPosizioneDebitoria())
-                && idA2A.equals(risolviIdA2A(posizione.getIdApplicazione()));
-        if (!appartiene) {
+        if (!appartiene(posizione, idA2A, idPosizioneDebitoria)) {
             throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
                     + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
         }
@@ -1260,15 +1363,27 @@ public class PosizioneDebitoriaService {
     public OpzionePagamento ripristina(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
         PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
-        boolean appartiene = idPosizioneDebitoria.equals(posizione.getIdPosizioneDebitoria())
-                && idA2A.equals(risolviIdA2A(posizione.getIdApplicazione()));
-        if (!appartiene) {
+        if (!appartiene(posizione, idA2A, idPosizioneDebitoria)) {
             throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
                     + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
         }
         OpzionePagamento risultato = ripristina(idOpzionePagamento);
         ValidatorePosizioneDebitoria.validaStati(posizione);
         return risultato;
+    }
+
+    /**
+     * Verifica che {@code posizione} sia davvero quella identificata da {@code idA2A}+
+     * {@code idPosizioneDebitoria}: riusa la stessa risoluzione di {@link #trovaPerIdentificativoInterno}
+     * invece di confrontare {@code idPosizioneDebitoria} con un valore ricomposto — se la
+     * risoluzione trova una riga diversa (o nessuna), {@code posizione} non appartiene a quella
+     * identita' pubblica, qualunque sia il motivo (altro dominio, altra applicazione, stringa
+     * malformata).
+     */
+    private boolean appartiene(PosizioneDebitoria posizione, String idA2A, String idPosizioneDebitoria) {
+        return trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria)
+                .map(trovata -> trovata.getId().equals(posizione.getId()))
+                .orElse(false);
     }
 
     /**
@@ -1423,7 +1538,7 @@ public class PosizioneDebitoriaService {
             pendenza.setNumeroAvviso(comando.numeroAvviso());
         }
         pendenza.setDataUltimoAggiornamento(OffsetDateTime.now(clock));
-        aggiorna(idA2A, pendenza.getOpzionePagamento().getPosizioneDebitoria().getIdPosizioneDebitoria(),
+        aggiorna(idA2A, idPosizioneDebitoriaPubblica(pendenza.getOpzionePagamento().getPosizioneDebitoria()),
                 AggiornamentoPosizioneDebitoria.nessunaModifica());
         return pendenza;
     }

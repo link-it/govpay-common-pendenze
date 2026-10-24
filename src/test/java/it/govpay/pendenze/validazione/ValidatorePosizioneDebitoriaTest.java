@@ -29,9 +29,27 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 class ValidatorePosizioneDebitoriaTest {
 
     @Test
-    void rifiutaPendenzeMisteAnnullateENonEseguiteSenzaEsiti() {
+    @DisplayName("pendenze miste annullate/non eseguite senza esiti: l'opzione resta DISPONIBILE, non rifiutata")
+    void accettaPendenzeMisteAnnullateENonEseguiteSenzaEsitiComeDisponibile() {
+        // Scenario reale sui dati migrati da v2 (annullamento indipendente della singola
+        // pendenza, mai esposto in v3 — vedi Javadoc di validaStati): nessuna pendenza e'
+        // "eseguita", quindi l'opzione non e' mai stata esercitata e resta DISPONIBILE
+        // (stato di default di posizioneValida), anche se una sua pendenza e' ANNULLATO.
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
         posizione.getOpzioniPagamento().get(0).getPendenze().get(1).setStato(StatoPendenza.ANNULLATO);
+        assertThatCode(() -> ValidatorePosizioneDebitoria.validaStati(posizione)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rifiutaOpzioneAnnullataConPendenzeMisteAnnullateENonEseguite() {
+        // Stesso aggregato del test sopra, ma con l'opzione (erroneamente) marcata
+        // ANNULLATA: non tutte le pendenze sono ANNULLATO, quindi resta un disallineamento
+        // da rifiutare — la nuova regola amplia cosa conta come DISPONIBILE, non rimuove il
+        // controllo di coerenza in se'.
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
+        OpzionePagamento opzione = posizione.getOpzioniPagamento().get(0);
+        opzione.getPendenze().get(1).setStato(StatoPendenza.ANNULLATO);
+        opzione.setStato(StatoOpzionePagamento.ANNULLATA);
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class);
     }
@@ -342,7 +360,7 @@ class ValidatorePosizioneDebitoriaTest {
     private PosizioneDebitoria posizioneValida(TipologiaOpzionePagamento tipologia, int numeroPendenze) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(1L);
-        posizione.setIdPosizioneDebitoria("pos-1");
+        posizione.setCodDocumento("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
 

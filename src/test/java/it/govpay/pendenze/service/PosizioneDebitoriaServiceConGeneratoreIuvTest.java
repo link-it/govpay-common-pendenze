@@ -9,11 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.FilterType;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
-import it.govpay.common.repository.DominioRepository;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
@@ -46,8 +43,7 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
 @ImportAutoConfiguration(PendenzeAutoConfiguration.class)
 @Import({PosizioneDebitoriaService.class, PosizioneDebitoriaServiceConGeneratoreIuvTest.Config.class})
 @EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})
-@EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"},
-        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = DominioRepository.class))
+@EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"})
 @ActiveProfiles("test")
 class PosizioneDebitoriaServiceConGeneratoreIuvTest {
 
@@ -70,7 +66,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         Long idApplicazione = applicazionePersistita("A2A-1");
         posizione.setIdApplicazione(idApplicazione);
-        posizione.setIdPosizioneDebitoria("pos-1");
+        posizione.setCodDocumento("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
         SoggettoDebitore soggetto = new SoggettoDebitore();
@@ -116,7 +112,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         Long idApplicazione = applicazionePersistita("A2A-2");
         posizione.setIdApplicazione(idApplicazione);
-        posizione.setIdPosizioneDebitoria("pos-2");
+        posizione.setCodDocumento("pos-2");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
         SoggettoDebitore soggetto = new SoggettoDebitore();
@@ -163,7 +159,7 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         Long idApplicazione = applicazionePersistita("A2A-3");
         posizione.setIdApplicazione(idApplicazione);
-        posizione.setIdPosizioneDebitoria("pos-3");
+        posizione.setCodDocumento("pos-3");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
         SoggettoDebitore soggetto = new SoggettoDebitore();
