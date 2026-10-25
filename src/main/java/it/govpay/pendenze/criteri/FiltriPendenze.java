@@ -14,7 +14,8 @@ import it.govpay.pendenze.model.StatoPendenza;
  *
  * @param idDominio                   dominio creditore, o {@code null}
  * @param idDebitore                  identificativo del debitore (confrontato case-insensitive
- *                                    su {@code srcDebitoreIdentificativo}), o {@code null}
+ *                                    contro QUALSIASI {@code SoggettoDebitore} della posizione,
+ *                                    debitori "in solido" compresi), o {@code null}
  * @param direzione                   direzione interna all'ente creditore, o {@code null}
  * @param divisione                   divisione interna all'ente creditore, o {@code null}
  * @param dataDa                      inizio (incluso) della finestra su {@code dataCreazione},
@@ -31,13 +32,18 @@ import it.govpay.pendenze.model.StatoPendenza;
  *                                     {@code true}/{@code false} per le pendenze
  *                                     {@code NON_ESEGUITO} scadute/non scadute (soglia: il
  *                                     giorno DOPO {@code dataScadenzaAvviso})
+ * @param escludiSpontaneiNonEseguiti {@code true} esclude {@code tipo=SPONTANEO AND
+ *                                     stato=NON_ESEGUITO} (replica {@code mostraSpontaneiNonPagati}
+ *                                     del legacy quando {@code false}); {@code null}/{@code false}
+ *                                     nessun filtro
  */
 public record FiltriPendenze(Long idDominio, String idDebitore, String direzione, String divisione,
         OffsetDateTime dataDa, OffsetDateTime dataA, StatoPendenza statoVersamento,
-        StatoPendenza statoVersamentoAlternativo, StatoPagamento statoPagamento, Boolean scaduta) {
+        StatoPendenza statoVersamentoAlternativo, StatoPagamento statoPagamento, Boolean scaduta,
+        Boolean escludiSpontaneiNonEseguiti) {
 
     /** Nessun filtro oltre a {@code idApplicazione} (che il chiamante fornisce separatamente). */
     public static FiltriPendenze nessuno() {
-        return new FiltriPendenze(null, null, null, null, null, null, null, null, null, null);
+        return new FiltriPendenze(null, null, null, null, null, null, null, null, null, null, null);
     }
 }

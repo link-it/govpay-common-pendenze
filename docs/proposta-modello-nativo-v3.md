@@ -1741,6 +1741,25 @@ deliberatamente dalla libreria v3 (qui e altrove) si propaga al wrapper tale
 e quale, non viene mai scritta attorno per inseguire una fedeltà al legacy
 più ampia di quella che la libreria sottostante permette.
 
+**Idempotenza di annullamento/ripristino: simmetrica nella libreria v3,
+asimmetrica nel legacy — differenza di comportamento accettata, non una
+limitazione** (verificato leggendo `PendenzeDAO.patchStato`, righe 666-707):
+il legacy tratta l'annullamento come idempotente (da `NON_ESEGUITO` o già
+`ANNULLATO` → sempre 200) ma il ripristino **non** lo è (accettato solo da
+`ANNULLATO`; da `NON_ESEGUITO`, cioè già ripristinato, il legacy risponde 400,
+non un no-op). Il service v3 (`PosizioneDebitoriaService#annulla(UUID)`/
+`#ripristina(UUID)`) è invece simmetrico: entrambe le operazioni sono no-op
+quando l'opzione è già nello stato target. Il wrapper eredita questa
+simmetria senza riprodurre l'asimmetria legacy: un ripristino ripetuto su
+un'opzione già `DISPONIBILE` risponde 200 (no-op), non 400 come nel legacy.
+A differenza della nota precedente, qui non si tratta di un vincolo che il
+wrapper subisce passivamente, ma di una differenza di comportamento
+acconsentita esplicitamente. **Punto indipendente dal 409 sulle opzioni con
+più di una pendenza descritto sopra**: quella guardia resta incondizionata —
+non diventa permissiva nei casi in cui la richiesta, a livello di singola
+pendenza, sarebbe comunque un no-op; nessuna eccezione implicita è stata
+aggiunta a quel controllo.
+
 **File nuovi/modificati** (tutti in `govpay-pendenze-api`, nessuna modifica a
 questa libreria): `PendenzaV2Controller` (nuovo override `updatePendenza` più
 i metodi privati `applicaPatch`/`patchDescrizioneStato`/`patchNota`/`patchAck`/
@@ -1884,10 +1903,122 @@ bilingue è richiesto, e questo endpoint non ha un parametro corrispondente
 nello YAML — riusare il mapper esistente trasformerebbe ogni richiesta
 bilingue in un 400, una regressione rispetto al legacy.
 
+## 36. Revisione indipendente del wrapper v2: 6 difetti confermati e corretti (2026-10-25)
+
+Revisione di codice (non di questa sessione di sviluppo) su `updatePendenza`/`addPendenza`/
+`findPendenze`/`findRpp` gia' implementati (§31-34), con riferimenti precisi a riga sia nel
+wrapper sia nel legacy. Tutti i 6 punti sono stati verificati leggendo il codice legacy citato
+(non assunti) prima di correggere.
+
+1. **PATCH senza controllo dominio/tipoVersamento (sicurezza)**: `updatePendenza` chiamava solo
+   `aclAuthorizer.richiedeScrittura()`+`verificaIdA2A`, mai l'equivalente di
+   `AuthorizationManager#isTipoVersamentoDominioAuthorized` del legacy (`PendenzeDAO#patch`,
+   riga 591, **prima** di applicare qualunque patch — `NotAuthorizedException`→403). Un'
+   applicazione non trusted, autorizzata a un tipo pendenza/dominio diverso da quello della
+   pendenza, otteneva 200 invece di 403. **Scoperta collegata**: `addPendenza` aveva solo meta'
+   del controllo (`NuovaPendenzaMapper#verificaAutorizzazioneTipoVersamento`, solo tipoVersamento,
+   400 invece di 403) — corretto anche questo, per consistenza, non solo la PATCH.
+   **Fix**: nuovo `NuovaPendenzaMapper#verificaAutorizzazioneDominioETipoVersamento` (dominio E
+   tipoVersamento, 403 via `AccessoNegatoException`), usato da `updatePendenza` (su
+   `pendenza.getIdDominio()`/`getIdTipoVersamento()`, prima del loop di patch) e da
+   `crea`/`toAggiornamentoPendenza` (sostituendo il vecchio controllo). Nuovi test:
+   `AddPendenzaControllerTest#putNonAutorizzataRispondeAccessoNegato`,
+   `UpdatePendenzaControllerTest#patchNonAutorizzataRispondeAccessoNegato`.
+2. **Il filtro `idDebitore` non trovava le pendenze scritte dal percorso v3-nativo**:
+   `PendenzaRepository#cercaFiltrate`/`RptRepository#cercaFiltrate` filtravano su
+   `Pendenza.srcDebitoreIdentificativo`, che per queste pendenze e' sempre il placeholder
+   `"VEDERE_SOGGETTI_DEBITORI"` (§21) — il debitore reale vive solo su `soggetti_debitori`.
+   **Decisione del committente**: match su QUALSIASI debitore "in solido" della posizione, non
+   solo il pagatore (ordine 0). **Fix**: la condizione diventa una sottoquery `EXISTS` su
+   `SoggettoDebitore` (via `p.opzionePagamento.posizioneDebitoria`), in entrambi i repository.
+   Nuovi test: `FindPendenzeV2ControllerTest#findPendenzeFiltroIdDebitoreCoDebitore` (match su un
+   co-debitore, non il pagatore), più la correzione dei due test preesistenti che mutavano
+   direttamente la colonna placeholder (falso positivo: il test passava per coincidenza, non
+   per il meccanismo che diceva di verificare).
+3. **PUT: cambio di dominio ignorato, risposta incoerente**: il ramo di aggiornamento passava
+   sempre il dominio della pendenza ESISTENTE a `toAggiornamentoPendenza`, ignorando quello nel
+   body — e la risposta usava il valore grezzo del body (anche se inesistente) per
+   `PendenzaCreata.idDominio`. Il legacy rifiuta un cambio di beneficiario
+   (`VersamentoUtils#validazioneSemanticaAggiornamento`, righe 167-172: confronto su `idUo`, che
+   implica il dominio — `GovPayException(VER_004)`). **Fix**: nuovo
+   `NuovaPendenzaMapper#validaBeneficiarioInvariato` (confronta dominio E unita' operativa
+   richiesti contro quelli della `PosizioneDebitoria` esistente, 400 su mismatch), chiamato dal
+   controller PRIMA di `toAggiornamentoPendenza`. Un dominio richiesto inesistente e' gia' un 404
+   (`risolviIdDominioAbilitato`), non piu' un 200 con dominio fantasma. Nuovi test:
+   `aggiornamentoConDominioDiversoRifiutato`, `aggiornamentoConDominioInesistenteRifiutato`.
+4. **`voci[].datiAllegati`/`contabilita`/`metadata` (v2) scartati silenziosamente**: nessun
+   campo equivalente in `DatiVocePendenza`/`VocePendenza` — la colonna fisica `contabilita` e'
+   gia' presa da `VocePendenza.dettaglioContabile` (struttura v3-nativa diversa, non
+   passthrough). **Decisione del committente**: una richiesta che popola questi campi con dati
+   reali va rifiutata (400), non accettata con successo e con perdita silenziosa. **Fix**: nuovo
+   `NuovaPendenzaMapper#verificaCampiVoceSenzaEquivalenteV3`, chiamato da `toDatiVocePendenza`
+   (sia in creazione sia in aggiornamento). Nuovi test: `voceConDatiAllegatiRifiutata`,
+   `voceConContabilitaRifiutata`.
+5. **Allegati: confermato APPEND invece di REPLACE su un aggiornamento** (non piu' un punto
+   aperto — il §31 lo segnalava come "non verificato contro il legacy"): il legacy
+   (`VersamentiBD#updateVersamento`, righe 494-516) cancella SEMPRE gli allegati esistenti del
+   versamento prima di inserire quelli della richiesta (anche vuota — svuota). **Fix**:
+   `PendenzaV2Controller#salvaAllegati` cancella (`AllegatoRepository#deleteByIdVersamento`,
+   nuovo) prima di inserire, solo sul ramo di aggiornamento (in creazione non c'e' nulla da
+   cancellare). Nuovo test: `allegatiSuAggiornamentoRimpiazzanoIPrecedenti`.
+6. **`mostraSpontaneiNonPagati` non puo' essere ignorato sui dati migrati**: la Javadoc di
+   `findPendenze` assumeva `Pendenza.tipo` sempre `"DOVUTO"` per questa libreria — vero solo per
+   le righe scritte dal percorso v3-nativo, ma `Pendenza` e' mappata sulla tabella legacy
+   `versamenti` RIUSATA IN-PLACE (§17): righe storiche con `tipo=SPONTANEO` restano visibili
+   attraverso questa stessa entity. Il legacy (`VersamentoFilter`, righe 402-410) esclude
+   `tipo=SPONTANEO AND stato=NON_ESEGUITO` quando il parametro e' `false`/assente. **Fix**: nuovo
+   campo `FiltriPendenze.escludiSpontaneiNonEseguiti`, nuova condizione in
+   `PendenzaRepository#cercaFiltrate`/`cercaFiltrateSenzaConteggio`. Nuovo test:
+   `findPendenzeMostraSpontaneiNonPagati` (mutazione diretta dell'entity per simulare il dato
+   migrato, stesso pattern degli altri test della classe).
+
+**Verificato**: 212/212 test in `govpay-common-pendenze` (`mvn clean test` reale, invariato —
+nessun nuovo test diretto qui, solo query modificate, coperte indirettamente dai test del
+wrapper); 345/345 in `govpay-pendenze-api` (+9 rispetto al §33-34: 2 in
+`FindPendenzeV2ControllerTest`, 6 in `AddPendenzaControllerTest`, 1 in
+`UpdatePendenzaControllerTest`).
+
+## 37. Due ulteriori difetti sulle correzioni del §36, confermati e corretti (2026-10-26)
+
+Trovati in revisione indipendente dei fix del §36, non del codice originario.
+
+1. **`validaBeneficiarioInvariato` rifiutava un aggiornamento che omette
+   `idUnitaOperativa` su una pendenza associata a EC**: il confronto (§36, punto 3)
+   normalizza l'omissione a `null` ma confronta direttamente con
+   `posizioneEsistente.getIdUnitaOperativa()`, che per EC non e' `null` ma l'id
+   reale della riga `unita_operativa` con `codUo="EC"` (l'ente creditore stesso,
+   non una vera UO — stesso concetto gia' nascosto nelle risposte da
+   `PendenzaV2Mapper#risolviUnitaOperativaDto`). Un aggiornamento che omette il
+   campo su una pendenza del genere rispondeva 400 per un cambio di beneficiario
+   che non c'e' mai stato: il legacy interpreta l'omissione come EC. **Fix**: nuovo
+   `NuovaPendenzaMapper#normalizzaUnitaOperativaEc`, applicato a entrambi i lati
+   del confronto — `null` e l'id della UO "EC" sono ora equivalenti. Il rifiuto per
+   un cambio di UO realmente diverso (non EC) resta invariato — verificato con un
+   test dedicato. Nuovi test:
+   `aggiornamentoSenzaUnitaOperativaSuPendenzaEcNonRifiutato`,
+   `aggiornamentoConUnitaOperativaDiversaRifiutato`.
+2. **`verificaCampiVoceSenzaEquivalenteV3` andava in `NullPointerException` (500)
+   su una lista esplicitamente `null`**: il controllo (§36, punto 4) chiamava
+   `contabilita.getQuote().isEmpty()`/`metadata.getMapEntries().isEmpty()` senza
+   considerare che il default dei generati OpenAPI e' una lista vuota, ma una
+   richiesta con `"contabilita": {"quote": null}` (o l'equivalente per
+   `metadata.mapEntries`) sovrascrive quel default con `null` via Jackson. **Fix**:
+   controllo null-safe prima di `isEmpty()` su entrambi i campi — una lista
+   esplicitamente `null` e' trattata come assente (nessun dato reale da perdere),
+   stessa conclusione logica della lista vuota, non piu' un errore non gestito.
+   Nuovi test: `voceConContabilitaQuoteNullNonLanciaNpe`,
+   `voceConMetadataMapEntriesNullNonLanciaNpe`.
+
+**Verificato**: 349/349 test in `govpay-pendenze-api` (`mvn clean test` reale, +4
+rispetto al §36); nessuna modifica a `govpay-common-pendenze` in questo punto.
+
 ## Stato dei test
 
-212 test totali in questa libreria, tutti verdi (`mvn clean test`); 336 in govpay-pendenze-api.
+212 test totali in questa libreria, tutti verdi (`mvn clean test`); 349 in govpay-pendenze-api.
 
+> **Aggiornato al 2026-10-26 (§37)**: 212 in questa libreria (invariata), 349 in
+> `govpay-pendenze-api` (+4, due difetti sui fix del §36).
+>
 > **Aggiornato al 2026-10-24 (§28)**: 211 in questa libreria, 295 in
 > `govpay-pendenze-api`.
 >
@@ -1903,3 +2034,6 @@ bilingue in un 400, una regressione rispetto al legacy.
 > **Aggiornato al 2026-10-25 (§33-34)**: 212 in questa libreria (invariata —
 > nuove query su `RptRepository`, nessun nuovo test diretto qui), 336 in
 > `govpay-pendenze-api` (+22, `findRpp` + `getAvvisiDocumento`).
+>
+> **Aggiornato al 2026-10-25 (§36)**: 212 in questa libreria (invariata), 345
+> in `govpay-pendenze-api` (+9, revisione dei 6 difetti).

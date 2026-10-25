@@ -18,8 +18,9 @@ import java.time.OffsetDateTime;
  * @param iur                 frammento di {@code Rpt.iur} (colonna fisica {@code ccp}),
  *                            confrontato case-insensitive "contiene", o {@code null}
  * @param idPendenza          {@code Pendenza.idPendenza} esatto, o {@code null}
- * @param idDebitore          identificativo del debitore (confrontato case-insensitive su
- *                            {@code Pendenza.srcDebitoreIdentificativo}), o {@code null}
+ * @param idDebitore          identificativo del debitore (confrontato case-insensitive contro
+ *                            QUALSIASI {@code SoggettoDebitore} della posizione, debitori "in
+ *                            solido" compresi), o {@code null}
  * @param codEsitoPagamento   valore esatto di {@code Rpt.codEsitoPagamento}, o {@code null}
  * @param dataRichiestaDa     inizio (incluso) della finestra su {@code Rpt.dataMsgRichiesta}, o
  *                            {@code null}

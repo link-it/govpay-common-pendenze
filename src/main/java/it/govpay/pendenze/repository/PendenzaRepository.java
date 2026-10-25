@@ -20,19 +20,28 @@ import it.govpay.pendenze.model.StatoPendenza;
 public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
 
     /**
-     * Ricerca generica per {@code idApplicazione} con filtri opzionali — usata dal wrapper v2
-     * ({@code GET /pendenze} dello YAML v2, {@code it.govpay.pendenze.v2.pendenza
-     * .PendenzaV2Controller#findPendenze} in govpay-pendenze-api) per replicare il filtro di
-     * ricerca del legacy ({@code PendenzeDAO.listaPendenze}/{@code VersamentoFilter}), molto
-     * piu' ampio di {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}
-     * (solo numero avviso).
+     * {@code from}+{@code where} condivisi da {@link #cercaFiltrate} (contenuto e conteggio) e
+     * da {@link #cercaFiltrateSenzaConteggio} — un'unica definizione dei filtri, stesso
+     * principio di {@code RptRepository#FILTRI_RICERCA_RPT}.
      *
-     * <p>Ogni filtro e' opzionale (un parametro {@code null} lo disattiva): questo metodo
-     * esprime solo le condizioni di basso livello sui campi reali di {@link Pendenza} — la
-     * traduzione di un concetto applicativo v2 (es. l'enum {@code StatoPendenza} dello YAML v2)
-     * in questi parametri e' responsabilita' del chiamante (il wrapper), non di questa
-     * libreria v3-nativa (vedi {@code it.govpay.pendenze.v2.package-info}: "mai duplicare
-     * regole di dominio").</p>
+     * <p>Usata dal wrapper v2 ({@code GET /pendenze} dello YAML v2, {@code it.govpay.pendenze
+     * .v2.pendenza.PendenzaV2Controller#findPendenze} in govpay-pendenze-api) per replicare il
+     * filtro di ricerca del legacy ({@code PendenzeDAO.listaPendenze}/{@code VersamentoFilter}),
+     * molto piu' ampio di {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}
+     * (solo numero avviso). Ogni filtro e' opzionale (un parametro {@code null} lo disattiva):
+     * la traduzione di un concetto applicativo v2 (es. l'enum {@code StatoPendenza} dello YAML
+     * v2) in questi parametri e' responsabilita' del chiamante, non di questa libreria
+     * v3-nativa (vedi {@code it.govpay.pendenze.v2.package-info}: "mai duplicare regole di
+     * dominio").</p>
+     *
+     * <p><b>{@code idDebitore}</b>: match su QUALSIASI {@code SoggettoDebitore} della
+     * {@code PosizioneDebitoria} (debitori "in solido"), non piu' sul placeholder legacy
+     * {@code Pendenza.srcDebitoreIdentificativo} (sempre {@code "VEDERE_SOGGETTI_DEBITORI"}
+     * per le pendenze scritte dal percorso v3-nativo/wrapper — vedi Javadoc di
+     * {@link Pendenza}: quella colonna non e' mai sincronizzata, un confronto diretto non
+     * troverebbe mai nulla per le pendenze non migrate). Sottoquery {@code EXISTS} invece di un
+     * {@code join}, per non dover deduplicare righe quando una posizione ha piu' di un
+     * debitore.</p>
      *
      * <p><b>{@code statoVersamento}/{@code statoVersamentoAlternativo}</b>: due valori invece
      * di una lista, solo per il caso "o l'uno o l'altro" (es. {@code ESEGUITO} OR
@@ -43,14 +52,24 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
      * {@code oggiInizioGiorno} (mezzanotte del giorno corrente, stessa soglia di
      * {@code PendenzaV2Mapper#isScaduta}: scaduta solo dal giorno DOPO la data di scadenza).</p>
      *
+     * <p><b>{@code escludiSpontaneiNonEseguiti}</b>: replica il filtro del legacy su
+     * {@code mostraSpontaneiNonPagati} ({@code VersamentoFilter}, righe 402-410: esclude
+     * {@code tipo=SPONTANEO AND stato=NON_ESEGUITO} quando {@code false}/non specificato).
+     * {@code Pendenza.tipo} e' sempre {@code "DOVUTO"} per le righe scritte dal percorso
+     * v3-nativo (vedi Javadoc del campo), ma {@code Pendenza} e' mappata sulla tabella legacy
+     * {@code versamenti} RIUSATA in-place (M17): righe storiche con {@code tipo=SPONTANEO}
+     * restano visibili attraverso questa stessa entity, il filtro non e' morto.</p>
+     *
      * <p><b>Non esclude le pendenze senza {@code opzionePagamento}</b> (a differenza di
      * {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}): il legacy
      * stesso non le esclude mai dalla ricerca (fedelta' richiesta per il wrapper v2, vedi
      * memoria {@code feedback_wrapper_v2_fedelta_legacy}).</p>
      */
-    @Query("select p from Pendenza p where p.idApplicazione = :idApplicazione "
+    String FILTRI_RICERCA_PENDENZE = "from Pendenza p where p.idApplicazione = :idApplicazione "
             + "and (:idDominio is null or p.idDominio = :idDominio) "
-            + "and (:idDebitore is null or upper(p.srcDebitoreIdentificativo) = upper(:idDebitore)) "
+            + "and (:idDebitore is null or exists (select 1 from SoggettoDebitore sd "
+            + "     where sd.posizioneDebitoria = p.opzionePagamento.posizioneDebitoria "
+            + "     and upper(sd.identificativo) = upper(:idDebitore))) "
             + "and (:direzione is null or p.direzione = :direzione) "
             + "and (:divisione is null or p.divisione = :divisione) "
             + "and (:dataDa is null or p.dataCreazione >= :dataDa) "
@@ -62,32 +81,23 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
             + "     or (:scaduta = true and p.dataScadenzaAvviso is not null "
             + "         and p.dataScadenzaAvviso < :oggiInizioGiorno) "
             + "     or (:scaduta = false and (p.dataScadenzaAvviso is null "
-            + "         or p.dataScadenzaAvviso >= :oggiInizioGiorno)))")
+            + "         or p.dataScadenzaAvviso >= :oggiInizioGiorno))) "
+            + "and (:escludiSpontaneiNonEseguiti is null or :escludiSpontaneiNonEseguiti = false "
+            + "     or not (p.tipo = 'SPONTANEO' and p.stato = 'NON_ESEGUITO'))";
+
+    @Query(value = "select p " + FILTRI_RICERCA_PENDENZE, countQuery = "select count(p) " + FILTRI_RICERCA_PENDENZE)
     Page<Pendenza> cercaFiltrate(@Param("idApplicazione") Long idApplicazione, @Param("idDominio") Long idDominio,
             @Param("idDebitore") String idDebitore, @Param("direzione") String direzione,
             @Param("divisione") String divisione, @Param("dataDa") OffsetDateTime dataDa,
             @Param("dataA") OffsetDateTime dataA, @Param("statoVersamento") StatoPendenza statoVersamento,
             @Param("statoVersamentoAlternativo") StatoPendenza statoVersamentoAlternativo,
             @Param("statoPagamento") StatoPagamento statoPagamento, @Param("scaduta") Boolean scaduta,
-            @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno, Pageable pageable);
+            @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno,
+            @Param("escludiSpontaneiNonEseguiti") Boolean escludiSpontaneiNonEseguiti, Pageable pageable);
 
     /** Come {@link #cercaFiltrate}, ma senza {@code COUNT(*)} — stesso meccanismo "limit+1" di
      *  {@link #findAllByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}. */
-    @Query("select p from Pendenza p where p.idApplicazione = :idApplicazione "
-            + "and (:idDominio is null or p.idDominio = :idDominio) "
-            + "and (:idDebitore is null or upper(p.srcDebitoreIdentificativo) = upper(:idDebitore)) "
-            + "and (:direzione is null or p.direzione = :direzione) "
-            + "and (:divisione is null or p.divisione = :divisione) "
-            + "and (:dataDa is null or p.dataCreazione >= :dataDa) "
-            + "and (:dataA is null or p.dataCreazione <= :dataA) "
-            + "and (:statoVersamento is null or p.stato = :statoVersamento "
-            + "     or p.stato = :statoVersamentoAlternativo) "
-            + "and (:statoPagamento is null or p.statoPagamento = :statoPagamento) "
-            + "and (:scaduta is null "
-            + "     or (:scaduta = true and p.dataScadenzaAvviso is not null "
-            + "         and p.dataScadenzaAvviso < :oggiInizioGiorno) "
-            + "     or (:scaduta = false and (p.dataScadenzaAvviso is null "
-            + "         or p.dataScadenzaAvviso >= :oggiInizioGiorno)))")
+    @Query("select p " + FILTRI_RICERCA_PENDENZE)
     List<Pendenza> cercaFiltrateSenzaConteggio(@Param("idApplicazione") Long idApplicazione,
             @Param("idDominio") Long idDominio, @Param("idDebitore") String idDebitore,
             @Param("direzione") String direzione, @Param("divisione") String divisione,
@@ -95,7 +105,8 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
             @Param("statoVersamento") StatoPendenza statoVersamento,
             @Param("statoVersamentoAlternativo") StatoPendenza statoVersamentoAlternativo,
             @Param("statoPagamento") StatoPagamento statoPagamento, @Param("scaduta") Boolean scaduta,
-            @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno, Pageable pageable);
+            @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno,
+            @Param("escludiSpontaneiNonEseguiti") Boolean escludiSpontaneiNonEseguiti, Pageable pageable);
 
     /**
      * IUV e NAV sono univoci **per dominio**, non globalmente (vedi la nota di classe su

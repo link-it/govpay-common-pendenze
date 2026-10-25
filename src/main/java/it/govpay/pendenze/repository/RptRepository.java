@@ -117,7 +117,9 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
             + "and (:iuv is null or upper(r.iuv) like concat('%', upper(:iuv), '%')) "
             + "and (:iur is null or upper(r.iur) like concat('%', upper(:iur), '%')) "
             + "and (:idPendenza is null or p.idPendenza = :idPendenza) "
-            + "and (:idDebitore is null or upper(p.srcDebitoreIdentificativo) = upper(:idDebitore)) "
+            + "and (:idDebitore is null or exists (select 1 from SoggettoDebitore sd "
+            + "     where sd.posizioneDebitoria = p.opzionePagamento.posizioneDebitoria "
+            + "     and upper(sd.identificativo) = upper(:idDebitore))) "
             + "and (:codEsitoPagamento is null or r.codEsitoPagamento = :codEsitoPagamento) "
             + "and (:dataRichiestaDa is null or r.dataMsgRichiesta >= :dataRichiestaDa) "
             + "and (:dataRichiestaA is null or r.dataMsgRichiesta <= :dataRichiestaA) "
@@ -143,8 +145,9 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * l'operatore del legacy: {@code codDominio}/{@code idPendenza}/{@code codEsitoPagamento}
      * uguaglianza; {@code iuv}/{@code iur} case-insensitive "contiene" (legacy
      * {@code ilike(..., LikeMode.ANYWHERE)} su entrambi); {@code idDebitore} case-insensitive
-     * esatto, stessa forma di {@link PendenzaRepository#cercaFiltrate}; date a estremi inclusi.
-     * La traduzione dei concetti v2 in questi parametri (es. l'enum {@code EsitoRpp}) e'
+     * contro QUALSIASI {@code SoggettoDebitore} della posizione (debitori "in solido"
+     * compresi), stessa forma di {@link PendenzaRepository#cercaFiltrate}; date a estremi
+     * inclusi. La traduzione dei concetti v2 in questi parametri (es. l'enum {@code EsitoRpp}) e'
      * responsabilita' del chiamante, non di questa libreria.</p>
      *
      * <p>Ordinamento dal {@code Pageable}: i nomi delle proprieta' si risolvono su {@code r}

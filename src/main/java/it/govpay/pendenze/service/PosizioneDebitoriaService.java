@@ -962,7 +962,7 @@ public class PosizioneDebitoriaService {
         Page<Pendenza> pagina = pendenzaRepository.cercaFiltrate(idApplicazioneOpt.get(), filtri.idDominio(),
                 filtri.idDebitore(), filtri.direzione(), filtri.divisione(), filtri.dataDa(), filtri.dataA(),
                 filtri.statoVersamento(), filtri.statoVersamentoAlternativo(), filtri.statoPagamento(),
-                filtri.scaduta(), inizioGiornoCorrente(), pageable);
+                filtri.scaduta(), inizioGiornoCorrente(), filtri.escludiSpontaneiNonEseguiti(), pageable);
         return paginaDa(pagina, pageable);
     }
 
@@ -980,7 +980,8 @@ public class PosizioneDebitoriaService {
         List<Pendenza> grezzi = pendenzaRepository.cercaFiltrateSenzaConteggio(idApplicazioneOpt.get(),
                 filtri.idDominio(), filtri.idDebitore(), filtri.direzione(), filtri.divisione(), filtri.dataDa(),
                 filtri.dataA(), filtri.statoVersamento(), filtri.statoVersamentoAlternativo(),
-                filtri.statoPagamento(), filtri.scaduta(), inizioGiornoCorrente(), pageablePiuUno);
+                filtri.statoPagamento(), filtri.scaduta(), inizioGiornoCorrente(),
+                filtri.escludiSpontaneiNonEseguiti(), pageablePiuUno);
         return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
     }
 
