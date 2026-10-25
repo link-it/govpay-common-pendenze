@@ -1450,9 +1450,456 @@ l'unicità.
 **Verificato**: 211/211 test in `govpay-common-pendenze`, 295/295 in
 `govpay-pendenze-api`, entrambi `mvn clean test` reali (non euristica).
 
+## 30. Wrapper v2: endpoint `GET /profilo` implementato (2026-10-24)
+
+Audit di completezza di tutti gli operationId generati dalle due interfacce v3
+(`PosizioniDebitorieApi`/`PendenzeApi`, 7+8 operazioni: **tutte** già implementate,
+nessun debito) e delle tre interfacce v2 wrapper (`PendenzeApi`, `TransazioniApi`,
+`ProfiloApi`) ha isolato `GET /profilo` come primo punto da chiudere: endpoint di
+sola lettura, isolato, senza dipendenze da altri endpoint ancora mancanti
+(`addPendenza`/`updatePendenza`/`findRpp`/`getAllegatoPendenza`/`getAvviso`/
+`getAvvisiDocumento` restano 501, tracciati per il seguito).
+
+- **Comportamento replicato**: legacy `ProfiloController.profiloGET` (v2
+  `wars/api-pendenze`) risolve il profilo dall'`Authentication` via
+  `UtentiDAO.getProfilo`, senza nessun controllo ACL aggiuntivo (a differenza di
+  ogni altro controller v2 di questo servizio, qui non c'è un equivalente di
+  `AclAuthorizer.richiedeLettura()`: l'endpoint riporta le autorizzazioni
+  dell'utenza, non ne richiede una specifica per essere letto). `nome` = principal
+  dell'utenza; `domini`/`tipiPendenza` seguono lo stesso meccanismo "star oppure
+  elenco esplicito" già usato per l'autorizzazione al tipo versamento in fase di
+  creazione pendenza (`PosizioneDebitoriaMapper#verificaAutorizzazioneTipoVersamento`),
+  qui applicato anche ai domini.
+- **Scoperta non ovvia**: `ApplicazioneEntity` non ha mai avuto nessuna colonna di
+  scoping sul dominio, e nessun codice v3 applica mai una restrizione per dominio
+  in fase di creazione/lettura pendenza — si poteva pensare che il concetto di
+  "domini su cui l'utenza è abilitata ad operare" non avesse più senso in v3. In
+  realtà il dato di infrastruttura condivisa (tabella `utenze`, colonna
+  `autorizzazione_domini_star`, e tabella `utenze_domini`) esiste comunque, è la
+  stessa tabella condivisa con la v2 legacy, e semplicemente non era mai stata
+  mappata in `govpay-pendenze-api` perché finora nessun endpoint ne aveva bisogno.
+  Questo endpoint è il primo a doverlo leggere, e lo fa a piena fedeltà: aggiunta
+  `UtenzaEntity.autorizzazioneDominiStar` (colonna già presente nello schema di
+  test, semplicemente non mappata) e nuova `UtenzaDominioEntity`/
+  `UtenzaDominioRepository` (mirror di `UtenzaTipoVersamentoEntity`/
+  `UtenzaTipoVersamentoRepository`, già esistenti per i tipi versamento). Una riga
+  di `utenze_domini` ha `idDominio` oppure `idUo` (mai entrambi): quando è una UO
+  il dominio è quello del padre (`UnitaOperativaEntity.getDominio()`, già in
+  govpay-common) — stessa risoluzione di `UtentiDAO.convertIdUnitaOperativeToDomini`
+  nel legacy, qui semplificata perché lo schema v2 `Dominio` non espone la UO
+  (basta deduplicare per dominio risolto).
+- **Bug del legacy replicato fedelmente**: `acl` è `required` nello schema YAML
+  `Profilo`, ma il `ProfiloConverter` del legacy non lo popola mai (né
+  `anagrafica`/`identityData`) — solo `nome`/`domini`/`tipiPendenza`. Stessa
+  omissione qui, per fedeltà (principio generale "fedeltà al legacy, bug
+  compresi").
+- Nuovo file `it.govpay.pendenze.v2.profilo.ProfiloMapper` (costruzione del bean,
+  javadoc di classe con il dettaglio completo) e `ProfiloV2Controller` (nessuna
+  `ApplicazioneEntity` necessaria: l'autenticazione risolve solo `UtenzaEntity`,
+  vedi `PendenzeGovpayPrincipalLoader`). Aggiunto `utenze_domini` allo schema H2 di
+  test (`schema-pendenze-test.sql`, mancava — nessuna FK reale verso `domini`/`uo`,
+  stesso principio M4 già applicato a `uo.id_dominio`).
+
+**Verificato**: 298/298 test in `govpay-pendenze-api` (`mvn clean test` reale), +2
+rispetto a prima (i nuovi test di `ProfiloV2ControllerTest`); nessuna modifica a
+`govpay-common-pendenze` in questo punto.
+
+## 31. Wrapper v2: `addPendenza` (PUT `/pendenze/{idA2A}/{idPendenza}`) implementato (2026-10-25)
+
+Ultimo dei sei operationId ancora 501 elencati al §30 a essere chiuso
+(`updatePendenza`/`findRpp`/`getAllegatoPendenza`/`getAvviso`/`getAvvisiDocumento`
+restano tracciati per il seguito). Upsert: crea la pendenza se `idPendenza` non
+esiste ancora (201), altrimenti la aggiorna (200) — stessa semantica e stessi due
+status del controller legacy (`PendenzeController.pendenzeIdA2AIdPendenzaPUT`,
+`createOrUpdate.isCreated() ? 201 : 200`).
+
+**Decisioni del committente, vincolanti per questa implementazione**:
+
+- **`documento` assente**: v3 non ammette una `Pendenza` senza
+  `PosizioneDebitoria`/`OpzionePagamento` (schema obbligatorio), mentre il legacy
+  dal vivo crea un versamento senza documento (`id_documento IS NULL`) quando
+  `documento` è omesso (verificato in `VersamentiBD.insertVersamentoEngine`: il
+  blocco che risolve/crea la riga `documenti` è interamente condizionato su
+  `versamento.getDocumento(this) != null`). Per restare nello schema v3 si
+  sintetizza comunque un documento: `codDocumento` = UUID random **senza
+  trattini** (32 caratteri hex, entro `VARCHAR(35)`), generato **solo in fase di
+  creazione** (mai ricalcolato in update). Deliberatamente diverso dal prefisso
+  `MIGR-` riservato alla migrazione (`PendenzaV2Mapper.PREFISSO_DOCUMENTO_SINTETIZZATO`):
+  le scritture dal vivo di questo wrapper non lo condividono, altrimenti
+  risulterebbero indistinguibili da un orfano di migrazione in lettura (vedi
+  `PendenzaV2Mapper#toDocumentoDto`, che usa quel prefisso proprio per
+  nascondere `documento` sulle pendenze orfane).
+- **Tipologia dell'opzione quando si crea un nuovo documento** (sia sintetico sia
+  con `documento.identificativo` esplicito): `documento.rata` assente →
+  `SOLUZIONE_UNICA`; presente → `PIANO_RATEALE`, con la prima rata ammessa sempre
+  `1` (vedi Javadoc di `TipologiaOpzionePagamento`, che anticipa esplicitamente
+  questo scenario: "la prima persistita subito come `PIANO_RATEALE` di 1 sola
+  pendenza, che diventa 2+ solo con la seconda chiamata"). Nessun limite di
+  cardinalità in gioco (`cardinalitaPendenzeMassima()` è `null` per entrambe le
+  tipologie): la scelta è puramente semantica.
+- **`documento.identificativo` che coincide con un documento già esistente**
+  (stessa tripla `codDocumento`+`idApplicazione`+`idDominio`): aggiunge una
+  pendenza all'opzione già esistente (`PosizioneDebitoriaService#aggiungiPendenza`),
+  non crea una nuova posizione. La tipologia è decisa alla creazione e non cambia
+  mai dopo: un mismatch (rata dichiarata su un'opzione `SOLUZIONE_UNICA`, o
+  viceversa) è un errore esplicito (`ValidazioneNonSuperataException`, 400),
+  stessa decisione di validazione della rata del §28/2026-10-20 — mai
+  rinumerazione silenziosa. La rata dichiarata deve coincidere con la prossima
+  posizione attesa (`max(numeroRata esistenti) + 1`): stesso identico calcolo già
+  usato internamente da `PosizioneDebitoriaService#aggiungiPendenza` per
+  assegnare `numeroRata`, qui anticipato in validazione prima di invocare quel
+  metodo.
+- **Update (`idPendenza` già esistente)**: nessuna logica di update parallela,
+  si delega interamente a `PosizioneDebitoriaService#aggiornaPendenza`, che
+  tocca SOLO i campi della pendenza stessa (importo, numeroAvviso se non già
+  assegnato, dataValidita, dataScadenzaAvviso, voci). **Deviazione consapevole
+  dal legacy**: `documento`/`soggettoPagatore` dichiarati in una PUT di
+  aggiornamento sono ignorati, non applicati e non un errore — il legacy li
+  sovrascriverebbe ("ultima scrittura vince", `VersamentiBD.insertVersamento`),
+  qui si riusa deliberatamente il metodo di libreria così com'è (per fedeltà
+  alla libreria, non al legacy, su questo punto specifico).
+- **`PendenzaCreata.UUID`**: sempre `null` nella risposta — popolato solo da
+  flussi di pagamento online/sessione, mai da una creazione/aggiornamento da
+  gestionale via `addPendenza`.
+
+**File nuovi/modificati** (tutti in `govpay-pendenze-api`, nessuna modifica a
+questa libreria):
+
+- Nuovo `it.govpay.pendenze.v2.pendenza.NuovaPendenzaMapper`: tutta la logica di
+  cui sopra, più i campi "solo legacy" senza comando dedicato, applicati con i
+  setter dell'entity dopo `crea`/`aggiungiPendenza`/`aggiornaPendenza`
+  (`causaleVersamento` via `CausaleVersamentoCodec`, `direzione`, `divisione`,
+  `tassonomia`, `tassonomiaAvviso`, `datiAllegati` e `proprieta` come JSON
+  passthrough, `codLotto`, `codAnnoTributario`, `sendAbilitato` sulla pendenza;
+  `tipoContabilita`/`codiceContabilita`/`descrizioneCausaleRpt` sulle voci,
+  appaiate per `idVocePendenza` — campi che esistono sull'entity ma non hanno
+  alcun comando della libreria che li accetti, stesso principio già applicato a
+  `causaleVersamento` in una sessione precedente).
+- `PendenzaV2Controller`: nuovo override `addPendenza` (l'interfaccia generata
+  `PendenzeApi` la espone già come default-501), nuove dipendenze iniettate
+  (`NuovaPendenzaMapper`, `AvvisoPdfPayloadMapper`, `StampeClient`,
+  `ExternalCallMetricsRecorder` per `stampaAvviso=true`, che riusa la stessa
+  generazione PDF di `PendenzaController#getStampaPendenza` v3-nativo,
+  catturata su buffer invece che in streaming diretto).
+- `AllegatoEntity`: aggiunta la scrittura (prima era solo lettura) —
+  `@GeneratedValue` sulla sequenza legacy `seq_allegati` e nuovo campo
+  `dataCreazione`. `raw_contenuto` resta deliberatamente non mappato (vedi punto
+  aperto sotto).
+- YAML `src/main/resources/govpay-api-pendenze-v2.yaml`: due correzioni a un
+  difetto di generazione (non una scelta di design) riscontrato durante
+  l'implementazione — vedi "Scoperta non ovvia" sotto.
+- Nuovo test di integrazione `AddPendenzaControllerTest` (stesso impianto
+  `@SpringBootTest`/`MockMvc`/H2 di `PendenzaV2ControllerTest`, in una classe
+  propria per isolare lo stub HTTP embedded del microservizio govpay-stampe
+  usato solo dal test di `stampaAvviso=true`).
+
+**Scoperta non ovvia (difetto di generazione OpenAPI, non una decisione di
+design)**: lo YAML dichiarava `TipoRiferimentoDocumento` (`rata` | `soglia`) e
+`TipoRiferimentoVocePendenza` (`codEntrata` | `ibanAccredito`+`tipoContabilita`+
+`codiceContabilita` | `tipoBollo`+`hashDocumento`+`provinciaResidenza`) come
+`oneOf` non discriminati, ciascun ramo con i propri campi `required`.
+openapi-generator (SpringCodegen) appiattisce un simile `oneOf` annidato in
+`allOf` in un'UNICA classe Java con i campi di TUTTI i rami, issando i
+`required` di ciascun ramo con l'AND logico sulla classe appiattita invece
+dell'XOR del `oneOf`: il risultato (`NuovoDocumento`/`NuovaVocePendenza`
+generate) marcava `@NotNull` simultaneamente campi mutuamente esclusivi (es.
+`rata` E `soglia` entrambi obbligatori, o `codEntrata` E `ibanAccredito` E
+`tipoBollo` tutti e tre obbligatori) — la bean validation cascata da `@Valid
+NuovaPendenza` avrebbe rifiutato con 400 OGNI richiesta reale (che per
+costruzione popola sempre un solo ramo). Corretto rimuovendo `required` dai
+singoli rami nello YAML (`RataDocumento`, `VincoloDocumento`, `RiferimentoEntrata`,
+`Entrata`, `Bollo`): la scelta "quale ramo è popolato" è comunque già validata a
+mano in `NuovaPendenzaMapper` (stesso ordine di priorità del converter legacy,
+bollo prima di codEntrata prima del default IBAN). Stessa causa anche per il
+parametro di query `dataAvvisatura` (`oneOf[string enum "MAI", string
+format:date]`): generava un'interfaccia marker vuota senza implementazioni né
+`Converter` Spring registrato, binding impossibile out-of-the-box — semplificato
+a `type: string` semplice nello YAML (il parsing "MAI" vs data è comunque manuale
+lato applicativo, non avrebbe guadagnato nulla dall'interfaccia marker).
+
+**Punti aperti, non decisi silenziosamente**:
+
+1. **`dataAvvisatura` non ha alcun effetto persistito**: nessun equivalente v3
+   trovato (cercato "avvisatura" in tutto `govpay-common-pendenze`, zero
+   riscontri) — né una colonna nell'entity `Pendenza`, né altrove. Il legacy ha
+   invece colonne reali su `versamenti` (`data_notifica_avviso`,
+   `avviso_notificato`, e **due varianti parallele** `avv_mail_data_prom_scadenza`/
+   `avv_app_io_data_prom_scadenza` per il promemoria scadenza, mail vs AppIO).
+   Implementato: solo la validazione del formato (`"MAI"` o data ISO), mai
+   applicato a nulla. Decisione di design non presa: se/come estendere
+   `Pendenza` con questi concetti è un cambio di schema più ampio di una
+   semplice estensione di campo, lasciato al committente.
+2. **`sendAbilitato`/campi "solo legacy" senza equivalente v3 individuale**:
+   `Pendenza.proprieta` esiste già come singola colonna JSON grezza (nessun
+   sotto-campo mappato individualmente) — `ProprietaPendenza` (`linguaSecondaria`,
+   `descrizioneImporto`, `lineaTestoRicevuta1/2`, ecc.) viene quindi scritta per
+   intero come JSON passthrough, non letta/validata campo per campo da questa
+   libreria. Comportamento accettabile (simmetrico alla lettura, già fatta così
+   da `PendenzaV2Mapper`), segnalato comunque per completezza.
+3. **Contenuto binario degli allegati (`NuovoAllegatoPendenza.contenuto`) non
+   persistito**: `allegati.raw_contenuto` è un **OID** Postgres in produzione
+   (Large Object, non un array di byte ordinario — richiede
+   `org.postgresql.largeobject.LargeObjectManager` sulla connessione JDBC
+   sottostante), mentre lo schema H2 di test lo approssima come `BYTEA` solo per
+   compatibilità DDL (commento preesistente nello schema, confermato in questa
+   sessione). Un mapping JPA semplice (`@Lob byte[]`) funzionerebbe contro H2 ma
+   non necessariamente contro il vero OID di PostgreSQL: implementata solo la
+   scrittura dei metadati (nome/tipo/descrizione/dataCreazione, con
+   `@GeneratedValue` sulla sequenza legacy `seq_allegati`), il contenuto base64
+   in ingresso viene scartato. Alternative non scelte: (a) `AttributeConverter`/
+   `UserType` dedicato basato su `LargeObjectManager` (comportamento corretto in
+   produzione, ma non verificabile in questo ambiente di test H2, che non
+   implementa la semantica OID di Postgres), (b) cambiare schema di storage
+   dell'allegato (es. colonna `BYTEA` anche in produzione, richiede una
+   migrazione DB fuori dallo scope di questa sessione).
+4. **Semantica di aggiornamento degli allegati su una PUT di update non
+   verificata contro il legacy**: implementato in modo conservativo — gli
+   allegati dichiarati in un aggiornamento vengono sempre AGGIUNTI, mai usati
+   per rimpiazzare quelli già presenti (nessuna cancellazione). Il comportamento
+   esatto del legacy su questo punto (append vs replace) non è stato verificato
+   a fondo nel tempo disponibile per questa sessione.
+5. **Documenti con più di un'opzione di pagamento**: `aggiungiAPosizioneEsistente`
+   richiede che il documento riusato abbia esattamente un'opzione di pagamento
+   (il caso sempre vero per un documento creato da questo stesso wrapper) —
+   un documento con zero o più opzioni (es. creato/modificato dal percorso
+   v3-nativo) è rifiutato con un 400 esplicito invece di un comportamento
+   indovinato.
+6. **`descrizione` del documento sintetico**: `documenti.descrizione` è
+   `NOT NULL` nello schema, ma un documento sintetico (nessun `documento` nella
+   richiesta) non ha alcuna descrizione fornita dal chiamante — si riusa la
+   `causale` della pendenza come fallback. Scelta pragmatica a basso rischio, non
+   una vera decisione architetturale, segnalata comunque.
+7. **`Soggetto.cellulare` (v2) e `NuovaVocePendenza.datiAllegati`/`contabilita`/
+   `metadata` (v2, a livello di singola voce)**: nessun campo equivalente in
+   `DatiSoggettoDebitore`/`DatiVocePendenza`/`VocePendenza` (v3) — gap noto,
+   nessuna colonna li riceve. In particolare `contabilita.quote`
+   (frazionamento per quote di una voce v2) e `VocePendenza.dettaglioContabile`
+   (v3) sono concetti non sovrapponibili, non è stato tentato un mapping fra i
+   due.
+8. **Deviazione deliberata da un bug del legacy**: `fillSingoliVersamentiFromVociPendenza`
+   del converter legacy va in NPE non gestita (`getTipoContabilita().name()`) se
+   una voce non indica né bollo, né `codEntrata`, né un IBAN diretto completo.
+   Qui si solleva invece un 400 esplicito (`ValidazioneNonSuperataException`) —
+   stesso principio già adottato altrove in questa libreria per un elemento
+   `null` della lista voci, per evitare un 500 non gestito al posto di un 400
+   controllato.
+
+**Verificato**: 305/305 test in `govpay-pendenze-api` (`mvn clean test` reale,
++7 rispetto a prima — i nuovi test di `AddPendenzaControllerTest`); nessuna
+modifica a `govpay-common-pendenze` in questo punto (212/212 test, verificati
+comunque con `mvn clean test` reale — +1 rispetto al conteggio di 211 riportato
+al §30, non imputabile a questa sessione).
+
+## 32. Wrapper v2: `updatePendenza` (PATCH `/pendenze/{idA2A}/{idPendenza}`) implementato (2026-10-25)
+
+Chiude un altro dei cinque operationId ancora 501 elencati al §31
+(`findRpp`/`getAllegatoPendenza`/`getAvviso`/`getAvvisiDocumento` restano
+tracciati per il seguito). JSON-Patch sui 4 path fissi del legacy (`/stato`,
+`/descrizioneStato`, `/ack`, `/nota` — stesso elenco di
+`PendenzeDAO.OPERAZIONI_CONSENTITE_PENDENZE`), applicati nell'ordine della
+richiesta alla stessa pendenza gestita, in un'unica transazione (nessun commit
+intermedio fra le operazioni, come nel legacy).
+
+**`/descrizioneStato`, `/ack`, `/nota`**: nessuna precondizione di stato nel
+legacy per questi tre path, nessun comando dedicato in questa libreria — stesso
+principio già applicato ai campi solo-legacy di `NuovaPendenzaMapper
+#applicaCampiLegacy` (§31): setter diretti sull'entity gestita, trovata via
+`PendenzaRepository#findByIdApplicazioneAndIdPendenzaAndOpzionePagamentoIsNotNull`
+nella transazione del controller. **`/descrizioneStato` e `/nota` scrivono
+sulla STESSA colonna** `descrizioneStato` — replica fedele di un quirk legacy
+(`PendenzeDAO.patch`, path `/nota`: estrae `value.oggetto` e lo scrive con lo
+stesso `setDescrizioneStato` di `patchDescrizioneStato`); "ultima scrittura
+vince" se entrambi i path appaiono nella stessa richiesta, come nel legacy. Il
+parametro `motivazione` che `patch()` estrae dal sibling `/descrizioneStato`
+per passarlo a `patchStato` non viene invece mai letto dentro quel metodo
+(dead code legacy, verificato leggendo il corpo del metodo): non replicato,
+non ha alcun effetto da riprodurre.
+
+**`/stato`**: solo i due target che il legacy ammette (`ANNULLATA` →
+annullamento, `NON_ESEGUITA` → ripristino; ogni altro valore, incluso
+`SCADUTA` — che nel legacy non è nemmeno un vero `StatoVersamento`, solo un
+filtro calcolato — è un 400, come nel legacy).
+
+**Nota finale, vincolante per questo endpoint** (limitazione v3 che si
+riflette deliberatamente nel wrapper, non aggirata): a differenza del legacy,
+la v3 nativa non annulla/ripristina più una singola pendenza — lo fa solo a
+livello di `OpzionePagamento`, con cascata su tutte le sue pendenze (chiusura
+deliberata del gap "stati misti nella stessa opzione", vedi Javadoc di
+`PosizioneDebitoriaService#registraEsitoPendenza`, nota 2026-10-22). Questo
+wrapper non aggira quella scelta scrivendo lo stato direttamente sull'entity
+(ricreerebbe esattamente l'artefatto che la libreria ha chiuso apposta): se
+l'opzione della pendenza contiene PIÙ di una pendenza (es. una rata di un
+piano rateale), la richiesta — che è per costruzione su una singola pendenza —
+risponde **409**, invece di annullare/ripristinare anche le pendenze sorelle
+non menzionate dal chiamante. Se l'opzione ha una sola pendenza, il
+comportamento coincide con quello del legacy. Il wrapper eredita anche le
+guardie v3 senza equivalente legacy (es. `ripristina` rifiuta se un'altra
+opzione della stessa posizione è `ATTIVATA` — il legacy non ha mai avuto
+questo controllo, non avendo il concetto di opzione): nessuna di queste viene
+scavalcata, per lo stesso motivo. In generale: ogni limitazione introdotta
+deliberatamente dalla libreria v3 (qui e altrove) si propaga al wrapper tale
+e quale, non viene mai scritta attorno per inseguire una fedeltà al legacy
+più ampia di quella che la libreria sottostante permette.
+
+**File nuovi/modificati** (tutti in `govpay-pendenze-api`, nessuna modifica a
+questa libreria): `PendenzaV2Controller` (nuovo override `updatePendenza` più
+i metodi privati `applicaPatch`/`patchDescrizioneStato`/`patchNota`/`patchAck`/
+`patchStato`/`validaOp`/`parseStatoPendenza`); nuovo test di integrazione
+`UpdatePendenzaControllerTest` (stesso impianto `@SpringBootTest`/`MockMvc`/H2
+di `AddPendenzaControllerTest`, senza lo stub di `govpay-stampe`, qui non
+necessario).
+
+**Verificato**: 314/314 test in `govpay-pendenze-api` (`mvn clean test` reale,
++9 rispetto al §31 — i nuovi test di `UpdatePendenzaControllerTest`); nessuna
+modifica a `govpay-common-pendenze` in questo punto.
+
+## 33. Wrapper v2: `findRpp` (GET `/rpp`) implementato (2026-10-25)
+
+Chiude un altro dei quattro operationId ancora 501 elencati al §32
+(`getAllegatoPendenza`/`getAvviso` restano sospesi su decisione esplicita,
+vedi §35). Vive in `RppV2Controller`, già sede di `getRpp`/`getRpt`/`getRt`.
+
+Richiede una capacità non ancora presente in questa libreria: una query
+filtrata a join fra `Rpt` e `Pendenza` (nessuna relazione JPA mappata fra le
+due entity, solo FK piatte — join ad-hoc in JPQL, analogo a
+`PendenzaRepository#cercaFiltrate`). Aggiunte a `RptRepository`:
+`cercaFiltrate`/`cercaFiltrateSenzaConteggio`, un nuovo
+`record RptConPendenza(Rpt rpt, Pendenza pendenza)` popolato via
+`select new ...`, e un nuovo value object `FiltriRpt` (analogo a
+`FiltriPendenze`). `RicevutaRendicontazioneService` espone
+`cercaRptFiltrate`/`cercaRptFiltrateSenzaConteggio` sopra queste query.
+`Rpt.codEsitoPagamento` resta un Integer "non interpretato" in questa
+libreria per scelta deliberata — la mappatura verso l'enum v2 (`EsitoRpp`)
+vive solo nel wrapper, mai qui:
+
+| `EsitoRpp` (v2) | `Rpt.codEsitoPagamento` |
+|---|---|
+| `ESEGUITO` | 0 |
+| `NON_ESEGUITO` | 1 |
+| `ESEGUITO_PARZIALE` | 2 |
+| `DECORRENZA` | 3 |
+| `DECORRENZA_PARZIALE` | 4 |
+| `IN_CORSO` | 100 |
+| `RIFIUTATO` | 101 |
+
+**Tre scostamenti dal mandato iniziale dato all'agente, risolti a favore
+della fedeltà al legacy (verificata leggendo il codice) invece delle
+istruzioni originarie, confermati dal committente**:
+
+1. **`idA2A` non è un filtro aggiuntivo**: il legacy lo valida ma lo
+   sovrascrive sempre con l'applicazione del chiamante autenticato (stesso
+   comportamento già stabilito per `findPendenze`) — nessuna risoluzione
+   verso un'altra applicazione è mai possibile.
+2. **`iuv` è un "contiene" case-insensitive**, non un match esatto — stesso
+   trattamento di `ccp` (`RptFilter` usa `ilike(IUV, iuv, LikeMode.ANYWHERE)`
+   per entrambi).
+3. **Solo due campi sono ordinabili**: `dataRichiesta` (→
+   `Rpt.dataMsgRichiesta`) e `stato` (→ `Rpt.stato`) — gli unici due che
+   `ListaRptDTO` abbia mai registrato nel legacy. Ordinamento di default:
+   `dataMsgRichiesta DESC`, come nel legacy.
+
+**Bug legacy replicato fedelmente**: il parametro `idPagamento` è letto e
+passato al DTO, ma `RptFilter` non ha mai avuto un campo corrispondente — un
+no-op puro, accettato ma sempre ignorato come filtro, documentato in Javadoc
+anziché corretto.
+
+**File nuovi/modificati**: `govpay-pendenze-api` — `RppV2Controller` (nuovo
+override `findRpp`, `codificaEsito(EsitoRpp)`, helper di paginazione/
+ordinamento), nuovo `FindRppControllerTest` (11 test); `govpay-common-pendenze`
+— `RptRepository` (nuove query), nuovo `RptConPendenza`, nuovo `FiltriRpt`,
+`RicevutaRendicontazioneService` (nuovi metodi di ricerca filtrata). Nessun
+nuovo test diretto in questa libreria per la nuova query JPQL — coperta solo
+indirettamente dal test di integrazione del wrapper.
+
+## 34. Wrapper v2: `getAvvisiDocumento` (GET `/documenti/{idDominio}/{numeroDocumento}/avvisi`) implementato (2026-10-25)
+
+Chiude l'ultimo degli operationId "senza gap" del §32. Vive in
+`PendenzaV2Controller`. Il documento (= `PosizioneDebitoria`) è risolto
+sempre e solo sull'applicazione autenticata corrente (nessun `idA2A` nella
+richiesta — stesso principio del legacy, "un'applicazione vede solo i suoi
+documenti"): `idDominio` + `numeroDocumento` (= `codDocumento` diretto,
+nessuna traduzione) via
+`PosizioneDebitoriaRepository#findByIdApplicazioneAndIdDominioAndCodDocumento`.
+Le rate stampabili sono filtrate a `StatoPendenza.NON_ESEGUITO`, ordinate per
+`numeroRata` crescente. `AvvisoPdfPayloadMapper` è stata estesa con
+`toPaymentNoticeRate(List<Pendenza>)` per popolare `instalments` (un
+`Instalment` per rata) sul modello client di `govpay-stampe`, che già
+supportava questo campo senza alcuna estensione lato microservizio.
+
+**Bug legacy replicato fedelmente**: `numeriAvviso` è validato nel formato
+(stesso controllo di `validaFormatoNumeroAvviso`, riusato qui) ma non è mai
+stato un filtro reale nel legacy (`IuvUtils.toIuv` valida, non filtra) — tutte
+le rate pagabili del documento sono sempre incluse indipendentemente dal
+valore passato.
+
+**Punto aperto, da confermare esplicitamente**: la scelta fra `full` e
+`instalments` nel payload per `govpay-stampe`. Il mandato iniziale chiedeva
+sempre `instalments`; l'agente che ha implementato l'endpoint ha scelto
+invece: opzione `PIANO_RATEALE` → sempre `instalments` (anche con una sola
+rata pagabile rimasta); opzione non rateale (`SOLUZIONE_UNICA`) con
+esattamente una pendenza pagabile → `full` (identico a
+`addPendenza?stampaAvviso`); opzione non rateale con PIÙ di una pendenza
+pagabile → anche qui `instalments` — quest'ultimo caso è una vera deviazione
+dal legacy, che stamperebbe un avviso separato per pendenza (qui non
+riproducibile: nessuna libreria di merge PDF nel progetto per comporre più
+documenti in uno). Alternative scartate per questo terzo caso: 422, oppure
+più chiamate a `govpay-stampe` con merge (richiede una nuova dipendenza).
+Scelta accettata in attesa di questa nota, ma resta un punto aperto
+formale — non una decisione chiusa — finché non viene confermata.
+
+Altri casi gestiti, non in discussione: nessuna rata pagabile sul documento →
+422 (`AvvisoDocumentoNonDisponibileException`, nuova, mappata come le altre
+eccezioni "avviso non generabile"); `linguaSecondaria` diverso da `false` →
+stesso 422 (nessun parametro `causaleTradotta` su questo endpoint — bilingue
+rifiutato esplicitamente, per decisione già presa a monte, non lasciata
+all'agente); documento di un'altra applicazione → 404 (mai 403, perché la
+query di risoluzione è già scoperta solo sull'applicazione corrente — non
+testato con una seconda applicazione fittizia). Non gestito, segnalato come
+margine noto: rate con IBAN postale diversi fra loro in uno stesso avviso
+multi-rata (il flag "postale" segue la prima rata, ogni rata risolve il
+proprio IBAN singolarmente).
+
+**File nuovi/modificati**: `PendenzaV2Controller` (nuovo override
+`getAvvisiDocumento`, nuova dipendenza `PosizioneDebitoriaRepository`);
+`AvvisoPdfPayloadMapper` (nuovo `toPaymentNoticeRate`, header condiviso
+estratto in `intestazione()`/`dominioDi()`); nuova
+`AvvisoDocumentoNonDisponibileException`; `ProblemExceptionHandler` (nuova
+eccezione aggiunta all'elenco esistente, mappata a 422); nuovo test
+`GetAvvisiDocumentoControllerTest` (458 righe, riusa l'impianto di stub HTTP
+di `AddPendenzaControllerTest` per `govpay-stampe`).
+
+## 35. Punti ancora sospesi (non ripresi in questa sessione)
+
+Per decisione esplicita del committente, `getAllegatoPendenza` e `getAvviso`
+restano sospesi — entrambi hanno un gap di design non ancora risolto (vedi
+ricerca dedicata, non riportata qui): per `getAllegatoPendenza`, il contenuto
+binario degli allegati non è mai persistito da nessuna parte nel modello v3
+(nessuna colonna riceve `raw_contenuto`), quindi l'endpoint non può restituire
+un contenuto reale oggi — da decidere se 404, un errore esplicito diverso (lo
+YAML dichiara solo 401/403/404/500) o affrontare la causa radice (fuori
+scope); per `getAvviso`, la traduzione bilingue del legacy è puramente
+locale (etichette fisse), ma il nuovo microservizio `govpay-stampe` richiede
+obbligatoriamente `second_language.title` (`causaleTradotta`) quando il
+bilingue è richiesto, e questo endpoint non ha un parametro corrispondente
+nello YAML — riusare il mapper esistente trasformerebbe ogni richiesta
+bilingue in un 400, una regressione rispetto al legacy.
+
 ## Stato dei test
 
-201 test totali in questa libreria, tutti verdi (`mvn clean test`); 270 in govpay-pendenze-api.
+212 test totali in questa libreria, tutti verdi (`mvn clean test`); 336 in govpay-pendenze-api.
 
 > **Aggiornato al 2026-10-24 (§28)**: 211 in questa libreria, 295 in
 > `govpay-pendenze-api`.
+>
+> **Aggiornato al 2026-10-24 (§30)**: 211 in questa libreria (invariata), 298 in
+> `govpay-pendenze-api`.
+>
+> **Aggiornato al 2026-10-25 (§31)**: 212 in questa libreria (+1 non imputabile
+> a questa sessione, nessuna modifica fatta qui), 305 in `govpay-pendenze-api`.
+>
+> **Aggiornato al 2026-10-25 (§32)**: 212 in questa libreria (invariata), 314
+> in `govpay-pendenze-api` (+9, `updatePendenza`).
+>
+> **Aggiornato al 2026-10-25 (§33-34)**: 212 in questa libreria (invariata —
+> nuove query su `RptRepository`, nessun nuovo test diretto qui), 336 in
+> `govpay-pendenze-api` (+22, `findRpp` + `getAvvisiDocumento`).

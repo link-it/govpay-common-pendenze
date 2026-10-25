@@ -9,8 +9,11 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.common.entity.DominioEntity;
+import it.govpay.common.repository.ApplicazioneRepository;
 import it.govpay.common.repository.DominioRepository;
+import it.govpay.pendenze.criteri.FiltriRpt;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
 import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
@@ -21,11 +24,13 @@ import it.govpay.pendenze.entity.RptXmlRptEntity;
 import it.govpay.pendenze.repository.PendenzaRepository;
 import it.govpay.pendenze.repository.RendicontazioneRepository;
 import it.govpay.pendenze.repository.RicevutaElenco;
+import it.govpay.pendenze.repository.RptConPendenza;
 import it.govpay.pendenze.repository.RptRepository;
 import it.govpay.pendenze.repository.RptXmlRptRepository;
 
 /**
- * Letture di {@link Rpt}/{@link Rendicontazione} di una pendenza.
+ * Letture di {@link Rpt}/{@link Rendicontazione} di una pendenza, piu' la ricerca trasversale
+ * delle {@link Rpt} di un'applicazione su tutte le sue pendenze ({@link #cercaRptFiltrate}).
  *
  * <p><b>Nessuna scrittura qui</b>: questa libreria non riceve né interpreta i flussi pagoPA
  * (RT/rendicontazioni) — chi li acquisisce (un batch/consumer dedicato) persiste
@@ -63,15 +68,17 @@ public class RicevutaRendicontazioneService {
     private final RptXmlRptRepository rptXmlRptRepository;
     private final RendicontazioneRepository rendicontazioneRepository;
     private final DominioRepository dominioRepository;
+    private final ApplicazioneRepository applicazioneRepository;
 
     public RicevutaRendicontazioneService(PendenzaRepository pendenzaRepository, RptRepository rptRepository,
             RptXmlRptRepository rptXmlRptRepository, RendicontazioneRepository rendicontazioneRepository,
-            DominioRepository dominioRepository) {
+            DominioRepository dominioRepository, ApplicazioneRepository applicazioneRepository) {
         this.pendenzaRepository = pendenzaRepository;
         this.rptRepository = rptRepository;
         this.rptXmlRptRepository = rptXmlRptRepository;
         this.rendicontazioneRepository = rendicontazioneRepository;
         this.dominioRepository = dominioRepository;
+        this.applicazioneRepository = applicazioneRepository;
     }
 
     /**
@@ -184,6 +191,53 @@ public class RicevutaRendicontazioneService {
         List<Rendicontazione> grezzi = rendicontazioneRepository.findByIuvAndFlusso_CodDominioDaCursore(
                 pendenza.get().getIuv(), codDominio, cursorDataOraFlusso, cursorId, pageable);
         return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, limit);
+    }
+
+    /**
+     * Ricerca trasversale delle richieste di pagamento di un'applicazione, su tutte le sue
+     * pendenze e tutti i domini ({@code GET /rpp} dello YAML v2, wrapper in govpay-pendenze-api) —
+     * vedi Javadoc di {@link RptRepository#cercaFiltrate} per il significato di ciascun filtro.
+     * Un {@code idA2A} ignoto e' un caso legittimo di ricerca (stesso principio di
+     * {@code PosizioneDebitoriaService#cercaPendenzeFiltrate}): pagina vuota, non un'eccezione.
+     *
+     * @param idA2A    identificativo del gestionale proprietario delle pendenze
+     * @param filtri   filtri opzionali (ogni campo {@code null} lo disattiva)
+     * @param pageable paginazione/ordinamento richiesti (proprieta' di {@link Rpt})
+     * @return la pagina di coppie RPT+pendenza che rispettano il filtro
+     */
+    public PaginaRisultati<RptConPendenza> cercaRptFiltrate(String idA2A, FiltriRpt filtri, Pageable pageable) {
+        Optional<Long> idApplicazione = risolviIdApplicazione(idA2A);
+        if (idApplicazione.isEmpty()) {
+            return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
+        }
+        Page<RptConPendenza> pagina = rptRepository.cercaFiltrate(idApplicazione.get(), filtri.codDominio(),
+                filtri.iuv(), filtri.iur(), filtri.idPendenza(), filtri.idDebitore(), filtri.codEsitoPagamento(),
+                filtri.dataRichiestaDa(), filtri.dataRichiestaA(), filtri.dataRicevutaDa(), filtri.dataRicevutaA(),
+                pageable);
+        return new PaginaRisultati<>(pagina.getContent(), pageable.getOffset(), pageable.getPageSize(),
+                pagina.getTotalElements());
+    }
+
+    /** Come {@link #cercaRptFiltrate}, ma senza {@code COUNT(*)} — stesso meccanismo "limit+1"
+     *  di {@code PosizioneDebitoriaService#cercaPendenzeFiltrateSenzaConteggio}. */
+    public PaginaSenzaConteggio<RptConPendenza> cercaRptFiltrateSenzaConteggio(String idA2A, FiltriRpt filtri,
+            Pageable pageable) {
+        Optional<Long> idApplicazione = risolviIdApplicazione(idA2A);
+        if (idApplicazione.isEmpty()) {
+            return new PaginaSenzaConteggio<>(List.of(), false);
+        }
+        Pageable pageablePiuUno = OffsetPageRequest.of(pageable.getOffset(), pageable.getPageSize() + 1,
+                pageable.getSort());
+        List<RptConPendenza> grezzi = rptRepository.cercaFiltrateSenzaConteggio(idApplicazione.get(),
+                filtri.codDominio(), filtri.iuv(), filtri.iur(), filtri.idPendenza(), filtri.idDebitore(),
+                filtri.codEsitoPagamento(), filtri.dataRichiestaDa(), filtri.dataRichiestaA(),
+                filtri.dataRicevutaDa(), filtri.dataRicevutaA(), pageablePiuUno);
+        return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
+    }
+
+    /** Stesso principio di {@code PosizioneDebitoriaService#risolviIdApplicazione}. */
+    private Optional<Long> risolviIdApplicazione(String idA2A) {
+        return applicazioneRepository.findByCodApplicazione(idA2A).map(ApplicazioneEntity::getId);
     }
 
     /**

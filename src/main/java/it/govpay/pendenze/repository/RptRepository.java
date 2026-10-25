@@ -105,4 +105,71 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * @return la RPT, se esiste
      */
     Optional<Rpt> findByCodDominioAndIuvAndIur(String codDominio, String iuv, String iur);
+
+    /**
+     * {@code from}+{@code where} condivisi da {@link #cercaFiltrate} (contenuto e conteggio) e da
+     * {@link #cercaFiltrateSenzaConteggio}: un'unica definizione dei filtri, invece di tre copie
+     * da tenere allineate a mano.
+     */
+    String FILTRI_RICERCA_RPT = "from Rpt r join Pendenza p on r.idVersamento = p.id "
+            + "where p.idApplicazione = :idApplicazione "
+            + "and (:codDominio is null or r.codDominio = :codDominio) "
+            + "and (:iuv is null or upper(r.iuv) like concat('%', upper(:iuv), '%')) "
+            + "and (:iur is null or upper(r.iur) like concat('%', upper(:iur), '%')) "
+            + "and (:idPendenza is null or p.idPendenza = :idPendenza) "
+            + "and (:idDebitore is null or upper(p.srcDebitoreIdentificativo) = upper(:idDebitore)) "
+            + "and (:codEsitoPagamento is null or r.codEsitoPagamento = :codEsitoPagamento) "
+            + "and (:dataRichiestaDa is null or r.dataMsgRichiesta >= :dataRichiestaDa) "
+            + "and (:dataRichiestaA is null or r.dataMsgRichiesta <= :dataRichiestaA) "
+            + "and (:dataRicevutaDa is null or r.dataMsgRicevuta >= :dataRicevutaDa) "
+            + "and (:dataRicevutaA is null or r.dataMsgRicevuta <= :dataRicevutaA)";
+
+    /**
+     * Ricerca trasversale delle richieste di pagamento di un'applicazione, su tutte le sue
+     * pendenze e tutti i domini — usata dal wrapper v2 ({@code GET /rpp} dello YAML v2,
+     * {@code it.govpay.pendenze.v2.transazione.RppV2Controller#findRpp} in govpay-pendenze-api)
+     * per replicare il filtro di ricerca del legacy ({@code RptDAO.listaRpt}/
+     * {@code it.govpay.bd.viste.filters.RptFilter} sulla vista {@code v_rpt_versamenti}, join
+     * di {@code rpt} e {@code versamenti}).
+     *
+     * <p><b>Join ad-hoc</b> ({@code join Pendenza p on r.idVersamento = p.id}): nessuna
+     * relazione JPA tra le due entita' (vedi Javadoc di classe di {@link Rpt}), ma i filtri
+     * {@code idApplicazione}/{@code idPendenza}/{@code idDebitore} stanno sulla pendenza e il
+     * chiamante ha bisogno di entrambe per costruire la risposta — vedi {@link RptConPendenza}.
+     * Inner join, come la vista legacy: una RPT senza pendenza non e' rappresentabile (e il
+     * vincolo FK reale su {@code rpt.id_versamento} lo impedisce comunque).</p>
+     *
+     * <p>Ogni filtro e' opzionale (un parametro {@code null} lo disattiva) e rispecchia
+     * l'operatore del legacy: {@code codDominio}/{@code idPendenza}/{@code codEsitoPagamento}
+     * uguaglianza; {@code iuv}/{@code iur} case-insensitive "contiene" (legacy
+     * {@code ilike(..., LikeMode.ANYWHERE)} su entrambi); {@code idDebitore} case-insensitive
+     * esatto, stessa forma di {@link PendenzaRepository#cercaFiltrate}; date a estremi inclusi.
+     * La traduzione dei concetti v2 in questi parametri (es. l'enum {@code EsitoRpp}) e'
+     * responsabilita' del chiamante, non di questa libreria.</p>
+     *
+     * <p>Ordinamento dal {@code Pageable}: i nomi delle proprieta' si risolvono su {@code r}
+     * ({@link Rpt}), l'alias principale della query.</p>
+     */
+    @Query(value = "select new it.govpay.pendenze.repository.RptConPendenza(r, p) " + FILTRI_RICERCA_RPT,
+            countQuery = "select count(r) " + FILTRI_RICERCA_RPT)
+    Page<RptConPendenza> cercaFiltrate(@Param("idApplicazione") Long idApplicazione,
+            @Param("codDominio") String codDominio, @Param("iuv") String iuv, @Param("iur") String iur,
+            @Param("idPendenza") String idPendenza, @Param("idDebitore") String idDebitore,
+            @Param("codEsitoPagamento") Integer codEsitoPagamento,
+            @Param("dataRichiestaDa") OffsetDateTime dataRichiestaDa,
+            @Param("dataRichiestaA") OffsetDateTime dataRichiestaA,
+            @Param("dataRicevutaDa") OffsetDateTime dataRicevutaDa,
+            @Param("dataRicevutaA") OffsetDateTime dataRicevutaA, Pageable pageable);
+
+    /** Come {@link #cercaFiltrate}, ma senza {@code COUNT(*)} — stesso meccanismo "limit+1" di
+     *  {@link PendenzaRepository#cercaFiltrateSenzaConteggio}. */
+    @Query("select new it.govpay.pendenze.repository.RptConPendenza(r, p) " + FILTRI_RICERCA_RPT)
+    List<RptConPendenza> cercaFiltrateSenzaConteggio(@Param("idApplicazione") Long idApplicazione,
+            @Param("codDominio") String codDominio, @Param("iuv") String iuv, @Param("iur") String iur,
+            @Param("idPendenza") String idPendenza, @Param("idDebitore") String idDebitore,
+            @Param("codEsitoPagamento") Integer codEsitoPagamento,
+            @Param("dataRichiestaDa") OffsetDateTime dataRichiestaDa,
+            @Param("dataRichiestaA") OffsetDateTime dataRichiestaA,
+            @Param("dataRicevutaDa") OffsetDateTime dataRicevutaDa,
+            @Param("dataRicevutaA") OffsetDateTime dataRicevutaA, Pageable pageable);
 }
