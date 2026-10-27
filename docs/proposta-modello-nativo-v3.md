@@ -1365,7 +1365,12 @@ Nota di correzione: l'ipotesi iniziale "l'ordine di stampa legacy segue l'inseri
 - 404 unico (nessuna distinzione) sia per RPT inesistente sia per RPT esistente ma RT non ancora acquisita — stesso trattamento del legacy (`RptDAO.leggiRt`).
 - Nessuna validazione di formato su `iuv`/`ccp` (il legacy non ne ha nessuna, solo `idDominio` ha un pattern — già imposto dallo schema generato).
 
-**Punto aperto emerso implementando il 409 sopra, NON chiuso — da verificare col committente**: `ValidatorePosizioneDebitoria.validaNumeroAvvisoNonDuplicatoNellAggregato` rifiuta già oggi (`ValidazioneNonSuperataException`) due pendenze della stessa richiesta con lo stesso `numeroAvviso` — controllo nato per un motivo distinto e legittimo (evitare un duplicato accidentale che il controllo contro il DB da solo non vedrebbe, perché confronta solo righe già persistite, non le pendenze "fratelle" ancora in memoria nella stessa richiesta). Ma è anche esattamente il controllo che impedisce di **creare** da API v3-nativa un piano rateale con avviso cumulativo (NAV condiviso tra le rate) — lo scenario che il committente ha confermato essere quello normale, non l'eccezione. Oggi quindi il NAV condiviso può esistere solo nei dati migrati da v2 (verificato scrivendo il test per il 409 sopra: riprodurlo via `crea()` è bloccato da questa stessa validazione, serve inserire le righe direttamente bypassando il servizio). Due letture, non decise: (1) in v3 ogni pendenza ha sempre un proprio avviso distinto, l'avviso cumulativo resta solo un retaggio storico da gestire in lettura, mai da riprodurre in scrittura — nessuna modifica necessaria; (2) il requisito "avviso cumulativo per piano rateale" resta valido anche per le posizioni create da ora in avanti — la validazione andrebbe rilassata per permettere NAV condiviso **all'interno della stessa opzione di pagamento**, pur continuando a vietarlo tra opzioni/posizioni diverse. Non deducibile dal codice, è una domanda di prodotto.
+**Gap chiuso: `aggiornaPendenza` poteva assegnare per la prima volta un `numeroAvviso` duplicato (2026-10-27)**. Verificato, su richiesta, che `id_dominio`+`numero_avviso` NON ha alcun vincolo UNIQUE a livello di schema (né su `versamenti`, in nessuna patch, su nessuno dei 5 dialetti — solo `unique_versamenti_1` su `cod_versamento_ente`+`id_applicazione`, colonne diverse): l'univocità per dominio è garantita SOLO a livello applicativo, replica di `VER_025` del legacy (`jars/core/.../business/Versamento.java:184-189`, verificato riga per riga: una query via `versamentiBD.getVersamentoByDominioIuv` prima dell'insert, poi `GovPayException` se trova una riga — stesso principio "query poi rifiuta", mai un `CONSTRAINT`). In questa libreria il controllo (`verificaNumeroAvvisoNonDuplicato`) era applicato da `assegnaIdentificativiPagamento` (quindi da `crea`/`aggiungiPendenza`/`aggiungiOpzionePagamento`), ma NON da `aggiornaPendenza`: se una pendenza esistente aveva `numeroAvviso` assente (storico, dati migrati) e l'aggiornamento lo assegnava per la prima volta, veniva scritto senza verificarne l'unicità nel dominio — unico percorso di scrittura che aggirava la garanzia. **Fix**: nuova verifica in `aggiornaPendenza` quando `pendenza.getNumeroAvviso() == null && comando.numeroAvviso() != null`, PRIMA di scrivere il valore sull'entity gestita (`verificaNumeroAvvisoNonDuplicato` cambiato per prendere il valore come parametro esplicito invece di leggerlo dall'entity: leggerlo DOPO l'assegnazione rischierebbe un autoflush di Hibernate che scrive il valore sulla riga prima della query, facendole trovare se stessa come falso duplicato). Corretto anche un commento fuorviante (riga 241-244) che citava un vincolo DB inesistente (`unique_pendenze_numero_avviso`) come se già esistesse. **Deliberatamente non toccato**: nessun vincolo UNIQUE aggiunto allo schema. Non più per il motivo originale (il punto sotto è ora deciso: nessun NAV condiviso, mai) ma per un motivo diverso, rimasto valido: `versamenti` è la tabella legacy riusata in-place, con righe storiche migrate che condividono legittimamente un NAV (avviso cumulativo pre-esistente) — un vincolo UNIQUE oggi fallirebbe a crearsi contro quei dati, o richiederebbe prima un intervento di pulizia/migrazione su dati storici, una modifica di schema su una tabella di produzione condivisa col legacy, fuori scope qui. La garanzia resta quindi applicativa (check-then-act, non atomica sotto scrittura concorrente), esattamente come nel legacy. Nuovo test:
+`aggiornaPendenzaRifiutaNumeroAvvisoDuplicatoAllaPrimaAssegnazione`. Verificato: 213/213 in questa libreria (+1), 397/397 in `govpay-pendenze-api` (invariato).
+
+**Punto aperto emerso implementando il 409 sopra — CHIUSO (2026-10-27): nessun NAV condiviso, mai, decisione esplicita del committente**. `ValidatorePosizioneDebitoria.validaNumeroAvvisoNonDuplicatoNellAggregato` rifiuta già oggi (`ValidazioneNonSuperataException`) due pendenze della stessa richiesta con lo stesso `numeroAvviso` — controllo nato per un motivo distinto e legittimo (evitare un duplicato accidentale che il controllo contro il DB da solo non vedrebbe, perché confronta solo righe già persistite, non le pendenze "fratelle" ancora in memoria nella stessa richiesta). Lo stesso controllo impedisce anche di **creare** da API v3-nativa un piano rateale con avviso cumulativo (NAV condiviso tra le rate) — lo scenario che il committente aveva inizialmente confermato come normale nel legacy. Il punto era rimasto aperto su due letture: (1) nessun NAV condiviso mai, l'avviso cumulativo resta solo un retaggio storico da gestire in lettura; (2) rilassare la validazione per permetterlo di nuovo all'interno della stessa opzione.
+
+**Deciso: lettura (1)** — non ci devono essere `numeroAvviso` condivisi da più pendenze, in nessun caso, nemmeno all'interno della stessa opzione di pagamento. **Nessuna modifica di codice necessaria**: il comportamento attuale del validatore (rifiuto incondizionato di qualunque duplicato nell'aggregato, indipendentemente da opzione/posizione) è già quello corretto sotto questa decisione — verificato che, oltre al rifiuto esplicito, non esiste nemmeno un bypass accidentale lasciando `numeroAvviso` assente: `PosizioneDebitoriaService.assegnaIdentificativiPagamento` lo sostituisce sempre con un valore generato (univoco per costruzione, mai condiviso) prima della persistenza, per ogni pendenza individualmente. Il NAV condiviso resta quindi un fenomeno riservato ai dati migrati da v2 (gestito in lettura con liste/409, §28-29), mai riproducibile da un percorso di scrittura v3-nativo, né oggi né in futuro.
 
 ## 28. `idPosizioneDebitoria` diventa l'IUPD (2026-10-24)
 
@@ -2350,21 +2355,114 @@ causale non tradotta (una sola `descrizione` per posizione, §3).
 **Verificato**: 397/397 test in `govpay-pendenze-api` (+3 rispetto al §43); nessuna modifica a
 `govpay-common-pendenze`/`govpay-stampe-api` in questo punto.
 
+## 45. `getStampaPendenza` (v3-nativo): da `GET`+query a `POST`+corpo, per evitare problemi di caratteri speciali (2026-10-27)
+
+`causaleTradotta`/`informativaImporto`/`informativaImportoTradotta` sono testo libero (anche
+accentato/con caratteri speciali): da query param andrebbero percent-encoded dal chiamante, con
+rischio di errori di codifica e limiti di lunghezza dell'URL — un problema che non esiste per lo
+stesso tipo di dato quando e' nel corpo di una richiesta JSON.
+
+**Corretto**: `POST /pendenze/{idA2A}/{idPendenza}/stampa` (`idA2A`/`idPendenza` restano path
+param, identificano la risorsa) invece di `GET`. I 4 parametri di query (`linguaSecondaria`
+incluso, per consistenza — un solo posto dove cercarli, non tre nel corpo e uno in query) sono
+confluiti nel nuovo schema `PersonalizzazioneAvviso`, corpo della richiesta OPZIONALE
+(`requestBody.required: false` — un corpo assente equivale a nessuna personalizzazione, stessa
+semantica di "tutti i parametri assenti" di prima). `operationId` invariato
+(`getStampaPendenza`): e' il nome dell'operazione, non il verbo HTTP, e cambiarlo avrebbe
+richiesto toccare tutte le referenze incrociate nei Javadoc degli altri controller senza alcun
+beneficio. Nessun impatto sul riuso interno di questa generazione PDF da parte del wrapper v2
+(`PendenzaV2Controller#generaPdfAvviso`, chiamata Java diretta a
+`AvvisoPdfPayloadMapper#toPaymentNotice`, mai una chiamata HTTP a questo endpoint).
+
+I 4 parametri di query orfani (`components/parameters`) sono stati rimossi dallo YAML, non
+lasciati come dead code.
+
+**Verificato**: 397/397 test in `govpay-pendenze-api` (invariato — stesse 10 verifiche di prima,
+convertite da `GET`+query a `POST`+corpo JSON, nessuna aggiunta/rimossa); nessuna modifica a
+`govpay-common-pendenze`/`govpay-stampe-api` in questo punto.
+
+## 46. `getAvviso` implementato: la sospensione era basata su una premessa errata (2026-10-27)
+
+La motivazione registrata al §35 per sospendere `getAvviso` ("il bilingue richiede
+`causaleTradotta`, ma questo endpoint non ha quel parametro nello YAML") è la stessa premessa
+smontata al §44 per `getAvvisiDocumento`: nel vero legacy `causaleTradotta` non è mai un
+parametro di richiesta, è un dato persistito (`proprieta.linguaSecondariaCausale`). Nessun'altra
+motivazione era registrata per questo endpoint — a differenza di `getAllegatoPendenza`, che
+resta sospeso per un gap reale e distinto (contenuto binario mai persistito). Verificato che
+l'endpoint non aveva alcuna implementazione (zero righe nel controller, solo la dichiarazione
+nello YAML).
+
+**Implementato** (`PendenzaV2Controller#getAvviso`, `GET /avvisi/{idDominio}/{numeroAvviso}`),
+leggendo il vero legacy riga per riga (`AvvisiController`/`AvvisiDAO`/`PendenzeConverter
+.toAvvisoRsModel`, non solo lo YAML):
+- **Content negotiation manuale** (come `RppV2Controller#getRpt`/`#getRt`, non la negoziazione
+  quality-aware v3-nativa): solo `application/pdf`/`application/json` servite, altrimenti 406 —
+  nessuna validazione di formato su `numeroAvviso` (a differenza di `getPendenzaByAvviso`, un
+  endpoint diverso: il legacy non la applica qui).
+- **Pendenza non trovata**: in PDF, 404; in JSON, **200** con
+  `Avviso{stato: SCONOSCIUTA, idDominio, numeroAvviso}` — il legacy intercetta
+  `PendenzaNonTrovataException` solo sul ramo JSON, non la propaga mai come errore. Nessuna
+  chiamata al connettore "Verifica" dell'applicazione proprietaria (stesso punto sospeso di
+  `getPendenzaByAvviso`, §29, mai implementato in questo wrapper).
+- **Più di una pendenza trovata** (avviso cumulativo): 409 (`RicercaNonUnivocaException`), stessa
+  decisione già presa per `getPendenzaByAvviso` (§28-29), applicata qui per lo stesso motivo
+  (stessa query sottostante, stesso rischio di `MultipleResultException` non gestita nel vero
+  legacy).
+- **`stato` JSON**: switch DIVERSO da quello di `getPendenza`/`getPendenzaByAvviso`
+  (`PendenzaV2Mapper#risolviStato`) — qui solo su `stato`, mai `statoPagamento`/`anomalo`.
+  `ESEGUITO`/`ESEGUITO_ALTRO_CANALE`/`PARZIALMENTE_ESEGUITO` → `DUPLICATA` (non `ESEGUITA`).
+  `ANOMALO`/`ESEGUITO_SENZA_RPT`/`INCASSATO` non hanno un caso nello switch originale del
+  legacy: `stato` resta `null`, anche se lo schema lo dichiara `required` — replicato
+  fedelmente, non corretto (nuovo `PendenzaV2Mapper#risolviStatoAvviso`/`#toAvvisoDto`).
+  `qrcode`/`barcode` da `IuvUtils.buildQrCode002`/`buildBarCode` (govpay-common, già esistenti,
+  mai usati per `barcode` finora) — `AvvisoMapper` (govpay-pendenze-api) reso `public` per
+  riusarli da questo package diverso, aggiunto `buildBarcode` accanto al preesistente
+  `buildQrcode`.
+- **PDF**: stessi due guard (MBT, anagrafica debitore assente) di `getAvvisiDocumento`, con lo
+  stesso 422 — il legacy qui risponderebbe con un 500 non gestito (nessun caso dedicato per
+  `AvvisoNonDisponibileException` in questo endpoint): non replicato, per lo stesso principio
+  già applicato alle altre ambiguità "500 non gestito" di questo wrapper (§28-29). Bilingue
+  risolto da `proprieta` tramite lo stesso `risolviParametriBilingue` di `getAvvisiDocumento`
+  (§44) — nessuna duplicazione, stesso meccanismo, qui ancora più semplice (una sola pendenza,
+  nessuna ambiguità su quale sia "rappresentativa").
+- **JSON**: nessun controllo MBT/anagrafica (il legacy non lo applica su questo ramo).
+
+**Verificato**: 410/410 test in `govpay-pendenze-api` (+13); nessuna modifica a
+`govpay-common-pendenze`/`govpay-stampe-api` in questo punto (solo riuso di `IuvUtils`, già
+esistente in govpay-common).
+
 ## 35. Punti ancora sospesi (non ripresi in questa sessione)
 
-Per decisione esplicita del committente, `getAllegatoPendenza` e `getAvviso`
-restano sospesi — entrambi hanno un gap di design non ancora risolto (vedi
-ricerca dedicata, non riportata qui): per `getAllegatoPendenza`, il contenuto
-binario degli allegati non è mai persistito da nessuna parte nel modello v3
-(nessuna colonna riceve `raw_contenuto`), quindi l'endpoint non può restituire
-un contenuto reale oggi — da decidere se 404, un errore esplicito diverso (lo
-YAML dichiara solo 401/403/404/500) o affrontare la causa radice (fuori
-scope); per `getAvviso`, la traduzione bilingue del legacy è puramente
-locale (etichette fisse), ma il nuovo microservizio `govpay-stampe` richiede
-obbligatoriamente `second_language.title` (`causaleTradotta`) quando il
-bilingue è richiesto, e questo endpoint non ha un parametro corrispondente
-nello YAML — riusare il mapper esistente trasformerebbe ogni richiesta
-bilingue in un 400, una regressione rispetto al legacy.
+Per decisione esplicita del committente, `getAllegatoPendenza` resta sospeso
+(§46: `getAvviso`, l'altro endpoint qui elencato, è stato implementato — la
+sua sospensione era basata su una premessa errata) — ha un gap di design non
+ancora risolto: il contenuto binario degli allegati non è mai persistito da
+nessuna parte nel modello v3 (nessuna colonna riceve `raw_contenuto`), quindi
+l'endpoint non può restituire un contenuto reale oggi — da decidere se 404,
+un errore esplicito diverso (lo YAML dichiara solo 401/403/404/500) o
+affrontare la causa radice (fuori scope).
+
+## 47. `getAvviso` (§46): `descrizione` persa per le pendenze create da v3-nativa (2026-10-27)
+
+Difetto trovato in revisione (non di questa sessione di sviluppo), confermato leggendo il
+codice: `PendenzaV2Mapper#toAvvisoDto` (riga 267) leggeva esclusivamente
+`CausaleVersamentoCodec.decode(entity.getCausaleVersamento())` — valorizzata solo dal wrapper
+v2 (`NuovaPendenzaMapper#applicaCampiLegacy`), mai dalle pendenze create da
+`POST /posizioni-debitorie/{idA2A}` (v3-nativa), dove la descrizione vive sulla posizione
+debitoria, non sulla pendenza. Risultato: `getAvviso` rispondeva 200 con `descrizione` assente
+per queste pendenze, mentre la stampa PDF dello stesso avviso (via
+`AvvisoPdfPayloadMapper#descrizioneDi`) recuperava correttamente quella della posizione — due
+fonti diverse per lo stesso dato, non tenute sincronizzate quando si è scritto il ramo JSON.
+
+**Fix**: nuovo `PendenzaV2Mapper#risolviDescrizioneAvviso` — causale legacy se presente,
+altrimenti `pendenza.getOpzionePagamento().getPosizioneDebitoria().getDescrizione()`, stesso
+fallback già usato dalla stampa PDF. Nuovo test:
+`GetAvvisoControllerTest#jsonPendenzaCreataViaV3NativaRestituisceDescrizioneDallaPosizione`
+(crea via v3-nativa, legge l'avviso JSON via wrapper v2 — riproduce esattamente lo scenario
+segnalato).
+
+**Verificato**: 411/411 test in `govpay-pendenze-api` (+1 rispetto al §46); nessuna modifica a
+`govpay-common-pendenze`/`govpay-stampe-api` in questo punto.
 
 ## 36. Revisione indipendente del wrapper v2: 6 difetti confermati e corretti (2026-10-25)
 

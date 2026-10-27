@@ -238,9 +238,10 @@ public class PosizioneDebitoriaService {
                 pendenza.setDataCreazione(adesso);
                 pendenza.setDataUltimoAggiornamento(adesso);
                 pendenza.setDataUltimaModificaAca(adesso);
-                // IUV/NAV sono univoci per dominio, non globalmente: la pendenza deve
-                // portare lo stesso dominio della posizione per poter far rispettare
-                // quel vincolo (unique_pendenze_numero_avviso/iuv su (id_dominio, ...)).
+                // IUV/NAV sono univoci per dominio, non globalmente (vedi
+                // verificaNumeroAvvisoNonDuplicato, controllo applicativo — nessun vincolo DB
+                // li copre): la pendenza deve portare lo stesso dominio della posizione per
+                // poter verificare quell'univocita' contro il dominio giusto.
                 pendenza.setIdDominio(posizione.getIdDominio());
                 pendenza.setIdApplicazione(posizione.getIdApplicazione());
 
@@ -375,7 +376,7 @@ public class PosizioneDebitoriaService {
         boolean numeroAvvisoAssente = pendenza.getNumeroAvviso() == null;
 
         if (!numeroAvvisoAssente) {
-            verificaNumeroAvvisoNonDuplicato(posizione, pendenza);
+            verificaNumeroAvvisoNonDuplicato(posizione, pendenza.getIdPendenza(), pendenza.getNumeroAvviso());
         }
 
         if (iuvAssente && numeroAvvisoAssente) {
@@ -395,26 +396,32 @@ public class PosizioneDebitoriaService {
     /**
      * Replica {@code VER_025} del legacy (business layer, {@code Versamento.java:184-189}):
      * quando il chiamante fornisce {@code numeroAvviso}, verifica che nessun'altra pendenza
-     * dello stesso dominio lo usi gia' prima di inserire. Controllo applicativo, non un
-     * vincolo DB — il legacy stesso non ne ha mai avuto uno su {@code versamenti}
-     * (verificato: solo un indice non univoco su {@code iuv_versamento, id_dominio}, mai
-     * dichiarato {@code UNIQUE}), fa esattamente cosi'. Nessun vincolo {@code UNIQUE}
-     * nuovo su {@code versamenti}, coerente con "minimizza le
-     * variazioni al DB" — IUV/numeroAvviso generati da {@link GeneratoreIuv} non passano da
-     * qui, la loro unicita' e' gia' garantita per costruzione dal progressivo atomico.
+     * dello stesso dominio lo usi gia' prima di inserire — nessuna eccezione per pendenze
+     * della stessa opzione di pagamento: due pendenze non condividono mai un {@code
+     * numeroAvviso}, in nessun caso. Controllo applicativo, non un vincolo DB — il legacy
+     * stesso non ne ha mai avuto uno su {@code versamenti} (verificato: solo un indice non
+     * univoco su {@code iuv_versamento, id_dominio}, mai dichiarato {@code UNIQUE}), fa
+     * esattamente cosi'. Nessun vincolo {@code UNIQUE} nuovo su {@code versamenti}, coerente
+     * con "minimizza le variazioni al DB" — IUV/numeroAvviso generati da
+     * {@link GeneratoreIuv} non passano da qui, la loro unicita' e' gia' garantita per
+     * costruzione dal progressivo atomico.
      *
      * <p>{@link PendenzaRepository#findByIdDominioAndNumeroAvviso} ritorna una lista, non un
      * {@code Optional}: una o piu' corrispondenze sono comunque un duplicato da rifiutare, ma
      * un {@code Optional} qui farebbe fallire con un'eccezione di persistenza non gestita
      * proprio nel caso — dati migrati da v2 con NAV condiviso tra le rate di un piano rateale
      * — in cui questo controllo serve di piu'.</p>
+     *
+     * <p>{@code numeroAvviso} e' un valore esplicito, non letto da un'entity: va chiamato
+     * PRIMA di scriverlo su un'entity gia' gestita da Hibernate.</p>
      */
-    private void verificaNumeroAvvisoNonDuplicato(PosizioneDebitoria posizione, Pendenza pendenza) {
+    private void verificaNumeroAvvisoNonDuplicato(PosizioneDebitoria posizione, String idPendenza,
+            String numeroAvviso) {
         List<Pendenza> esistenti = pendenzaRepository.findByIdDominioAndNumeroAvviso(posizione.getIdDominio(),
-                pendenza.getNumeroAvviso());
+                numeroAvviso);
         if (!esistenti.isEmpty()) {
             throw new ValidazioneNonSuperataException(
-                    "la pendenza [" + pendenza.getIdPendenza() + "] ha numeroAvviso [" + pendenza.getNumeroAvviso()
+                    "la pendenza [" + idPendenza + "] ha numeroAvviso [" + numeroAvviso
                             + "] gia' usato da un'altra pendenza dello stesso dominio ["
                             + esistenti.get(0).getIdPendenza() + "]");
         }
@@ -1506,7 +1513,9 @@ public class PosizioneDebitoriaService {
      * Sostituisce i dati ammessi di una pendenza NON_ESEGUITO o ANNULLATO.
      * Identita, stato, IUV, riferimenti all'aggregato e dati di pagamento non sono
      * scrivibili tramite questo comando. Numero avviso omesso conserva l'originale;
-     * se gia assegnato non puo' essere cambiato.
+     * se gia assegnato non puo' essere cambiato; se assegnato per la prima volta qui
+     * (originale assente), deve essere univoco nel dominio (stesso controllo di
+     * {@link #assegnaIdentificativiPagamento}).
      * <p>Le voci vengono unite per identificativo di business, conservando PK e indice
      * per quelle mantenute. Una voce rimossa puo' cedere la propria riga a una nuova
      * solo se non e' referenziata da rendicontazioni. I riferimenti tributo/IBAN di
@@ -1523,10 +1532,14 @@ public class PosizioneDebitoriaService {
             throw new ValidazioneNonSuperataException("'idPendenza' nel body [" + comando.idPendenza()
                     + "] non corrisponde a quello nel path [" + idPendenza + "]");
         }
+        PosizioneDebitoria posizione = pendenza.getOpzionePagamento().getPosizioneDebitoria();
         if (pendenza.getNumeroAvviso() != null && comando.numeroAvviso() != null
                 && !pendenza.getNumeroAvviso().equals(comando.numeroAvviso())) {
             throw new TransizioneStatoNonAmmessaException("'numeroAvviso' non puo' cambiare rispetto all'originale ["
                     + pendenza.getNumeroAvviso() + "]");
+        }
+        if (pendenza.getNumeroAvviso() == null && comando.numeroAvviso() != null) {
+            verificaNumeroAvvisoNonDuplicato(posizione, idPendenza, comando.numeroAvviso());
         }
         sostituisciVoci(pendenza, comando.voci());
         pendenza.setIdTipoPendenza(comando.idTipoPendenza());
@@ -1539,8 +1552,7 @@ public class PosizioneDebitoriaService {
             pendenza.setNumeroAvviso(comando.numeroAvviso());
         }
         pendenza.setDataUltimoAggiornamento(OffsetDateTime.now(clock));
-        aggiorna(idA2A, idPosizioneDebitoriaPubblica(pendenza.getOpzionePagamento().getPosizioneDebitoria()),
-                AggiornamentoPosizioneDebitoria.nessunaModifica());
+        aggiorna(idA2A, idPosizioneDebitoriaPubblica(posizione), AggiornamentoPosizioneDebitoria.nessunaModifica());
         return pendenza;
     }
 

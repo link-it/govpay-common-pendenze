@@ -1853,6 +1853,42 @@ class PosizioneDebitoriaServiceTest {
                 .hasMessageContaining(numeroAvvisoOriginale);
     }
 
+    @Test
+    @DisplayName("aggiornaPendenza rifiuta un numeroAvviso duplicato nel dominio quando lo assegna per la "
+            + "prima volta (originale assente) — stesso controllo applicativo di crea/aggiungiPendenza, non "
+            + "bypassato da questo percorso")
+    void aggiornaPendenzaRifiutaNumeroAvvisoDuplicatoAllaPrimaAssegnazione() {
+        String numeroAvvisoEsistente = "300000000000000001";
+
+        PosizioneDebitoria conNav = new PosizioneDebitoria();
+        conNav.setIdApplicazione(idApplicazionePer("A2A-NAV-PRIMA-ASSEGNAZIONE-1"));
+        conNav.setCodDocumento("pos-nav-prima-assegnazione-1");
+        conNav.setIdDominio(idDominioPer(DOMINIO_1));
+        conNav.setDescrizione("test");
+        conNav.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(conNav, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1")
+                .getPendenze().get(0).setNumeroAvviso(numeroAvvisoEsistente);
+        service.crea(DatiPosizioneDebitoria.da(conNav));
+
+        PosizioneDebitoria senzaNav = new PosizioneDebitoria();
+        senzaNav.setIdApplicazione(idApplicazionePer("A2A-NAV-PRIMA-ASSEGNAZIONE-2"));
+        senzaNav.setCodDocumento("pos-nav-prima-assegnazione-2");
+        senzaNav.setIdDominio(idDominioPer(DOMINIO_1)); // stesso dominio della prima
+        senzaNav.setDescrizione("test");
+        senzaNav.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(senzaNav, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2"); // NAV iniziale diverso
+        PosizioneDebitoria creata = service.crea(DatiPosizioneDebitoria.da(senzaNav));
+        Pendenza pendenzaSenzaNav = creata.getOpzioniPagamento().get(0).getPendenze().get(0);
+        pendenzaSenzaNav.setNumeroAvviso(null); // simula un dato storico senza NAV ancora assegnato
+        em.flush();
+        em.clear();
+
+        assertThatThrownBy(() -> aggiornaPendenzaDaDati(codApplicazioneDi(creata), pendenzaSenzaNav.getIdPendenza(),
+                p -> p.setNumeroAvviso(numeroAvvisoEsistente)))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining(numeroAvvisoEsistente);
+    }
+
     /**
      * Il confronto prima/dopo e' indicizzato per {@code idVocePendenza}, non per l'{@code id}
      * di database (vedi Javadoc di {@link PosizioneDebitoriaService#aggiornaPendenza}): se
