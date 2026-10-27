@@ -1258,7 +1258,7 @@ Il "punto 4" del wrapper v2 (`GET /pendenze/{idA2A}/{idPendenza}` su un'installa
 
 **Non affrontato qui, resta apertura nota**: un `Versamento` migrato senza `id_opzione_pagamento` (mai assegnato dalla migrazione, §23: "nessuna riga esistente da migrare" per `opzioni_pagamento`) fa restituire `null` da `Pendenza.getOpzionePagamento()` — i mapper di stampa (`AvvisoPdfPayloadMapper`/`RicevutaPdfPayloadMapper`) risalgono a `descrizione` passando per `pendenza.getOpzionePagamento().getPosizioneDebitoria()`, quindi andrebbero in `NullPointerException` su una pendenza v2 migrata se usati prima che un'opzione di pagamento le venga assegnata. Non e' stato ancora verificato se/come questi mapper gestiscano gia' questo caso (atteso e tollerato altrove, vedi §24 sul `left join` opzionale in ricerca) — da controllare prima di considerare il wrapper v2 completo sul percorso di stampa.
 
-**Punto aperto sul wrapper di scrittura (creazione pendenze dopo la migrazione, non ancora disegnato)**: in v2 un documento non si crea mai da solo — nasce (o si aggiorna) come effetto collaterale di `addPendenza` quando referenzia un `documento.identificativo` nuovo o esistente (`VersamentiBD.insertVersamento`, `jars/orm/.../VersamentiBD.java:264-324`: find-or-create per `(codDocumento, idApplicazione, idDominio)`, con **update della `descrizione` a ogni chiamata successiva che referenzia lo stesso documento** — ultima scrittura vince, non la prima). `PosizioneDebitoria.descrizione` corrisponde 1:1 a `documenti.descrizione`, ma `aggiungiPendenza`/`aggiungiOpzionePagamento` non la toccano mai (operano solo su opzione/pendenza) — se il wrapper deve replicare fedelmente questo comportamento legacy, serve aggiornare esplicitamente anche `PosizioneDebitoria.descrizione` a ogni rata successiva sullo stesso documento, non solo alla prima. Lasciato aperto.
+~~**Punto aperto sul wrapper di scrittura (creazione pendenze dopo la migrazione, non ancora disegnato)**~~ — **CHIUSO, mancava solo il cross-reference (2026-10-27)**: in v2 un documento non si crea mai da solo — nasce (o si aggiorna) come effetto collaterale di `addPendenza` quando referenzia un `documento.identificativo` nuovo o esistente (`VersamentiBD.insertVersamento`, `jars/orm/.../VersamentiBD.java:264-324`: find-or-create per `(codDocumento, idApplicazione, idDominio)`, con **update della `descrizione` a ogni chiamata successiva che referenzia lo stesso documento** — ultima scrittura vince, non la prima). Questo e' esattamente cio' che il §48 implementa: `aggiungiAPosizioneEsistente` (govpay-pendenze-api) aggiorna ora `PosizioneDebitoria.descrizione` a ogni chiamata che referenzia lo stesso documento, non solo alla prima — non piu' un gap, era rimasto solo non aggiornato qui.
 
 **Decisione sulla validazione del `rata` dichiarato da v2 (2026-10-20)**: verificato che **v2 oggi non valida affatto `cod_rata`** — nessun codice di errore lo menziona, nessun controllo di unicità/sequenzialità in `VersamentiBD.insertVersamento`; `VersamentoUtils.isNumeroRata`/`getTipoSogliaPagamento`/`getGiorniSogliaPagamento` sono codice morto (nessun chiamante in tutto il monorepo), la decodifica reale (`VersamentoConverter.java:143-157`) avviene solo in lettura, per la stampa, senza validare nulla. Il client puo' oggi mandare qualunque intero, in qualunque ordine, anche duplicato, senza errore. **Deciso comunque di non replicare questa permissivita'**: questa API resta pensata per client che vogliono continuare a usare il contratto v2, ma i dati devono comunque entrare nello schema v3 — dove `numeroRata` e' posizionale, mai scritto dal client (vedi Javadoc di `PosizioneDebitoriaService.assegnaIndici`). Si da' errore esplicito (400) se il `rata` dichiarato non coincide con la posizione attesa (1 alla prima chiamata per un documento nuovo, conteggio attuale+1 per le successive) invece di accettarlo e lasciare che diverga silenziosamente da quanto effettivamente assegnato — e' un comportamento nuovo rispetto a v2, accettato consapevolmente: l'alternativa (ignorare `rata` e affidarsi solo all'ordine di arrivo delle chiamate) rischierebbe di divergere silenziosamente da quanto il client crede di aver dichiarato.
 
@@ -1680,19 +1680,30 @@ lato applicativo, non avrebbe guadagnato nulla dall'interfaccia marker).
    sempre gli allegati esistenti (`AllegatoRepository#deleteByIdVersamento`) prima di inserire
    quelli della richiesta — replica fedele di `VersamentiBD#updateVersamento` del legacy
    (righe 494-516, che cancella sempre, anche con richiesta vuota). Non è più un append.
-5. **Documenti con più di un'opzione di pagamento — ancora aperto, verificato nel codice attuale
-   (2026-10-27)**: `aggiungiAPosizioneEsistente` richiede che il documento riusato abbia
-   esattamente un'opzione di pagamento al momento della chiamata — un documento con zero o più
-   opzioni è rifiutato con un 400 esplicito (`"questo wrapper gestisce solo documenti con
-   esattamente un'opzione"`) invece di un comportamento indovinato, perché non c'è modo
-   univoco di scegliere a quale opzione agganciare la nuova pendenza. Non più vero che questo
-   caso si presenti solo per documenti creati/modificati dal percorso v3-nativo: da §42
-   (coppia soglia completata da questo stesso wrapper, `completaCoppiaSoglia`) un documento
-   gestito interamente da `addPendenza` può arrivare a 2 opzioni — qualunque ulteriore riuso
-   dello stesso `documento.identificativo` (anche solo per un'altra rata, non necessariamente
-   una terza soglia) incontra questo stesso 400, perché il controllo sul numero di opzioni
-   precede il confronto tipologia/soglia-complementare. Il documento resta quindi "chiuso" per
-   ulteriori riusi via `addPendenza` una volta completata la coppia.
+5. ~~**Documenti con più di un'opzione di pagamento**~~ — **CHIUSO (2026-10-27)**:
+   `aggiungiAPosizioneEsistente` non richiede più esattamente un'opzione. Calcola la tipologia
+   richiesta da `rata`/`soglia` (stesso meccanismo già usato in creazione) e la cerca fra TUTTE
+   le opzioni del documento: una sola corrispondenza -> aggiunge la pendenza lì (stesso
+   controllo sulla rata attesa se `PIANO_RATEALE`); nessuna corrispondenza ma una complementare
+   presente (`ENTRO`/`OLTRE` o `RIDOTTO`/`SCONTATO`) -> completa la coppia come già faceva
+   (§42); nessuna corrispondenza e nessuna complementare, o più di una corrispondenza
+   (riferimento ambiguo) -> 400 esplicito. Per i documenti nati solo da questo wrapper (o dalla
+   migrazione) il comportamento osservabile non cambia — lì non può mai esistere più di
+   un'opzione della stessa tipologia sullo stesso documento, quindi la ricerca individua sempre
+   al più una corrispondenza, e le quattro tipologie a soglia hanno comunque cardinalità massima
+   1 pendenza (`TipologiaOpzionePagamento.cardinalitaPendenzeMassima`): un ulteriore riuso dopo
+   la coppia completata continua a essere rifiutato, ma ora per un motivo più preciso
+   (cardinalità raggiunta, o nessuna tipologia compatibile) invece del generico "più di
+   un'opzione". Il cambiamento concreto riguarda i documenti toccati anche dalla v3-nativa, dove
+   la libreria non impedisce più opzioni della stessa tipologia su una posizione: un documento
+   con, ad esempio, un'opzione `SOLUZIONE_UNICA` (cardinalità illimitata) e una
+   `SOLUZIONE_UNICA_ENTRO` non viene più rifiutato in blocco da `addPendenza` — una richiesta
+   senza `rata`/`soglia` trova la `SOLUZIONE_UNICA` ed entra lì. Guardia difensiva per il caso
+   (solo v3-nativo, non costruibile da questo wrapper) di due opzioni della stessa tipologia
+   sullo stesso documento: riferimento ambiguo, 400 esplicito invece di scegliere
+   arbitrariamente. **Verificato**: 417/417 test in `govpay-pendenze-api` (+2 rispetto al §49,
+   nuovi test con documenti seminati via v3-nativa: match unico fra più opzioni e caso
+   ambiguo).
 6. ~~**`descrizione` del documento sintetico**~~ — **evoluto in decisione più ampia (2026-10-27,
    vedi §48)**: la fonte del fallback (`documento.descrizione` se presente, altrimenti
    `causale`) resta quella descritta qui, ma ora si applica — per decisione esplicita del
