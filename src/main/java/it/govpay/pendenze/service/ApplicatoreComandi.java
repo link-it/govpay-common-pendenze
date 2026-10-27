@@ -29,6 +29,7 @@ final class ApplicatoreComandi {
         e.setProvincia(dati.provincia());
         e.setNazione(dati.nazione());
         e.setEmail(dati.email());
+        e.setCellulare(dati.cellulare());
         return e;
     }
 

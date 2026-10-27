@@ -1297,7 +1297,7 @@ Verificato di nuovo: 271/271 in govpay-pendenze-api. **Nota**: in questa stessa 
 **`getPendenzaByAvviso` (2026-10-21)**: secondo endpoint di lettura del wrapper v2 (`GET /pendenze/byAvviso/{idDominio}/{numeroAvviso}`), stesso dettaglio di `getPendenza` ma senza `idA2A` nella richiesta — `idDominio`+`numeroAvviso` identificano la pendenza **nella maggioranza dei casi** (univocita' per dominio, §18), ma non sempre: vedi la correzione del 2026-10-24 in §29 più avanti in questo documento — il chiamante deve comunque essere l'applicazione proprietaria. Porting del "filtro sull'applicazione" del legacy (`PendenzeController.getPendenzaByAvviso`): trovata la pendenza, si risolve la sua applicazione proprietaria e si verifica con `CurrentApplicazioneService.verificaIdA2A` (stesso controllo, stesso 403, di ogni altro metodo che prende `idA2A` — qui fatto dopo la ricerca, non prima, perche' l'idA2A proprietario non e' noto in anticipo). Un `idDominio` inconosciuto e' trattato come "pendenza non trovata" (404), non un errore di anagrafica separato. Assemblaggio di `rpp[]`/`allegati[]` estratto in un metodo privato condiviso con `getPendenza` (`costruisciDto`), nessuna duplicazione. Verificato con un nuovo test di integrazione che crea una seconda applicazione per provare il 403 (non bastava nessuno dei fixture esistenti, tutti sotto la stessa applicazione).
 
 - **Bug trovato in revisione indipendente e corretto**: la ricerca partiva senza validare il formato del numero avviso (AuxDigit pagoPA, prima cifra 0/1/2/3 — porting di `IuvUtils.toIuv(String)` del monolite, non il piu' recente `it.govpay.common.utils.IuvUtils.convertiDaNumeroAvviso`, che richiede la configurazione del dominio e il check digit: qui basta il formato grezzo, indipendente dal dominio). Un numero avviso con prima cifra non valida (es. `999999999999999999`) restituiva 404 (nessuna pendenza con quel valore) invece di 400 (input non valido). Aggiunto `validaFormatoNumeroAvviso`, test del 404 corretto con un avviso formalmente valido ma inesistente, nuovo test dedicato per il 400.
-- **Decisione esplicita sul recupero esterno (2026-10-21, confermata dal committente)**: il legacy (`LeggiPendenzaDTO.verificaAvviso`), quando la pendenza non e' nel DB, interroga sincronamente il connettore dell'applicazione proprietaria (`VersamentoUtils.acquisisciVersamento`/`IVerificaClient.verificaPendenza`, protocollo "Verifica" GovPay↔gestionale) per recuperarla al volo — verificato che non la persiste mai (`VersamentoUtils.toVersamentoModel` imposta esplicitamente `id=null`, e l'unico `insertVersamento` nel metodo legacy e' in un ramo diverso, non in quello di `chiediVersamento`): e' usata solo per costruire quella singola risposta, poi scartata. **Chiesto esplicitamente al committente se questo protocollo debba mai esistere in v3 nativo: risposta "da valutare", nessuna decisione presa.** Fino a quella decisione, questo wrapper gestisce solo pendenze gia' presenti nel DB (migrate o create dal vero percorso di scrittura v3); un avviso recuperabile dall'applicazione esterna ma non ancora migrato/creato risulta 404 — punto aperto esplicito, non un'omissione.
+- **Decisione esplicita sul recupero esterno (2026-10-21, confermata dal committente)**: il legacy (`LeggiPendenzaDTO.verificaAvviso`), quando la pendenza non e' nel DB, interroga sincronamente il connettore dell'applicazione proprietaria (`VersamentoUtils.acquisisciVersamento`/`IVerificaClient.verificaPendenza`, protocollo "Verifica" GovPay↔gestionale) per recuperarla al volo — verificato che non la persiste mai (`VersamentoUtils.toVersamentoModel` imposta esplicitamente `id=null`, e l'unico `insertVersamento` nel metodo legacy e' in un ramo diverso, non in quello di `chiediVersamento`): e' usata solo per costruire quella singola risposta, poi scartata. **Aggiornato (2026-10-27)**: non più "da valutare" senza condizione — il committente ha chiarito che il punto si chiude quando sarà implementato il nuovo microservizio che farà da servizio esterno (sostituto del connettore "Verifica" dell'applicazione proprietaria). Fino a quel momento questo wrapper gestisce solo pendenze gia' presenti nel DB (migrate o create dal vero percorso di scrittura v3); un avviso recuperabile dall'applicazione esterna ma non ancora migrato/creato risulta 404 — punto aperto esplicito, non un'omissione, con una condizione di chiusura ora nota.
 
 Verificato di nuovo dopo le correzioni: 275/275 in govpay-pendenze-api.
 
@@ -1353,7 +1353,7 @@ Nota di correzione: l'ipotesi iniziale "l'ordine di stampa legacy segue l'inseri
 
 **Ambiguità reale su `idDominio`+`numeroAvviso` — risolta in deroga alla fedeltà al legacy (2026-10-24)**: confermato dal committente che il NAV è condiviso, legittimamente, da tutte le rate di un piano rateale con avviso cumulativo (GovPay deriva lo stesso `iuv`/`numeroAvviso` da quello fornito dal chiamante, non ne genera uno nuovo per rata) — non un edge case raro, il caso normale per questo scenario. Nessun vincolo DB lo impedisce (solo un indice non univoco su `iuv_versamento, id_dominio`). `findByIdDominioAndNumeroAvviso` ritornava `Optional<Pendenza>`: con più di una corrispondenza, Spring Data lancia `IncorrectResultSizeDataAccessException` non gestita, propagata come 500 — stesso problema, verificato, anche in legacy (`VersamentiBD.getVersamentoByDominioIuv` rilancia `MultipleResultException` come `ServiceException`, mai intercettata da `PendenzeDAO.leggiPendenzaByRiferimentoAvviso`). **Il committente ha scelto esplicitamente di non replicare questo comportamento** (un 500 non è un comportamento significativo da preservare, a differenza delle altre decisioni di questa sezione): `findByIdDominioAndNumeroAvviso` ritorna ora una `List<Pendenza>`, e `getPendenzaByAvviso` risponde **409** (nuova `RicercaNonUnivocaException`) quando trova più di una pendenza, invece di propagare l'errore interno. Stesso fix applicato a `PosizioneDebitoriaService.verificaNumeroAvvisoNonDuplicato` (stesso metodo di repository, stesso rischio in scrittura se nel dominio esiste già un piano rateale con NAV condiviso). Verificato: 212/212 in questa libreria, 296/296 in govpay-pendenze-api.
 
-- **Punto aperto esplicito, non implementato**: il legacy (`LeggiPendenzaDTO.verificaAvviso`/`VersamentoUtils.acquisisciVersamento`) interroga sincronamente il connettore "Verifica" dell'applicazione proprietaria quando l'avviso non è nel DB, solo per costruire quella singola risposta (mai persistito: `VersamentoUtils.toVersamentoModel` imposta `id=null`, nessun `insertVersamento` su questo percorso). Verificato che non esiste alcun equivalente v3-nativo. Il committente, interrogato se la v3 nativa debba mai supportare questo protocollo, ha risposto "da valutare" — per ora il wrapper gestisce solo pendenze già presenti sul DB (migrate o create dal vero percorso di scrittura v3); un avviso recuperabile solo dall'applicazione esterna risulta 404. Resta un punto aperto per i committenti, non per questo progetto.
+- **Punto aperto esplicito, non implementato — condizione di chiusura nota (2026-10-27)**: il legacy (`LeggiPendenzaDTO.verificaAvviso`/`VersamentoUtils.acquisisciVersamento`) interroga sincronamente il connettore "Verifica" dell'applicazione proprietaria quando l'avviso non è nel DB, solo per costruire quella singola risposta (mai persistito: `VersamentoUtils.toVersamentoModel` imposta `id=null`, nessun `insertVersamento` su questo percorso). Verificato che non esiste alcun equivalente v3-nativo (riconfermato nel codice attuale: nessuna chiamata a un connettore esterno in nessun punto del wrapper, incluso `getAvviso`, §46). Il committente ha chiarito che questo punto si chiude quando sarà implementato il nuovo microservizio che farà da servizio esterno — non più "da valutare" senza una condizione. Fino a quel momento il wrapper gestisce solo pendenze già presenti sul DB (migrate o create dal vero percorso di scrittura v3); un avviso recuperabile solo dall'applicazione esterna risulta 404.
 - **Punto aperto, deferito ai committenti**: `PendenzaRepository.findByIdDominioAndIuv` esiste già (scaffolding senza alcun consumatore) — candidato naturale per un eventuale endpoint v3-nativo "pendenza per idDominio+iuv" (iuv e' l'identificativo pagoPA reale; numeroAvviso e' un derivato v2/di stampa che potrebbe non esistere per flussi v3 puramente API). Se/quando aggiungerlo alla v3 nativa non è una decisione di questo lavoro — spetta ai committenti.
 
 **`GET /rpp/{idDominio}/{iuv}/{ccp}` + `/rpt` + `/rt` conclusi** (`it.govpay.pendenze.v2.transazione.RppV2Controller`, nuovo package in govpay-pendenze-api; nuovo `RptRepository.findByCodDominioAndIuvAndIur` in questa libreria — generico, nessun concetto v2 nella query):
@@ -1370,7 +1370,9 @@ Nota di correzione: l'ipotesi iniziale "l'ordine di stampa legacy segue l'inseri
 
 **Punto aperto emerso implementando il 409 sopra — CHIUSO (2026-10-27): nessun NAV condiviso, mai, decisione esplicita del committente**. `ValidatorePosizioneDebitoria.validaNumeroAvvisoNonDuplicatoNellAggregato` rifiuta già oggi (`ValidazioneNonSuperataException`) due pendenze della stessa richiesta con lo stesso `numeroAvviso` — controllo nato per un motivo distinto e legittimo (evitare un duplicato accidentale che il controllo contro il DB da solo non vedrebbe, perché confronta solo righe già persistite, non le pendenze "fratelle" ancora in memoria nella stessa richiesta). Lo stesso controllo impedisce anche di **creare** da API v3-nativa un piano rateale con avviso cumulativo (NAV condiviso tra le rate) — lo scenario che il committente aveva inizialmente confermato come normale nel legacy. Il punto era rimasto aperto su due letture: (1) nessun NAV condiviso mai, l'avviso cumulativo resta solo un retaggio storico da gestire in lettura; (2) rilassare la validazione per permetterlo di nuovo all'interno della stessa opzione.
 
-**Deciso: lettura (1)** — non ci devono essere `numeroAvviso` condivisi da più pendenze, in nessun caso, nemmeno all'interno della stessa opzione di pagamento. **Nessuna modifica di codice necessaria**: il comportamento attuale del validatore (rifiuto incondizionato di qualunque duplicato nell'aggregato, indipendentemente da opzione/posizione) è già quello corretto sotto questa decisione — verificato che, oltre al rifiuto esplicito, non esiste nemmeno un bypass accidentale lasciando `numeroAvviso` assente: `PosizioneDebitoriaService.assegnaIdentificativiPagamento` lo sostituisce sempre con un valore generato (univoco per costruzione, mai condiviso) prima della persistenza, per ogni pendenza individualmente. Il NAV condiviso resta quindi un fenomeno riservato ai dati migrati da v2 (gestito in lettura con liste/409, §28-29), mai riproducibile da un percorso di scrittura v3-nativo, né oggi né in futuro.
+**Deciso: lettura (1)** — non ci devono essere `numeroAvviso` condivisi da più pendenze, in nessun caso, nemmeno all'interno della stessa opzione di pagamento. **Nessuna modifica di codice necessaria**: il comportamento attuale del validatore (rifiuto incondizionato di qualunque duplicato nell'aggregato, indipendentemente da opzione/posizione) è già quello corretto sotto questa decisione — verificato che, oltre al rifiuto esplicito, non esiste nemmeno un bypass accidentale lasciando `numeroAvviso` assente: `PosizioneDebitoriaService.assegnaIdentificativiPagamento` lo sostituisce sempre con un valore generato (univoco per costruzione, mai condiviso) prima della persistenza, per ogni pendenza individualmente. Il NAV condiviso resta quindi un fenomeno riservato ai dati migrati da v2, mai riproducibile da un percorso di scrittura v3-nativo, né oggi né in futuro.
+
+**Verificato ulteriormente (2026-10-27)**: probabilmente non è nemmeno un retaggio di un uso legittimo della vera API v2, perché quella stessa API non lo permette oggi — né l'ha mai permesso. `Versamento.aggiornaVersamento` (`jars/core/.../business/Versamento.java:176-193`, lo stesso metodo business dietro il PUT pendenza del legacy) applica VER_025 **incondizionatamente** a ogni nuovo versamento con `numeroAvviso` esplicito — nessun'eccezione per `cod_rata`/piano rateale, nessun ramo "avviso cumulativo" che la salti. Chi volesse creare via API due rate con lo stesso NAV incontrerebbe lo stesso rifiuto del vero legacy, non solo di questa libreria. Il NAV condiviso nei dati migrati, quindi, con tutta probabilità non viene da un uso normale dell'API v2 (che non l'ha mai potuto produrre) — resta gestito in lettura con liste/409 (§28-29) perché esiste comunque nei dati storici, ma la sua origine esatta (import in blocco, versione precedente del software, altro canale) resta fuori da questa indagine.
 
 ## 28. `idPosizioneDebitoria` diventa l'IUPD (2026-10-24)
 
@@ -1624,23 +1626,37 @@ lato applicativo, non avrebbe guadagnato nulla dall'interfaccia marker).
 
 **Punti aperti, non decisi silenziosamente**:
 
-1. **`dataAvvisatura` non ha alcun effetto persistito**: nessun equivalente v3
-   trovato (cercato "avvisatura" in tutto `govpay-common-pendenze`, zero
-   riscontri) — né una colonna nell'entity `Pendenza`, né altrove. Il legacy ha
-   invece colonne reali su `versamenti` (`data_notifica_avviso`,
-   `avviso_notificato`, e **due varianti parallele** `avv_mail_data_prom_scadenza`/
-   `avv_app_io_data_prom_scadenza` per il promemoria scadenza, mail vs AppIO).
-   Implementato: solo la validazione del formato (`"MAI"` o data ISO), mai
-   applicato a nulla. Decisione di design non presa: se/come estendere
-   `Pendenza` con questi concetti è un cambio di schema più ampio di una
-   semplice estensione di campo, lasciato al committente.
-2. **`sendAbilitato`/campi "solo legacy" senza equivalente v3 individuale**:
-   `Pendenza.proprieta` esiste già come singola colonna JSON grezza (nessun
-   sotto-campo mappato individualmente) — `ProprietaPendenza` (`linguaSecondaria`,
-   `descrizioneImporto`, `lineaTestoRicevuta1/2`, ecc.) viene quindi scritta per
-   intero come JSON passthrough, non letta/validata campo per campo da questa
-   libreria. Comportamento accettabile (simmetrico alla lettura, già fatta così
-   da `PendenzaV2Mapper`), segnalato comunque per completezza.
+1. ~~**`dataAvvisatura` non ha alcun effetto persistito**~~ — **CHIUSO (2026-10-27)**:
+   confermato che `dataAvvisatura` è un campo deprecato, in rimozione anche dal
+   DB legacy (`versamenti.data_notifica_avviso` e le colonne collegate) — non
+   un gap da colmare estendendo `Pendenza`, ma un campo che non va più
+   supportato. Comportamento attuale già corretto sotto questa decisione:
+   solo la validazione del formato (`"MAI"` o data ISO), mai persistito né
+   altrimenti applicato — nessuna modifica di codice necessaria. (Dettaglio
+   originale, per riferimento: nessun equivalente v3 trovato cercando
+   "avvisatura" in tutto `govpay-common-pendenze`; il legacy aveva colonne
+   reali su `versamenti`, `data_notifica_avviso`/`avviso_notificato` e due
+   varianti parallele `avv_mail_data_prom_scadenza`/
+   `avv_app_io_data_prom_scadenza` per il promemoria scadenza, mail vs AppIO.)
+2. ~~**`sendAbilitato`/campi "solo legacy" senza equivalente v3 individuale**~~ —
+   **ELIMINATO (2026-10-27), non era un problema reale**: `sendAbilitato` non
+   apparteneva nemmeno a questo punto (è un campo tipizzato, letto e scritto
+   individualmente come tutti gli altri campi "solo legacy" di
+   `NuovaPendenzaMapper#applicaCampiLegacy` — un errore di raggruppamento nel
+   titolo). Sulla sostanza (`Pendenza.proprieta` come unica colonna JSON
+   grezza, nessun sotto-campo di `ProprietaPendenza` mappato su un campo
+   tipizzato dell'entity): verificato che la validazione NON manca — il
+   getter generato `NuovaPendenza.getProprieta()` ha `@Valid`, che fa
+   cascata su ogni vincolo dichiarato dallo schema (`@Size(max=255)` su
+   `informativaImportoAvviso`/`linguaSecondariaInformativaImportoAvviso`,
+   `@Valid` su ogni `VoceDescrizioneImporto` della lista, formato `LocalDate`
+   su `dataScandenzaAvviso` verificato già alla deserializzazione Jackson).
+   I campi senza alcuna annotazione (`lineaTestoRicevuta1/2`,
+   `linguaSecondariaCausale`) non hanno un'annotazione perché lo schema
+   stesso non dichiara alcun vincolo per loro, non per un'omissione. Resta
+   solo un aspetto di *storage* (valori non letti in campi tipizzati
+   separati, un unico JSON grezzo) — già simmetrico con la lettura
+   (`PendenzaV2Mapper`), non un gap di validazione.
 3. **Contenuto binario degli allegati (`NuovoAllegatoPendenza.contenuto`) non
    persistito**: `allegati.raw_contenuto` è un **OID** Postgres in produzione
    (Large Object, non un array di byte ordinario — richiede
@@ -1657,37 +1673,55 @@ lato applicativo, non avrebbe guadagnato nulla dall'interfaccia marker).
    implementa la semantica OID di Postgres), (b) cambiare schema di storage
    dell'allegato (es. colonna `BYTEA` anche in produzione, richiede una
    migrazione DB fuori dallo scope di questa sessione).
-4. **Semantica di aggiornamento degli allegati su una PUT di update non
-   verificata contro il legacy**: implementato in modo conservativo — gli
-   allegati dichiarati in un aggiornamento vengono sempre AGGIUNTI, mai usati
-   per rimpiazzare quelli già presenti (nessuna cancellazione). Il comportamento
-   esatto del legacy su questo punto (append vs replace) non è stato verificato
-   a fondo nel tempo disponibile per questa sessione.
-5. **Documenti con più di un'opzione di pagamento**: `aggiungiAPosizioneEsistente`
-   richiede che il documento riusato abbia esattamente un'opzione di pagamento
-   (il caso sempre vero per un documento creato da questo stesso wrapper) —
-   un documento con zero o più opzioni (es. creato/modificato dal percorso
-   v3-nativo) è rifiutato con un 400 esplicito invece di un comportamento
-   indovinato.
-6. **`descrizione` del documento sintetico**: `documenti.descrizione` è
-   `NOT NULL` nello schema, ma un documento sintetico (nessun `documento` nella
-   richiesta) non ha alcuna descrizione fornita dal chiamante — si riusa la
-   `causale` della pendenza come fallback. Scelta pragmatica a basso rischio, non
-   una vera decisione architetturale, segnalata comunque.
-7. **`Soggetto.cellulare` (v2) e `NuovaVocePendenza.datiAllegati`/`contabilita`/
-   `metadata` (v2, a livello di singola voce)**: nessun campo equivalente in
-   `DatiSoggettoDebitore`/`DatiVocePendenza`/`VocePendenza` (v3) — gap noto,
-   nessuna colonna li riceve. In particolare `contabilita.quote`
-   (frazionamento per quote di una voce v2) e `VocePendenza.dettaglioContabile`
-   (v3) sono concetti non sovrapponibili, non è stato tentato un mapping fra i
-   due.
-8. **Deviazione deliberata da un bug del legacy**: `fillSingoliVersamentiFromVociPendenza`
-   del converter legacy va in NPE non gestita (`getTipoContabilita().name()`) se
-   una voce non indica né bollo, né `codEntrata`, né un IBAN diretto completo.
-   Qui si solleva invece un 400 esplicito (`ValidazioneNonSuperataException`) —
-   stesso principio già adottato altrove in questa libreria per un elemento
-   `null` della lista voci, per evitare un 500 non gestito al posto di un 400
-   controllato.
+4. ~~**Semantica di aggiornamento degli allegati su una PUT di update non verificata contro il
+   legacy**~~ — **CHIUSO, mancava solo il cross-reference**: questo punto era già stato risolto
+   dal §36 (punto 5, 2026-10-25), semplicemente non più aggiornato qui. Verificato ora nel
+   codice attuale (`PendenzaV2Controller#salvaAllegati`): sul ramo di aggiornamento cancella
+   sempre gli allegati esistenti (`AllegatoRepository#deleteByIdVersamento`) prima di inserire
+   quelli della richiesta — replica fedele di `VersamentiBD#updateVersamento` del legacy
+   (righe 494-516, che cancella sempre, anche con richiesta vuota). Non è più un append.
+5. **Documenti con più di un'opzione di pagamento — ancora aperto, verificato nel codice attuale
+   (2026-10-27)**: `aggiungiAPosizioneEsistente` richiede che il documento riusato abbia
+   esattamente un'opzione di pagamento al momento della chiamata — un documento con zero o più
+   opzioni è rifiutato con un 400 esplicito (`"questo wrapper gestisce solo documenti con
+   esattamente un'opzione"`) invece di un comportamento indovinato, perché non c'è modo
+   univoco di scegliere a quale opzione agganciare la nuova pendenza. Non più vero che questo
+   caso si presenti solo per documenti creati/modificati dal percorso v3-nativo: da §42
+   (coppia soglia completata da questo stesso wrapper, `completaCoppiaSoglia`) un documento
+   gestito interamente da `addPendenza` può arrivare a 2 opzioni — qualunque ulteriore riuso
+   dello stesso `documento.identificativo` (anche solo per un'altra rata, non necessariamente
+   una terza soglia) incontra questo stesso 400, perché il controllo sul numero di opzioni
+   precede il confronto tipologia/soglia-complementare. Il documento resta quindi "chiuso" per
+   ulteriori riusi via `addPendenza` una volta completata la coppia.
+6. ~~**`descrizione` del documento sintetico**~~ — **evoluto in decisione più ampia (2026-10-27,
+   vedi §48)**: la fonte del fallback (`documento.descrizione` se presente, altrimenti
+   `causale`) resta quella descritta qui, ma ora si applica — per decisione esplicita del
+   committente — anche quando il documento è **già esistente**: sovrascrive sempre la
+   descrizione della posizione, sia aggiungendo una pendenza sorella sia aggiornando la
+   stessa pendenza. Non è più solo "il fallback per il documento sintetico": è la regola
+   generale per `descrizione`, in deroga alla Decisione #3 (che per tutti gli altri campi di
+   `documento`/`soggettoPagatore` resta "primo valore vince, poi ignorato").
+7. ~~**`Soggetto.cellulare` (v2)**~~ — **CHIUSO (2026-10-27, vedi §49)**: campo aggiunto a
+   `SoggettoDebitore`/`DatiSoggettoDebitore` (nuova colonna `soggetti_debitori.cellulare`),
+   scrivibile/leggibile sia da v2 sia da v3-nativa. Resta invece aperto, non toccato in questo
+   punto, **`NuovaVocePendenza.datiAllegati`/`contabilita`/`metadata` (v2, a livello di singola
+   voce)**: nessun campo equivalente in `DatiVocePendenza`/`VocePendenza` (v3) — gap noto,
+   nessuna colonna li riceve. In particolare `contabilita.quote` (frazionamento per quote di
+   una voce v2) e `VocePendenza.dettaglioContabile` (v3) sono concetti non sovrapponibili, non
+   è stato tentato un mapping fra i due.
+8. ~~**Deviazione deliberata da un bug del legacy**~~ — **corretta la motivazione (2026-10-27),
+   comportamento invariato**: non è una deviazione da un bug, è fedeltà a una validazione
+   legacy reale che non era stata trovata. `fillSingoliVersamentiFromVociPendenza`
+   (`jars/core/.../TracciatiConverter.java:189`) va davvero in NPE non gestita
+   (`getTipoContabilita().name()`) se una voce non indica né bollo, né `codEntrata`, né un IBAN
+   diretto completo — ma quel metodo non è mai raggiunto in questo caso da una richiesta reale:
+   `PendenzaPostValidator` (`jars/core/.../utils/tracciati/validator/PendenzaPostValidator.java:249`)
+   valida la richiesta PRIMA, con lo stesso identico controllo ("uno dei campi tra
+   `ibanAccredito`, `tipoBollo` o `codEntrata` deve essere valorizzato") e lo stesso esito
+   (`ValidationException`, 400) — il NPE è dead code in pratica, non un comportamento osservabile
+   del vero legacy da preservare o evitare. Il 400 di questa libreria
+   (`ValidazioneNonSuperataException`) è quindi fedeltà diretta al legacy, non una scelta "meglio
+   del legacy" — comportamento già corretto, nessuna modifica di codice necessaria.
 
 **Verificato**: 305/305 test in `govpay-pendenze-api` (`mvn clean test` reale,
 +7 rispetto a prima — i nuovi test di `AddPendenzaControllerTest`); nessuna
@@ -2463,6 +2497,84 @@ segnalato).
 
 **Verificato**: 411/411 test in `govpay-pendenze-api` (+1 rispetto al §46); nessuna modifica a
 `govpay-common-pendenze`/`govpay-stampe-api` in questo punto.
+
+## 48. `descrizione` della posizione: da "fissata alla creazione" a "sovrascritta a ogni chiamata", decisione del committente (2026-10-27)
+
+Riesaminando il punto 6 (documento sintetico, elenco sopra) col committente: prima di oggi
+`documento`/`soggettoPagatore` erano **tutti** ignorati su un documento già esistente (Decisione
+#3 — sia aggiungendo una pendenza sorella con `documento.identificativo` corrispondente, sia
+aggiornando la stessa pendenza, dove `causale` non viene nemmeno letta da
+`NuovaPendenzaMapper#toAggiornamentoPendenza`): una volta creata, la descrizione della posizione
+non era più modificabile da nessuna chiamata successiva.
+
+**Deciso**: `descrizione` fa eccezione alla Decisione #3 — l'ultima richiesta vince sempre,
+indipendentemente da `documento.identificativo`/`soggettoPagatore` (che restano "primo valore
+vince, poi ignorati", comportamento invariato). Stessa fonte già in uso per il documento
+sintetico: `documento.descrizione` se `documento` è presente nella richiesta, altrimenti
+`causale` (sempre obbligatoria su `NuovaPendenza`, quindi garantisce comunque un valore).
+
+**Implementato**:
+- Nuovo `NuovaPendenzaMapper.risolviDescrizioneDocumento(NuovaPendenza)` (estratto dalla logica
+  già usata in `crea()` per il documento sintetico, ora condiviso).
+- `aggiungiAPosizioneEsistente` (pendenza sorella su documento esistente, sia il ramo normale
+  sia quello che completa una coppia soglia, §42): sovrascrive `posizione.descrizione` PRIMA di
+  procedere — un'unica riga, si applica a entrambi i rami perché la condividono.
+- `PendenzaV2Controller#addPendenza`, ramo di aggiornamento (stessa pendenza, stesso
+  `idPendenza`): sovrascrive `posizioneEsistente.descrizione` esplicitamente, perché
+  `toAggiornamentoPendenza`/`AggiornamentoPendenza` non portano campi della posizione (sono
+  scope della pendenza) — la sovrascrittura va fatta a parte, direttamente sull'entity gestita,
+  prima di chiamare il servizio.
+- Nessuna validazione nuova necessaria: `documento.descrizione` (max 80) e `causale` (max 140)
+  rientrano entrambi nel limite di `PosizioneDebitoria.descrizione` (140, già verificato per il
+  documento sintetico), e sono già garantiti non vuoti dallo schema.
+
+Nuovi test: `AddPendenzaControllerTest#secondaRataConDescrizioneDiversaSovrascriveQuellaDellaPosizione`
+(pendenza sorella, `documento.descrizione` diversa),
+`#aggiornamentoStessaPendenzaConCausaleDiversaSovrascriveDescrizionePosizioneSintetica`
+(stessa pendenza, nessun `documento`, `causale` diversa).
+
+**Verificato**: 413/413 test in `govpay-pendenze-api` (+2 rispetto al §47); nessuna modifica a
+`govpay-common-pendenze`/`govpay-stampe-api` in questo punto.
+
+## 49. `Soggetto.cellulare`: aggiunto a `SoggettoDebitore`, sia v2 sia v3-nativa (2026-10-27)
+
+Punto 7 della lista "Punti aperti" in `addPendenza` (sopra): `Soggetto.cellulare` (v2) non aveva
+alcun campo equivalente in `DatiSoggettoDebitore`/`SoggettoDebitore` — scartato silenziosamente
+in scrittura, mai esposto in lettura. Su richiesta esplicita, gestito aggiungendo il campo
+(non rifiutandolo come fatto per `voci[].datiAllegati`/`contabilita`/`metadata`, §36 punto 4 —
+quei campi non hanno un contenitore sensato in v3, questo invece è un attributo semplice dello
+stesso tipo di `email`/`indirizzo`, già tutti presenti su `SoggettoDebitore`).
+
+**Schema**: nuova colonna `soggetti_debitori.cellulare VARCHAR(35)`, aggiunta in tutti i 5
+dialetti (`migrazione/03_soggetti_debitori.sql`, lo stesso file che crea la tabella — `soggetti_debitori`
+è una tabella nuova senza riga da migrare, nessuna colonna preesistente da riusare come nel
+caso dei campi "solo legacy" di `Pendenza`) e nello schema H2 di test (duplicato sia in
+govpay-common-pendenze sia in govpay-pendenze-api).
+
+**Codice, condiviso (govpay-common-pendenze)**: `SoggettoDebitore` (entity), `DatiSoggettoDebitore`
+(comando, nuovo componente in coda al record — `da()` aggiornato), `ApplicatoreComandi
+.soggettoDebitore` (DTO comando → entity).
+
+**Wrapper v2**: `NuovaPendenzaMapper.toDatiSoggettoDebitore` (scrittura, rimossa la nota che
+segnalava il gap) e `PendenzaV2Mapper.toSoggettoDto` (lettura) — lo schema v2 aveva già
+`Soggetto.cellulare` dichiarato (con pattern `\+[0-9]{2}\s[0-9]{3}\-[0-9]{7}`, es.
+`+39 000-1234567`), semplicemente non arrivava da nessuna parte.
+
+**v3-nativa**: campo nuovo, non un gap preesistente — aggiunto `Soggetto.cellulare` allo YAML
+v3 (stesso pattern del v2) e wiring in `PosizioneDebitoriaMapper` (`toSoggettoDebitore` in
+scrittura, `toSoggettoDto` in lettura), per evitare l'asimmetria "scrivibile solo da v2" ora che
+il campo vive nell'infrastruttura condivisa.
+
+Nessuna validazione di lunghezza aggiuntiva necessaria: il pattern già vincola il formato a una
+stringa fissa più corta di 35 caratteri.
+
+Nuovi test: `AddPendenzaControllerTest#creaConCellulareDelSoggettoLoPersiste` (scrittura v2,
+verificata sull'entity), `PendenzaV2ControllerTest#getPendenzaRestituisceCellulareDelSoggettoCreatoViaV3Nativa`
+(scrittura v3-nativa, lettura v2 — verifica il wiring incrociato tra i due schemi).
+
+**Verificato**: 415/415 test in `govpay-pendenze-api` (+2 rispetto al §48), 213/213 in
+`govpay-common-pendenze` (invariato — nessun test diretto sul nuovo campo in questa libreria,
+coperto indirettamente dai test del wrapper e della posizione debitoria v3-nativa).
 
 ## 36. Revisione indipendente del wrapper v2: 6 difetti confermati e corretti (2026-10-25)
 

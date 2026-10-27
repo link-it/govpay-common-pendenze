@@ -83,6 +83,9 @@ public class SoggettoDebitore {
     @Column(name = "email", length = 256)
     private String email;
 
+    @Column(name = "cellulare", length = 35)
+    private String cellulare;
+
     // ── Accessori ────────────────────────────────────────────────────────────
 
     public Long getId() {
@@ -187,5 +190,13 @@ public class SoggettoDebitore {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getCellulare() {
+        return cellulare;
+    }
+
+    public void setCellulare(String cellulare) {
+        this.cellulare = cellulare;
     }
 }
