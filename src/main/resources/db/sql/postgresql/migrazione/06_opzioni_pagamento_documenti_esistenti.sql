@@ -18,18 +18,15 @@
 --  C) versamenti con cod_rata riconosciuto come soglia (`ENTRO<gg>`,
 --     `OLTRE<gg>`, `RIDOTTO`, `SCONTATO` — decodifica verificata su
 --     VersamentoConverter.java:143-157), SENZA duplicati di valore nello
---     stesso documento -> una OpzionePagamento SOLUZIONE_UNICA_ENTRO/OLTRE
---     PER VERSAMENTO (cardinalita' massima 1 pendenza per questa tipologia,
---     M2/TipologiaOpzionePagamento), quindi piu' opzioni sotto lo stesso
---     documento quando coesistono piu' soglie (es. la coppia ENTRO/OLTRE, o
---     RIDOTTO+SCONTATO). RIDOTTO/SCONTATO sono trattati come lo stesso
---     concetto di ENTRO/OLTRE (chiarito dal lead, 2026-10-22): nessuna
---     colonna porta il numero di giorni per questi due codici (vietato in
---     input, PendenzaVerificataValidator.java:182) perche' e' un valore
---     fisso per legge — usato qui come costante `giorni = 5` (SCONTATO =
---     ENTRO 5gg, RIDOTTO = OLTRE 5gg), perdendo il limite superiore dei 60
---     giorni di RIDOTTO che il modello v3 non rappresenta comunque per
---     nessun OLTRE generico. Lo stato di ciascuna opzione deriva dal suo
+--     stesso documento -> una OpzionePagamento SOLUZIONE_UNICA_ENTRO/OLTRE/
+--     RIDOTTO/SCONTATO PER VERSAMENTO (cardinalita' massima 1 pendenza per
+--     queste tipologie, M2/TipologiaOpzionePagamento), quindi piu' opzioni
+--     sotto lo stesso documento quando coesistono piu' soglie (es. la coppia
+--     ENTRO/OLTRE, o RIDOTTO+SCONTATO). RIDOTTO/SCONTATO restano distinti da
+--     ENTRO/OLTRE: nessuna colonna porta il numero di giorni per questi due
+--     codici (vietato in input, PendenzaVerificataValidator.java:182) perche'
+--     e' un valore fisso per legge — usato qui come costante `giorni = 5`.
+--     Lo stato di ciascuna opzione deriva dal suo
 --     unico versamento (NON_ESEGUITO->DISPONIBILE, ANNULLATO->ANNULLATA,
 --     altro->ATTIVATA): a differenza dei casi A/B non c'e' aggregazione su
 --     piu' righe, quindi nessuno dei due documenti puo' incorrere nel gap
@@ -172,12 +169,14 @@ versamenti_soglia AS (
         vc.id,
         vc.id_documento,
         CASE
-            WHEN vc.cod_rata ~ '^ENTRO[0-9]+$' OR vc.cod_rata = 'SCONTATO' THEN 'SOLUZIONE_UNICA_ENTRO'
-            WHEN vc.cod_rata ~ '^OLTRE[0-9]+$' OR vc.cod_rata = 'RIDOTTO'  THEN 'SOLUZIONE_UNICA_OLTRE'
+            WHEN vc.cod_rata ~ '^ENTRO[0-9]+$'  THEN 'SOLUZIONE_UNICA_ENTRO'
+            WHEN vc.cod_rata ~ '^OLTRE[0-9]+$'  THEN 'SOLUZIONE_UNICA_OLTRE'
+            WHEN vc.cod_rata = 'SCONTATO'       THEN 'SOLUZIONE_UNICA_SCONTATO'
+            WHEN vc.cod_rata = 'RIDOTTO'        THEN 'SOLUZIONE_UNICA_RIDOTTO'
         END AS tipologia,
         CASE
             WHEN vc.cod_rata ~ '^(ENTRO|OLTRE)[0-9]+$' THEN substring(vc.cod_rata FROM '[0-9]+$')::int
-            ELSE 5 -- RIDOTTO/SCONTATO: costante di legge, nessuna colonna la porta (vedi sopra)
+            ELSE NULL -- RIDOTTO/SCONTATO: 'giorni' non e' un valore ammesso per queste tipologie
         END AS giorni,
         CASE
             WHEN vc.stato_versamento = 'NON_ESEGUITO' THEN 'DISPONIBILE'

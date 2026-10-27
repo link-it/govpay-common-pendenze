@@ -4,28 +4,24 @@ package it.govpay.pendenze.model;
  * Modalita' con cui puo' essere estinta una posizione debitoria, come nello schema
  * {@code NuovaOpzionePagamento} (discriminatore {@code tipologia}) dello YAML v3.
  *
- * <p>Le 4 tipologie condividono la stessa tabella ({@code opzioni_pagamento}): non
- * differiscono per struttura ma solo per la presenza di {@code giorni} (richiesto solo da
- * {@link #SOLUZIONE_UNICA_ENTRO} e {@link #SOLUZIONE_UNICA_OLTRE}, vedi
+ * <p>Le 6 tipologie condividono la stessa tabella ({@code opzioni_pagamento}): non
+ * differiscono per struttura ma solo per la presenza di {@code giorni} (vedi
  * {@link #richiedeGiorni()}) e per la cardinalita' massima ammessa dell'elenco pendenze
  * (vedi {@link #cardinalitaPendenzeMassima()}) — la cardinalita' minima e' invece sempre 1
  * in questa libreria, vedi {@link #cardinalitaPendenzeMinima()}.</p>
  *
- * <p><b>{@link #SOLUZIONE_UNICA} senza limite di pendenze</b>: un dovuto con piu' di 5
- * voci richiede piu' di un avviso di pagamento (ogni {@code Pendenza} ammette al
- * massimo 5 {@code VocePendenza}), quindi piu' di una pendenza anche per un pagamento
- * concettualmente "in un'unica soluzione" — cambia solo il layout di stampa, non la
- * logica: la posizione risulta pagata quando tutte le sue pendenze sono pagate,
- * esattamente come {@link #PIANO_RATEALE}. Le due tipologie con termine
- * ({@link #SOLUZIONE_UNICA_ENTRO}/{@link #SOLUZIONE_UNICA_OLTRE}) restano invece a
- * esattamente 1 pendenza: non è previsto che ammettano più pendenze come
- * {@code SOLUZIONE_UNICA}.</p>
+ * <p>{@link #SOLUZIONE_UNICA} e {@link #PIANO_RATEALE} non hanno limite massimo di
+ * pendenze. Le altre quattro ({@link #SOLUZIONE_UNICA_ENTRO}/{@link #SOLUZIONE_UNICA_OLTRE}/
+ * {@link #SOLUZIONE_UNICA_RIDOTTO}/{@link #SOLUZIONE_UNICA_SCONTATO}) restano sempre a
+ * esattamente 1 pendenza.</p>
  */
 public enum TipologiaOpzionePagamento {
     PIANO_RATEALE,
     SOLUZIONE_UNICA,
     SOLUZIONE_UNICA_ENTRO,
-    SOLUZIONE_UNICA_OLTRE;
+    SOLUZIONE_UNICA_OLTRE,
+    SOLUZIONE_UNICA_RIDOTTO,
+    SOLUZIONE_UNICA_SCONTATO;
 
     /**
      * @return {@code true} se questa tipologia richiede il campo {@code giorni}
@@ -55,6 +51,7 @@ public enum TipologiaOpzionePagamento {
      *         illimitato
      */
     public Integer cardinalitaPendenzeMassima() {
-        return this == SOLUZIONE_UNICA_ENTRO || this == SOLUZIONE_UNICA_OLTRE ? 1 : null;
+        return this == SOLUZIONE_UNICA_ENTRO || this == SOLUZIONE_UNICA_OLTRE
+                || this == SOLUZIONE_UNICA_RIDOTTO || this == SOLUZIONE_UNICA_SCONTATO ? 1 : null;
     }
 }

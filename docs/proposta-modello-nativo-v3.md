@@ -1851,20 +1851,26 @@ stato un filtro reale nel legacy (`IuvUtils.toIuv` valida, non filtra) — tutte
 le rate pagabili del documento sono sempre incluse indipendentemente dal
 valore passato.
 
-**Punto aperto, da confermare esplicitamente**: la scelta fra `full` e
-`instalments` nel payload per `govpay-stampe`. Il mandato iniziale chiedeva
-sempre `instalments`; l'agente che ha implementato l'endpoint ha scelto
-invece: opzione `PIANO_RATEALE` → sempre `instalments` (anche con una sola
-rata pagabile rimasta); opzione non rateale (`SOLUZIONE_UNICA`) con
-esattamente una pendenza pagabile → `full` (identico a
-`addPendenza?stampaAvviso`); opzione non rateale con PIÙ di una pendenza
-pagabile → anche qui `instalments` — quest'ultimo caso è una vera deviazione
-dal legacy, che stamperebbe un avviso separato per pendenza (qui non
-riproducibile: nessuna libreria di merge PDF nel progetto per comporre più
-documenti in uno). Alternative scartate per questo terzo caso: 422, oppure
-più chiamate a `govpay-stampe` con merge (richiede una nuova dipendenza).
-Scelta accettata in attesa di questa nota, ma resta un punto aperto
-formale — non una decisione chiusa — finché non viene confermata.
+**Punto chiuso (rivisto il 2026-10-26)**: la scelta fra `full` e `instalments`
+nel payload per `govpay-stampe` era stata inizialmente decisa per tipologia
+dell'opzione (`PIANO_RATEALE` → sempre `instalments`, anche con una sola rata;
+`SOLUZIONE_UNICA` con una pendenza → `full`; `SOLUZIONE_UNICA` con più di una
+pendenza → `instalments` come ripiego, basandosi sull'assunzione — mai
+verificata — che il legacy stampasse un avviso separato per pendenza in
+quest'ultimo caso). Verificando `AvvisoPagamento#getBytesAvvisoDocumento` del
+legacy, quell'assunzione era sbagliata: il metodo costruisce **sempre un solo
+PDF** per l'intera lista di versamenti pagabili del documento — mai una
+chiamata ripetuta per versamento — ordinando le rate per `numeroRata`/soglia e
+raggruppando esplicitamente "su una sola pagina" le pendenze senza
+`numeroRata` (commento originale nel codice, che anticipa proprio il caso di
+più di una). La scelta `full`/`instalments` segue quindi la **cardinalità**
+delle rate pagabili, non la tipologia dell'opzione: una sola rata pagabile →
+`full` (anche per un `PIANO_RATEALE` che ha persistito solo la prima rata);
+più di una → `instalments` — questo vale anche per una `SOLUZIONE_UNICA` con
+più pendenze (possibile in v3, §3.3 — a differenza di
+`SOLUZIONE_UNICA_ENTRO`/`_OLTRE`, che restano sempre a esattamente una), per lo
+stesso motivo strutturale delle rate, non come ripiego. Nuovi test:
+`pianoRatealeConUnaSolaRataProduceFull`, `soluzioneUnicaConPiuPendenzeProduceInstalments`.
 
 Altri casi gestiti, non in discussione: nessuna rata pagabile sul documento →
 422 (`AvvisoDocumentoNonDisponibileException`, nuova, mappata come le altre
@@ -1873,10 +1879,11 @@ stesso 422 (nessun parametro `causaleTradotta` su questo endpoint — bilingue
 rifiutato esplicitamente, per decisione già presa a monte, non lasciata
 all'agente); documento di un'altra applicazione → 404 (mai 403, perché la
 query di risoluzione è già scoperta solo sull'applicazione corrente — non
-testato con una seconda applicazione fittizia). Non gestito, segnalato come
-margine noto: rate con IBAN postale diversi fra loro in uno stesso avviso
-multi-rata (il flag "postale" segue la prima rata, ogni rata risolve il
-proprio IBAN singolarmente).
+testato con una seconda applicazione fittizia). Margine noto allora segnalato
+(rate con IBAN postale diversi fra loro in uno stesso avviso multi-rata, il
+flag "postale" seguiva solo la prima rata) **risolto in revisione successiva
+(2026-10-27, vedi §39)**: ora `postal` è `true` solo se TUTTE le rate hanno
+un IBAN postale, altrimenti l'intero avviso è non postale.
 
 **File nuovi/modificati**: `PendenzaV2Controller` (nuovo override
 `getAvvisiDocumento`, nuova dipendenza `PosizioneDebitoriaRepository`);
@@ -1886,6 +1893,462 @@ estratto in `intestazione()`/`dominioDi()`); nuova
 eccezione aggiunta all'elenco esistente, mappata a 422); nuovo test
 `GetAvvisiDocumentoControllerTest` (458 righe, riusa l'impianto di stub HTTP
 di `AddPendenzaControllerTest` per `govpay-stampe`).
+
+**Verificato**: 351/351 test in `govpay-pendenze-api` (+2 rispetto al §37);
+nessuna modifica a `govpay-common-pendenze` in questo punto.
+
+## 38. govpay-pendenze-api#5 "Aggiunta stampa posizione debitoria": implementato end-to-end (2026-10-26)
+
+Issue nata come una riga ("Aggiungere alle API Pendenze la funzionalità di
+stampa della posizione debitoria", stato *Triage*/*Unplanned*, nessun
+dettaglio) — emersa riesaminando il §34, ma di scope **più ampio e distinto**
+da quel fix: non blocca né è bloccata da esso (il §34 è stato chiuso senza
+attendere questa issue).
+
+**Scoping deciso col committente**: copre tutta la `PosizioneDebitoria`,
+incluse eventuali `OpzionePagamento` alternative (es. "paga tutto" vs "paga a
+rate" sullo stesso debito — concetto reale pagoPA/GPD, `PaymentOptionModel`
+multiplo su un `PaymentPositionModel`); artefatto di output: avviso pagoPA via
+`govpay-stampe` (stesso meccanismo `PaymentNotice`/`StampeClient` già in uso).
+
+**Vincolo strutturale emerso, non ancora risolto**: `numeroAvviso`/`iuv`
+vivono su `Pendenza` (M8/M13), non su `OpzionePagamento` né su
+`PosizioneDebitoria` — ogni opzione alternativa ha quindi un proprio IUV
+distinto, un arrangiamento di pagamento pagoPA realmente separato. Un avviso
+PDF è per costruzione legato a un solo IUV (o a un NAV condiviso fra le rate
+di UNA stessa opzione piano rateale, §29): non esiste nel protocollo pagoPA
+il concetto di "un avviso che offre la scelta fra opzioni alternative". Lo
+scoping "tutta la posizione, incluse le opzioni alternative, come avviso
+pagoPA" si scontra quindi con lo stesso vincolo del §34 (un PDF, un IUV) ma a
+un livello più alto: resta da decidere come l'endpoint debba comportarsi
+quando la posizione ha più opzioni alternative disponibili (un parametro che
+seleziona l'opzione da stampare, con un avviso per chiamata; una risposta
+multi-documento come uno zip; o altro) — **non ancora deciso**, prossimo
+punto da chiarire prima di iniziare l'implementazione.
+
+**Risolto (2026-10-26): un solo PDF, una pagina per opzione, nessun merge**.
+Verificato in `AvvisoPagamentoMapper` (`govpay-stampe-api`) che la
+paginazione multi-pagina da UNA sola chiamata esiste già — è esattamente
+come `instalments` dispone le rate su più pagine (`creaPagineMultiple`,
+layout a 1/2/3 colonne) — e che ogni riga porta già il proprio
+`notice_number`/IBAN distinto (`prossimaRata`/`impostaDatiPostaliNellaRata`):
+più IUV diversi nello stesso PDF non è un problema nuovo. L'unico gap reale
+era l'assenza di un confine esplicito fra gruppi: l'algoritmo impacchetta
+liberamente più righe per pagina, quindi senza un confine l'ultima rata di
+un'opzione e la prima della successiva finirebbero sulla stessa pagina.
+**Decisione del committente**: il criterio di stampa non distingue per
+tipologia dell'opzione (quella distinzione resta solo in fase di inserimento
+dati, dove decide la cardinalità massima ammessa, §3.3) — in stampa conta
+solo quante pendenze ha l'opzione: più di una va su un unico foglio
+cumulativo (stesso criterio del §34), e ogni opzione occupa sempre pagina(e)
+propria, mai condivisa con un'altra opzione.
+
+**Contratto proposto in `govpay-stampe-api`** (`govpay-stampe.yaml`, nessuna
+nuova rotta — stesso `POST /standard`/`createPaymentNotice`): nuovo campo
+`PaymentNotice.options` (array, minimo 2 elementi, mutuamente esclusivo con
+`full`/`instalments`/`reduced_payments` a livello di documento) di
+`PaymentNoticeOption` (stessa struttura di importo di `PaymentNotice`, senza i
+metadati del documento — creditore/debitore/lingua restano unici e condivisi
+a livello di `PaymentNotice`, dato che tutte le opzioni di una stessa
+posizione hanno lo stesso creditore e lo stesso debitore). Generazione
+verificata (`mvn generate-sources`): nessun campo marcato erroneamente
+obbligatorio dall'`allOf` (`PaymentNoticeOption` è un oggetto piatto, non
+un'estensione via `allOf`, quindi non soggetto al problema di generazione già
+noto in `govpay-pendenze-api`, §31 "Scoperta non ovvia" — qui annotato solo
+come riferimento tecnico, non nello YAML pubblico che descrive solo le
+regole del dato).
+
+**Implementato (2026-10-26)**: `SemanticValidator#validazioneSemanticaOptions`
+gestisce la mutua esclusività (`options` vs `full`/`instalments`/
+`reducedPayments` a livello di documento, e `options` vs `secondLanguage` —
+quest'ultimo rifiutato esplicitamente con 422, il mapper bilingue non conosce
+ancora `options`) e valida ogni elemento con le stesse regole già esistenti
+per il documento a opzione singola (rata unica/rate/soglie obbligatorie,
+mutua esclusività rate/soglie, IBAN su avviso postale). `AvvisoPagamentoMapper
+#creaPagineOpzioni` costruisce le pagine di ciascuna opzione delegando, IN
+SEQUENZA, agli stessi metodi di dispatch già usati per il documento a
+opzione singola (`creaRatePerAvvisoSemplice`/`Postale`/`creaRateRidotte...`),
+su un `PaymentNotice` sintetico che porta solo i campi di importo
+dell'opzione — nessuna modifica ai metodi di basso livello che costruiscono
+le pagine (`creaPaginaUnicaConRate`/`creaPagineMultiple`/ecc.), quindi nessun
+rischio per il comportamento già testato del documento a opzione singola.
+Il confine fra opzioni è garantito dalla sequenzialità delle chiamate (ogni
+opzione riparte da una lista di rate vuota), non da un controllo esplicito
+aggiuntivo — verificato con test dedicati che ispezionano
+`AvvisoPagamentoInput.getPagine()` pagina per pagina.
+`options` + avviso bilingue resta esplicitamente non supportato (422), non
+un gap silenzioso.
+
+**Verificato**: 219/219 test in `govpay-stampe-api` (`mvn test` reale, +12 —
+`UC_12_AvvisoOpzioniPagamentoFailTest`, 6 casi di validazione,
+`UC_13_AvvisoOpzioniPagamentoTest`, 6 casi positivi inclusa la verifica
+struttura-pagine).
+
+**Tre difetti trovati in revisione indipendente di questa implementazione, confermati e
+corretti (2026-10-26)**:
+
+1. **Un'opzione poteva perdere un avviso accettato dalla validazione**: `creaPagineOpzioni`
+   riusa `creaRatePerAvvisoSemplice` per ciascuna opzione — questo metodo, se `full` e'
+   presente insieme a esattamente una rata in formato non postale, stampa SOLO la rata (ramo
+   dedicato `instalments.size() == 1`, riga 203): `full` scompare senza errore. Comportamento
+   preesistente (lo stesso gap esisterebbe anche su un documento a opzione singola con questa
+   combinazione), riusato senza modifiche dal nuovo codice. **Fix**: nuovo controllo in
+   `SemanticValidator#validazioneSemanticaOption` — `full` insieme a esattamente una rata in
+   un elemento di `options` non postale e' rifiutato (422), invece di perdere silenziosamente
+   `full` in stampa. Non postale perche' in formato postale la combinazione NON perde nulla
+   (`creaRatePerAvvisoPostale` stampa `full` e la rata su due pagine singole separate, sempre).
+   Nuovi test: `UC_12_08_Opzioni_FullConUnaSolaRataNonPostale_Rifiutata`,
+   `UC_13_07_FullConUnaSolaRataPostale_DuePagineSingoleSeparate` (verifica che il caso postale,
+   non rifiutato, produca davvero due pagine distinte).
+2. **L'intestatario postale dell'ultima opzione sovrascriveva quello delle precedenti**:
+   `AvvisoPagamentoInput.intestatarioContoCorrentePostale` e' un campo UNICO per l'intero
+   documento (`BaseAvvisoMapper#impostaDatiPostaliNellaRata`, riga 68, lo sovrascrive a ogni
+   importo processato — mai un dato per pagina/rata), condiviso dallo stesso
+   `AvvisoPagamentoInput` fra tutte le opzioni (`creaPagineOpzioni`, riga 118). Con intestatari
+   diversi tra opzioni, anche le pagine delle opzioni precedenti avrebbero mostrato in stampa
+   l'intestatario dell'ultima opzione processata. **Fix temporaneo** (il dato per pagina/rata
+   richiederebbe toccare il modello/template Jasper, fuori scope qui): nuovo
+   `SemanticValidator#validazioneSemanticaIntestatarioPostaleUnico`, chiamato solo quando
+   `postal=true` — rifiuta (422) se le opzioni risolvono IBAN con intestatari diversi (stessa
+   logica di fallback di `impostaDatiPostaliNellaRata`: intestatario IBAN se non vuoto,
+   altrimenti l'ente creditore). Nuovo test:
+   `UC_12_09_Opzioni_PostaleConIntestatariDiversi_Rifiutata`.
+3. **Un elemento `null` in `options` causava una `NullPointerException` (500)**: la
+   validazione strutturale (bean validation) non impedisce un elemento `null` in una lista
+   `@Valid`; il ciclo di `SemanticValidator#validazioneSemanticaOptions` chiamava
+   `validazioneSemanticaOption(option, ...)` senza controllare `option == null` prima di
+   accedere ai suoi campi. **Fix**: controllo esplicito nel ciclo, 422 invece di 500. Nuovo
+   test: `UC_12_07_Opzioni_ElementoNull_Rifiutato`.
+
+Corretto anche lo YAML pubblico: la descrizione di `options` diceva che `full`/`instalments`/
+`reduced_payments` vengono "ignorati" se presenti insieme a `options`, mentre il codice li
+rifiuta (422) — comportamento diverso da quanto descritto. Aggiunta anche la dichiarazione,
+mancante, che `options` non supporta ancora l'avviso bilingue.
+
+**Verificato**: 223/223 test in `govpay-stampe-api` (`mvn test` reale, +4 rispetto alla prima
+implementazione di questo paragrafo).
+
+**Endpoint `govpay-pendenze-api` implementato (2026-10-26)**: nuovo
+`GET /posizioni-debitorie/{idA2A}/{idPosizioneDebitoria}/stampa`
+(`getStampaPosizioneDebitoria`, `PosizioneDebitoriaController`) — il contratto
+lato `govpay-stampe-api` sopra era necessario ma non sufficiente, mancava
+ancora chi lo invoca per questo caso d'uso. Copia locale di
+`govpay-stampe.yaml` (usata solo per generare il client HTTP, vedi `pom.xml`)
+sincronizzata con la versione aggiornata.
+
+**Opzioni considerate — corretto dopo revisione del committente**: la prima
+versione escludeva esplicitamente le opzioni `ANNULLATA` con un controllo
+dedicato sullo stato dell'opzione — una regola senza alcun precedente nel
+legacy (che non ha mai avuto il concetto di opzione), introdotta di
+iniziativa durante l'implementazione e non confermata in anticipo dal
+committente nello scoping del §38. Richiesta verifica puntuale nel legacy
+(`AvvisoPagamento.getBytesAvvisoDocumento`/`Documento.getVersamentiPagabili`,
+`jars/core`/`jars/orm`): il filtro legacy e' **solo**
+`StatoVersamento.NON_ESEGUITO`, sul flat dei versamenti del documento, senza
+alcun concetto di opzione. Verificato poi in `PosizioneDebitoriaService`
+(`cascataStatoPendenze`, chiamata sia dalla cascata automatica di `attiva()`
+che da `annulla()`) che quando un'opzione passa ad `ANNULLATA` TUTTE le sue
+pendenze vengono esplicitamente riscritte a `StatoPendenza.ANNULLATO` — non
+restano `NON_ESEGUITO`. Il controllo sullo stato dell'opzione era quindi
+ridondante: il solo filtro legacy (`NON_ESEGUITO`) esclude gia' da se' le
+opzioni annullate, per costruzione (l'invariante e' verificata anche da
+`verificaTutteLePendenzeNelloStato`). **Rimosso** da `opzioniStampabili`:
+resta solo il filtro sulle pendenze pagabili di ciascuna opzione, con le
+opzioni senza alcuna pendenza pagabile (annullate o del tutto eseguite, es.
+l'ultima rata di un piano rateale appena pagata) escluse senza distinzione —
+nessun errore, semplicemente niente da stampare per quell'opzione. Nessuna
+opzione stampabile: 422 (`AvvisoDocumentoNonDisponibileException`, stessa
+classe usata da `PendenzaV2Controller.getAvvisiDocumento`, §34).
+
+**Stesso fix applicato al wrapper v2** (`PendenzaV2Controller.getAvvisiDocumento`,
+§34): il controllo `opzioni.size() != 1` → 400 contava TUTTE le opzioni del
+documento, incluse quelle ormai `ANNULLATA` — un documento creato da questo
+wrapper (sempre con una sola opzione all'origine) a cui un client v3-nativo
+avesse aggiunto un'opzione alternativa, poi automaticamente annullata
+dall'attivazione dell'una o dell'altra, risultava quindi erroneamente 400
+(due opzioni) anche quando restava esattamente un'opzione ancora pagabile.
+Corretto a parita' di principio con `opzioniStampabili`: si raggruppano le
+pendenze pagabili per opzione, si scartano le opzioni senza alcuna pendenza
+pagabile, e solo SE ne resta piu' di una il wrapper rifiuta con 400 (ambiguo,
+questo wrapper gestisce solo un'opzione pagabile per documento) — nessun
+controllo sullo stato dell'opzione, stesso motivo di cui sopra.
+
+**Layout**: esattamente un'opzione stampabile → stesso avviso di
+`getStampaPendenza`/`getAvvisiDocumento` (`full` o `instalments` secondo la
+cardinalita' delle sue rate pagabili, mai la tipologia). Piu' di una → un
+solo PDF con `PaymentNotice.options`
+(`AvvisoPdfPayloadMapper#toPaymentNoticeOpzioni`, nuovo metodo, stessa
+intestazione/bollettino postale della prima pendenza della prima opzione,
+stesso principio di `toPaymentNoticeRate`). MBT/anagrafica debitore assente
+su QUALUNQUE pendenza stampabile di QUALUNQUE opzione fa fallire l'intera
+stampa con 422, nessuna stampa parziale che ometta solo l'opzione difettosa
+— stessa scelta del §34.
+
+**Nessun formato bilingue per questo endpoint** (nessun parametro
+`linguaSecondaria`/`causaleTradotta`): con piu' di un'opzione stampabile il
+contratto di `govpay-stampe-api` non supporta comunque `options` insieme a
+`secondLanguage`, e introdurre il bilingue solo per il caso a una opzione
+renderebbe il comportamento dell'endpoint incoerente in base ai dati — stesso
+compromesso gia' scelto per `getAvvisiDocumento` (che pero' rifiuta con 422
+anziche' non esporre affatto il parametro, visibile solo perche' quell'
+endpoint e' un wrapper v2 con un parametro legacy da replicare fedelmente;
+qui non c'e' alcun vincolo di fedelta' da rispettare, quindi il parametro e'
+stato omesso del tutto dal contratto invece che accettato e rifiutato).
+
+**Verificato**: 364/364 test in `govpay-pendenze-api` (+13 — 4 su
+`AvvisoPdfPayloadMapper#toPaymentNoticeOpzioni`, 9 su
+`GetStampaPosizioneDebitoriaControllerTest`, incluso il caso di un'opzione
+`ATTIVATA` con rate ancora pagabili e l'alternativa `ANNULLATA`
+automaticamente). Rimasti 364/364 anche dopo la correzione sopra (rimozione
+del controllo ridondante su `ANNULLATA` in `opzioniStampabili` e stesso fix
+in `getAvvisiDocumento`): nessun test esistente dipendeva dal controllo
+rimosso, il comportamento osservabile non cambia. Nessuna modifica a
+`govpay-common-pendenze` in questo punto.
+
+## 39. Due difetti trovati in revisione del committente su `AvvisoPdfPayloadMapper`, corretti (2026-10-27)
+
+Revisione puntuale (non di questa sessione di sviluppo) su `AvvisoPdfPayloadMapper`, con
+riferimenti precisi a riga.
+
+1. **`SOLUZIONE_UNICA_ENTRO`/`_OLTRE` perdevano la condizione temporale**: il mapper
+   (`toPaymentNotice`/`toOption`) decideva `full` vs `instalments` solo sulla CARDINALITA' delle
+   pendenze pagabili, senza mai controllare `OpzionePagamento.getTipologia()` — una pendenza
+   singola di un'opzione `SOLUZIONE_UNICA_ENTRO`/`_OLTRE` finiva quindi in `full`, perdendo
+   l'indicazione "entro"/"oltre N giorni" che la contraddistingue (`giorni` dell'opzione mai
+   letto). Confermato nel contratto `govpay-stampe.yaml` (`PaymentNotice`/`PaymentNoticeOption`,
+   righe 328-426) che esiste un campo dedicato per questo, `reduced_payments` (array di
+   `ThresholdPayment`, `allOf` di `Amount` + `threshold_type`/`threshold_days` — **non** un
+   oggetto a parte di `full`, ogni elemento porta gia' il proprio importo) — e nel mapper lato
+   render (`AvvisoPagamentoMapper`, `govpay-stampe-api`) che la dispatch controlla
+   `hasReducedPayments` PRIMA di `full`/`instalments`: popolare `full` da solo per queste due
+   tipologie non avrebbe mai attivato il rendering con l'etichetta di soglia. Stesso pattern
+   gia' corretto lato JSON (`PendenzaV2Mapper`, switch su `getTipologia()` verso
+   `VincoloPagamento`) — qui mancava il porting equivalente lato PDF. **Fix**: nuovo
+   `isSogliaTemporale`/`mapReducedPayment` in `AvvisoPdfPayloadMapper` — una pendenza di
+   un'opzione `SOLUZIONE_UNICA_ENTRO`/`_OLTRE` produce sempre `reduced_payments` (un solo
+   elemento, cardinalita' massima 1 per queste due tipologie) invece di `full`, con
+   `threshold_type`/`threshold_days` dalla tipologia/`giorni` dell'opzione. Applicato sia al
+   caso singola-opzione (`toPaymentNotice`, usato da `getStampaPendenza`/`getAvvisiDocumento`)
+   sia al caso opzioni-alternative (`toOption`, dentro `toPaymentNoticeOpzioni`, §38) — nello
+   stesso punto in cui prima si perdeva l'indicazione.
+
+2. **`postal` seguiva solo la prima opzione/rata**: `toPaymentNoticeRate`/`toPaymentNoticeOpzioni`
+   impostavano `PaymentNotice.postal` guardando solo l'IBAN della prima pendenza (rispettivamente
+   la prima rata, la prima pendenza della prima opzione) — gia' segnalato come margine noto per
+   `toPaymentNoticeRate` nel §34, non ancora per `toPaymentNoticeOpzioni` (dove il caso e' ancora
+   piu' probabile: opzioni alternative come "paga tutto"/"paga a rate" possono avere tributi/IBAN
+   diversi). Con una configurazione mista (alcune pendenze con IBAN postale, altre senza),
+   govpay-stampe riceveva `postal=true` ma righe senza IBAN — rifiutato, propagato come 502
+   opaco da questo wrapper — oppure, nell'ordine inverso, `postal=false` che fa perdere in
+   silenzio il bollettino alle pendenze che un IBAN lo avrebbero. **Decisione del committente**:
+   formato non postale per l'intero avviso quando la configurazione è mista (non un rifiuto
+   esplicito, nonostante il precedente di `govpay-stampe-api` per l'intestatario postale diverso
+   fra opzioni, §38). **Fix, in entrambi i metodi**: `postal` è `true` solo se TUTTE le
+   pendenze considerate (tutte le rate, o tutte le pendenze di tutte le opzioni) hanno un IBAN
+   postale — non più solo la prima.
+
+Nuovi test in `AvvisoPdfPayloadMapperTest`: 5 per `reduced_payments`
+(`soluzioneUnicaEntroProduceReducedPaymentsConSogliaInveceDiFull`,
+`soluzioneUnicaOltreProduceReducedPaymentsConSogliaOltre`,
+`soluzioneUnicaSenzaSogliaRestaFull`, `ibanPostaleSuReducedPaymentQuandoLaPendenzaHaUnBollettino`,
+`opzioneEntroDentroOpzioniAlternativeProduceReducedPaymentsSullOpzione`), 3 per il `postal` misto
+(`toPaymentNoticeRatePostaleSoloSeTutteLeRateHannoUnIbanPostale`,
+`toPaymentNoticeRatePostaleSeTutteLeRateHannoUnIbanPostale`,
+`toPaymentNoticeOpzioniPostaleSoloSeTutteLeOpzioniHannoUnIbanPostale`).
+
+**Verificato**: 372/372 test in `govpay-pendenze-api` (+8 rispetto al §38). Nessuna modifica a
+`govpay-common-pendenze` in questo punto.
+
+## 40. Coppia `SOLUZIONE_UNICA_ENTRO`/`_OLTRE`: un solo avviso con `reduced_payments` a due elementi, non `options` (2026-10-27)
+
+Verificato nel vero codice legacy (`jars/core`, non in `govpay-console-api`, che non implementa affatto
+questa funzionalità): `AvvisoPagamento.getBytesAvvisoDocumento` non rifiuta mai un documento con più
+versamenti ancora pagabili (eccezione solo se la lista è vuota) e, con una coppia ENTRO+OLTRE, li stampa
+sulla STESSA pagina come due righe indipendenti (`AvvisoPagamentoUtils.creaPaginaPrincipaleDoppia`). Non
+esiste una struttura che fonda esplicitamente le due righe in una sola (quella esiste solo per il caso
+RIDOTTO+SCONTATO, diverso da ENTRO/OLTRE) — ma il layout "una pagina, due righe" è il comportamento reale.
+
+L'implementazione precedente (§38/§39) trattava invece ENTRO e OLTRE come due opzioni alternative generiche
+(stesso trattamento di "paga tutto"/"paga a rate"): in v3 due pagine separate via `options`, nel wrapper v2
+un 400. Nessuno dei due replica il layout del legacy. **Corretto**: quando le opzioni ancora pagabili sono
+ESATTAMENTE la coppia `SOLUZIONE_UNICA_ENTRO`/`_OLTRE` (nuovo `AvvisoPdfPayloadMapper#sonoTutteSoglie` +
+`#toPaymentNoticeSoglie`), si produce un solo `PaymentNotice` con `reducedPayments` a due elementi (ordinati
+per `giorni` crescente, a parità `ENTRO` prima di `OLTRE` — stesso criterio del comparator legacy in
+`AvvisoPagamento.java`), sia in `getStampaPosizioneDebitoria` (v3) sia in `getAvvisiDocumento` (wrapper v2,
+che quindi NON rifiuta più più questo caso specifico con 400). Il caso di opzioni alternative genuine (non
+soglia) resta come deciso in precedenza: nessun precedente legacy, `options`/400.
+
+**Gap scoperto incidentalmente e corretto**: il percorso di scrittura del wrapper v2
+(`NuovaPendenzaMapper.crea`) leggeva solo `documento.rata` per decidere la tipologia dell'opzione — non
+leggeva mai `documento.soglia` (`VincoloDocumento`/`VincoloPagamento`, ENTRO/OLTRE), nonostante lo schema
+v2 lo dichiari in scrittura. Una posizione con opzioni `SOLUZIONE_UNICA_ENTRO`/`_OLTRE` poteva quindi
+esistere solo se creata via l'endpoint v3-nativo (o migrata), mai tramite questo stesso wrapper — stesso
+tipo di gap già visto per `numeriAvviso` (validato ma mai applicato), qui per la scrittura invece che per
+la lettura. **Corretto**: nuovo `NuovaPendenzaMapper#risolviTipologia` (usato sia in creazione sia in
+`aggiungiAPosizioneEsistente`) — `documento.soglia` presente → `SOLUZIONE_UNICA_ENTRO`/`_OLTRE` con
+`giorni` dalla soglia; `rata` e `soglia` insieme nello stesso body → 400 (mutua esclusività, già prevista
+nel commento dello YAML ma non ancora implementata). Nuovi test in `AddPendenzaControllerTest`:
+`creaConDocumentoESogliaEntroCreaSoluzioneUnicaEntro`, `creaConDocumentoESogliaOltreCreaSoluzioneUnicaOltre`,
+`rataESogliaInsiemeRestituisce400`.
+
+**Verificato**: 382/382 test in `govpay-pendenze-api` (+10 rispetto al §39 — 4 test sul mapper
+`toPaymentNoticeSoglie`/`sonoTutteSoglie`, 1 su `GetStampaPosizioneDebitoriaControllerTest`, 2 su
+`GetAvvisiDocumentoControllerTest` incluso il caso di due opzioni alternative genuine che restano 400, 3 su
+`AddPendenzaControllerTest` per `documento.soglia` in scrittura).
+Nessuna modifica a `govpay-common-pendenze` in questo punto.
+
+## 41. `RIDOTTO`/`SCONTATO` distinti da `ENTRO`/`OLTRE`, instradati su `POST /cds_violation` (2026-10-27)
+
+Verificato che `govpay-stampe-api` ha già un endpoint dedicato (`POST /cds_violation`,
+`createCdsViolationNotice`, schema `CdsViolation` con `discounted_amount`/`reduced_amount`) con
+mapper (`ViolazioneCdsMapper`), service e template Jasper propri (`ViolazioneCDS.jasper`,
+`RidottoScontato.jasper`) per questo caso — porting completo, non vestigiale. govpay-pendenze-api
+non lo richiamava mai: `StampeClient` instradava solo su `/standard`, e la migrazione (§28,
+`06_opzioni_pagamento_documenti_esistenti.sql`) fondeva `SCONTATO`/`RIDOTTO` in
+`SOLUZIONE_UNICA_ENTRO`/`_OLTRE`, perdendo l'informazione necessaria per instradare correttamente.
+
+**Corretto, sui tre repository**:
+- **govpay-common-pendenze**: `TipologiaOpzionePagamento` esteso a 6 valori
+  (`SOLUZIONE_UNICA_RIDOTTO`/`_SCONTATO` nuovi). `richiedeGiorni()` resta `true` solo per
+  `ENTRO`/`OLTRE` — per `RIDOTTO`/`SCONTATO` `giorni` non è un valore dichiarabile (vietato in
+  input anche nel vero legacy, nessuna colonna lo porta). Migrazione PostgreSQL corretta per
+  mappare `SCONTATO`→`SOLUZIONE_UNICA_SCONTATO`, `RIDOTTO`→`SOLUZIONE_UNICA_RIDOTTO` (non più
+  fusi in ENTRO/OLTRE); gli altri tre dialetti (oracle/mysql/sqlserver) non implementano ancora
+  questo pattern C, nessuna modifica necessaria lì.
+- **govpay-pendenze-api**: schema v3 esteso (`TipologiaOpzionePagamento`, famiglie
+  `NuovaOpzionePagamento`/`OpzionePagamento`/`OpzionePagamentoIndex` con le due nuove varianti,
+  senza campo `giorni`); schema v2 (`TipoSogliaVincoloPagamento`) esteso a 4 valori, allineato al
+  vero enum legacy (`wars/api-pendenze`, non al suo YAML pubblico, che era incompleto). Tutti gli
+  switch su `TipologiaOpzionePagamento` (`PosizioneDebitoriaMapper`, `PendenzaV2Mapper`,
+  `NuovaPendenzaMapper#risolviTipologia`) estesi. Nuovo `AvvisoPdfPayloadMapper#toCdsViolation`/
+  `#sonoRidottoEScontato`; nuovo `StampeClient#streamCdsViolation` (`/cds_violation`). Entrambi i
+  controller (`getStampaPosizioneDebitoria` v3, `getAvvisiDocumento` v2) instradano la coppia
+  `RIDOTTO`/`SCONTATO` su questo nuovo percorso invece di `options`/400; il wrapper v2 può anche
+  creare direttamente un'opzione `RIDOTTO`/`SCONTATO` (non una coppia completa: questo percorso di
+  scrittura aggiunge pendenze a un'opzione esistente o ne crea una sola per documento nuovo, mai
+  una seconda opzione diversa sullo stesso documento — una coppia completa richiede comunque la
+  creazione v3-nativa).
+
+**Verificato**: 390/390 test in `govpay-pendenze-api` (+8 rispetto al §40), 212/212 in
+`govpay-common-pendenze` (nessuna regressione dall'estensione dell'enum).
+
+## 42. Tre difetti sull'accorpamento soglie (§40), confermati e corretti (2026-10-27)
+
+Revisione di codice (non di questa sessione di sviluppo) sull'accorpamento `reduced_payments`
+introdotto al §40, con riferimenti precisi a riga. Tutti i tre punti sono stati verificati
+leggendo il codice prima di correggere.
+
+1. **L'accorpamento non era limitato alla coppia `ENTRO`/`OLTRE`**: `sonoTutteSoglie`
+   accettava un numero qualsiasi di opzioni a soglia (anche quattro, o due entrambe `ENTRO`),
+   purché ciascuna avesse una sola pendenza — nessun controllo su quante opzioni né su quali
+   tipologie. Con più di due soglie non postali, `govpay-stampe-api` accetta comunque il
+   payload (`reducedPayments` non ha un vincolo di cardinalità) ma il mapper genera una pagina
+   corretta solo per la coppia a cui il template è pensato: con tre o più elementi la stampa
+   non rispecchia la richiesta. **Fix**: `sonoTutteSoglie` ora richiede esattamente due opzioni,
+   una pendenza ciascuna, una `SOLUZIONE_UNICA_ENTRO` e una `SOLUZIONE_UNICA_OLTRE` (stesso
+   pattern già usato da `sonoRidottoEScontato`) — negli altri casi resta `options`/400.
+2. **Il wrapper v2 non riusciva a creare la coppia sullo stesso documento**: una PUT con
+   `soglia.tipo=ENTRO` creava il documento (201); una seconda PUT con `soglia.tipo=OLTRE` sullo
+   stesso `documento.identificativo` falliva con 400 per mismatch di tipologia —
+   `aggiungiAPosizioneEsistente` gestiva solo l'aggiunta di una pendenza all'opzione esistente,
+   mai una seconda opzione diversa. Le due soglie sono però due `OpzionePagamento` DISPONIBILI
+   distinte nel modello v3 (alternative fra loro), non due pendenze della stessa opzione — la
+   libreria espone già `PosizioneDebitoriaService#aggiungiOpzionePagamento` per questo caso.
+   **Fix**: quando la tipologia richiesta e quella del documento esistente sono la coppia
+   complementare `ENTRO`/`OLTRE` o `RIDOTTO`/`SCONTATO` (in qualunque ordine), il wrapper
+   aggiunge una seconda opzione invece di rifiutare (nuovo
+   `NuovaPendenzaMapper#sonoSoglieComplementari`/`#completaCoppiaSoglia`); una terza soglia
+   sullo stesso documento (coppia già completa) resta 400, perché il guard iniziale continua ad
+   accettare solo documenti con esattamente un'opzione.
+3. **L'accorpamento aggirava il controllo sugli intestatari postali differenti**: il controllo
+   introdotto in `govpay-stampe-api` per IBAN con intestatari diversi
+   (`validazioneSemanticaIntestatarioPostaleUnico`, causa originaria: un solo campo documento
+   per l'intestatario postale, sovrascritto per ogni pagina) era cablato solo sul ramo
+   `options`. Passando da `options` a `reducedPayments` a livello di documento per la coppia di
+   soglie, lo stesso rischio (due soglie, due IBAN, due intestatari) non veniva più
+   intercettato — l'ultimo intestatario processato sarebbe tornato a comparire anche sulle
+   pagine precedenti, in silenzio. **Fix** (in `govpay-stampe-api`, non in `govpay-pendenze-api`:
+   il problema è nel validatore condiviso, non nella scelta di accorpare): il controllo è stato
+   generalizzato per accettare una lista di IBAN invece della sola lista di opzioni, e viene
+   applicato anche al ramo `reducedPayments` a livello di documento quando l'avviso è postale.
+   Nuovo test: `UC_11_AvvisoRidottoFailTest#UC_11_04_AvvisoRidotto_PostaleIntestatariDiversi`.
+
+**Verificato**: 392/392 test in `govpay-pendenze-api` (+2 rispetto al §41), 212/212 in
+`govpay-common-pendenze` (invariato, nessuna modifica in questo punto), 224/224 in
+`govpay-stampe-api` (+1).
+
+## 43. Tre ulteriori difetti su §40/§42, confermati e corretti (2026-10-27)
+
+Revisione di codice (non di questa sessione di sviluppo) sui fix dei §40/§42, con riferimenti
+precisi a riga. Tutti i tre punti sono stati verificati leggendo il codice prima di correggere.
+
+1. **La migrazione PostgreSQL continuava a scrivere `giorni=5` per `RIDOTTO`/`SCONTATO`**: il
+   `CASE` che calcola `giorni` in `06_opzioni_pagamento_documenti_esistenti.sql` cambiava
+   correttamente la `tipologia` (§41) ma il suo `ELSE` restava `5` — un residuo dell'epoca in cui
+   queste due tipologie erano fuse in `ENTRO`/`OLTRE` (che richiedono `giorni`). Dato che il
+   validatore ora vieta `giorni` per `RIDOTTO`/`SCONTATO` (`richiedeGiorni()`, §41), la migrazione
+   produceva righe che il nuovo validatore avrebbe rifiutato se mai rivalidate. **Fix**: `ELSE
+   NULL` (la colonna `opzioni_pagamento.giorni` è già nullable, nessuna modifica DDL necessaria).
+2. **Il wrapper v2 richiedeva ancora `giorni` anche per `RIDOTTO`/`SCONTATO`**: lo schema v2
+   (`VincoloPagamento`) aveva `giorni` in `required` indipendentemente da `tipo`, quindi la
+   validazione bean (`@NotNull` generato dall'OpenAPI generator) rifiutava la richiesta con 400
+   PRIMA che il mapper (che già ignorava correttamente `giorni` per queste due tipologie, §41)
+   venisse eseguito — un vincolo condizionale (obbligatorio solo per `ENTRO`/`OLTRE`) non
+   esprimibile in uno schema OpenAPI non-`oneOf`. I test del §41 passavano comunque perché
+   inviavano sempre `giorni:5` (ignorato dal mapper), senza coprire il caso realistico di
+   un'integrazione che per `RIDOTTO`/`SCONTATO` non lo manda affatto. **Fix**: `giorni` rimosso da
+   `required` nello schema (resta `minimum: 1` quando presente); il vincolo condizionale è ora
+   applicato in `NuovaPendenzaMapper#risolviTipologia` (400 esplicito se assente per `ENTRO`/
+   `OLTRE`, ignorato se presente per `RIDOTTO`/`SCONTATO`, invariato). Nuovi test:
+   `creaConDocumentoESogliaRidottoSenzaGiorniNelBodyRestituisce201`,
+   `creaConDocumentoESogliaEntroSenzaGiorniNelBodyRestituisce400`.
+3. **`POST /cds_violation` non applicava il controllo sugli intestatari postali differenti**: il
+   fix del §42 (punto 3) estendeva il controllo al ramo `reducedPayments` di `PaymentNotice`, ma
+   `validazioneSemanticaViolazioneCds` (percorso separato, stessa causa radice — `ViolazioneCdsMapper`
+   condivide lo stesso campo documento unico per l'intestatario postale) non lo richiamava affatto:
+   una coppia `RIDOTTO`+`SCONTATO` postale con intestatari diversi veniva accettata, riproducendo
+   lo stesso difetto per questo percorso. **Fix** (in `govpay-stampe-api`): stessa chiamata al
+   controllo condiviso, applicata a `reducedAmount.iban`/`discountedAmount.iban` quando
+   `postal=true`. Nuovo test: `UC_1_ViolazioneCdsFailTest#UC_1_41_ViolazioneCds_PostaleIntestatariDiversi`.
+
+**Verificato**: 394/394 test in `govpay-pendenze-api` (+2 rispetto al §42), 212/212 in
+`govpay-common-pendenze` (invariato — fix di sola migrazione SQL, nessun test dedicato esiste per
+questi script in questo repository), 225/225 in `govpay-stampe-api` (+1).
+
+## 44. `getAvvisiDocumento` (v2): causale/informativa tradotte dalla `proprieta` persistita, non piu' un 422 incondizionato (2026-10-27)
+
+Il rifiuto incondizionato di `linguaSecondaria≠false` era descritto (§3, analisi di gap
+dell'issue, e nel Javadoc del metodo) come bloccato da `govpay-stampe-api` ("nessun parametro
+`causaleTradotta` nello schema"): verificato che non e' mai stato cosi'. `govpay-stampe-api`
+supporta il bilingue da prima di questa sessione (`second_language.title`/`informativa_importo`);
+`PendenzaController#getStampaPendenza` (v3-nativo) lo usa gia' con successo, ricevendo
+`causaleTradotta`/`informativaImporto`/`informativaImportoTradotta` come query param espliciti.
+Il vero motivo per cui questo endpoint v2 non li ha come query param e' lo stesso del vero
+legacy: non sono valori di richiesta, vivono sul documento. E il wrapper li persiste gia' da
+prima di questa sessione — `NuovaPendenzaMapper#applicaCampiLegacy` scrive l'intero
+`ProprietaPendenza` (quindi `linguaSecondariaCausale`/`informativaImportoAvviso`/
+`linguaSecondariaInformativaImportoAvviso`) su `pendenza.proprieta`, e `PendenzaV2Mapper` lo
+decodifica in lettura — semplicemente non era mai stato letto per la stampa.
+
+**Corretto**: rimosso il rifiuto incondizionato. Nuovo
+`PendenzaV2Controller#risolviParametriBilingue`: decodifica `pendenza.proprieta` (riusando
+`PendenzaV2Mapper#toProprietaPendenzaDto`, reso non piu' `private`) e costruisce i parametri per
+`AvvisoPdfPayloadMapper#toPaymentNotice` — applicato SOLO al layout a singola rata
+rappresentativa (una sola rata pagabile, non piano rateale, non coppia soglie/CdS, che non
+supportano questi parametri): 422 se bilingue richiesto senza `linguaSecondariaCausale`
+persistita, o se il layout ha piu' di una rata/opzione pagabile (stessa logica di "chi e' la
+pendenza rappresentativa" gia' usata per il titolo non tradotto, §1.1/§36). `informativaImporto`
+(italiano, non solo la sua traduzione) e' ora letto da `proprieta` anche senza bilingue — prima
+si perdeva sempre su questo percorso, anche senza richiedere il bilingue.
+
+**Non toccato**: `getAvviso` resta sospeso (decisione del committente, §35) — stessa causa
+radice vista qui, ma non riaperta in questa sessione. Piano rateale multi-rata e coppie
+soglie/CdS restano senza bilingue: richiederebbe decidere quale pendenza "rappresenta" la
+causale tradotta condivisa fra piu' rate/opzioni, la stessa ambiguita' gia' accettata per la
+causale non tradotta (una sola `descrizione` per posizione, §3).
+
+**Verificato**: 397/397 test in `govpay-pendenze-api` (+3 rispetto al §43); nessuna modifica a
+`govpay-common-pendenze`/`govpay-stampe-api` in questo punto.
 
 ## 35. Punti ancora sospesi (non ripresi in questa sessione)
 
@@ -2014,8 +2477,29 @@ rispetto al §36); nessuna modifica a `govpay-common-pendenze` in questo punto.
 
 ## Stato dei test
 
-212 test totali in questa libreria, tutti verdi (`mvn clean test`); 349 in govpay-pendenze-api.
+212 test totali in questa libreria, tutti verdi (`mvn clean test`); 364 in govpay-pendenze-api;
+223 in govpay-stampe-api.
 
+> **Aggiornato al 2026-10-26 (§38, endpoint govpay-pendenze-api)**: 364 test
+> in `govpay-pendenze-api` (+13 — nuovo `GET .../posizioni-debitorie/{idA2A}/
+> {idPosizioneDebitoria}/stampa`); nessuna modifica a `govpay-common-pendenze`
+> in questo punto.
+>
+> **Aggiornato al 2026-10-26 (§38, revisione indipendente)**: 223 test in
+> `govpay-stampe-api` (+4 — tre difetti sulla prima implementazione: perdita
+> di 'full' con una rata non postale, intestatario postale condiviso fra
+> opzioni, elemento null in 'options'); nessuna modifica a
+> `govpay-common-pendenze` o `govpay-pendenze-api` in questo punto.
+>
+> **Aggiornato al 2026-10-26 (§38)**: 219 test in `govpay-stampe-api` (`mvn
+> test` reale, +12 — `UC_12_AvvisoOpzioniPagamentoFailTest`/
+> `UC_13_AvvisoOpzioniPagamentoTest`); nessuna modifica a `govpay-common-pendenze`
+> o `govpay-pendenze-api` in questo punto.
+>
+> **Aggiornato al 2026-10-26 (§34, riesame)**: 212 in questa libreria (invariata),
+> 351 in `govpay-pendenze-api` (+2 rispetto al §37, chiusura del punto aperto
+> `full`/`instalments` con il criterio basato sulla cardinalita').
+>
 > **Aggiornato al 2026-10-26 (§37)**: 212 in questa libreria (invariata), 349 in
 > `govpay-pendenze-api` (+4, due difetti sui fix del §36).
 >
