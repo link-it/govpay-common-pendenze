@@ -4,9 +4,12 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -105,6 +108,24 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * @return la RPT, se esiste
      */
     Optional<Rpt> findByCodDominioAndIuvAndIur(String codDominio, String iuv, String iur);
+
+    /**
+     * RPT pendenti sulla stessa coppia dominio/iuv, da annullare prima di attivarne una
+     * nuova ({@code Rpt#annullaRPTPendenti} nel legacy, {@code SELECT ... FOR UPDATE} compreso)
+     * — usata da pafornode-api in {@code paGetPayment}/{@code paGetPaymentV2}. Il lock da solo
+     * non basta a evitare due RPT attive concorrenti quando non ce n'e' ancora nessuna
+     * (risultato vuoto, niente da bloccare): il chiamante deve comunque serializzare
+     * sulla pendenza stessa (vedi {@link PendenzaRepository#findByIdForUpdate}).
+     *
+     * @param codDominio       dominio creditore (colonna fisica {@code cod_dominio})
+     * @param iuv              identificativo univoco di versamento
+     * @param statoIn          valori di {@link Rpt#getStato()} considerati "pendenti"
+     * @param modelloPagamento valore di {@link Rpt#getModelloPagamento()} da filtrare
+     * @return le RPT pendenti da annullare
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    List<Rpt> findByCodDominioAndIuvAndStatoInAndModelloPagamento(String codDominio, String iuv,
+            List<String> statoIn, String modelloPagamento);
 
     /**
      * {@code from}+{@code where} condivisi da {@link #cercaFiltrate} (contenuto e conteggio) e da

@@ -56,8 +56,13 @@ class RicevutaRendicontazioneMappingTest {
         rpt.setIuv(pendenza.getIuv());
         rpt.setIur("1234acdc");
         rpt.setCodDominio("DOMINIO_1");
+        rpt.setCodStazione("STAZIONE_1");
+        rpt.setCodMsgRichiesta("msg-1234acdc");
+        rpt.setStato("RT_ACCETTATA_NODO");
         rpt.setXmlRt("<Receipt><receiptId>9a1e6b2e</receiptId></Receipt>".getBytes(StandardCharsets.UTF_8));
+        rpt.setDataMsgRichiesta(ADESSO);
         rpt.setDataMsgRicevuta(ADESSO);
+        rpt.setDataAggiornamentoStato(ADESSO);
         rpt.setVersione("RPTV2_RTV1");
         em.persistAndFlush(rpt);
         em.clear();
@@ -81,8 +86,13 @@ class RicevutaRendicontazioneMappingTest {
         rpt.setIuv(pendenza.getIuv());
         rpt.setIur("1234acdc");
         rpt.setCodDominio("DOMINIO_1");
+        rpt.setCodStazione("STAZIONE_1");
+        rpt.setCodMsgRichiesta("msg-1234acdc");
+        rpt.setStato("RT_ACCETTATA_NODO");
         rpt.setXmlRt("<Receipt/>".getBytes(StandardCharsets.UTF_8));
+        rpt.setDataMsgRichiesta(ADESSO);
         rpt.setDataMsgRicevuta(ADESSO);
+        rpt.setDataAggiornamentoStato(ADESSO);
         rpt.setVersione("RPTV2_RTV1");
         em.persistAndFlush(rpt);
 

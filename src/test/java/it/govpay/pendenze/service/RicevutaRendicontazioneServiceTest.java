@@ -340,8 +340,13 @@ class RicevutaRendicontazioneServiceTest {
         rpt.setIuv(pendenza.getIuv());
         rpt.setIur(iur);
         rpt.setCodDominio("DOMINIO_1");
+        rpt.setCodStazione("STAZIONE_1");
+        rpt.setCodMsgRichiesta("msg-" + iur);
+        rpt.setStato("RT_ACCETTATA_NODO");
         rpt.setXmlRt("<Receipt/>".getBytes(StandardCharsets.UTF_8));
+        rpt.setDataMsgRichiesta(dataMsgRicevuta);
         rpt.setDataMsgRicevuta(dataMsgRicevuta);
+        rpt.setDataAggiornamentoStato(dataMsgRicevuta);
         rpt.setVersione("RPTV2_RTV1");
         em.persistAndFlush(rpt);
         return rpt;
@@ -354,6 +359,11 @@ class RicevutaRendicontazioneServiceTest {
         rpt.setIuv(pendenza.getIuv());
         rpt.setIur(iur);
         rpt.setCodDominio("DOMINIO_1");
+        rpt.setCodStazione("STAZIONE_1");
+        rpt.setCodMsgRichiesta("msg-" + iur);
+        rpt.setStato("RPT_ATTIVATA");
+        rpt.setDataMsgRichiesta(ADESSO);
+        rpt.setDataAggiornamentoStato(ADESSO);
         rpt.setVersione("RPTV2_RTV1");
         em.persistAndFlush(rpt);
         return rpt;

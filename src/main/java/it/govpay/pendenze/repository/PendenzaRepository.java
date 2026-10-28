@@ -4,9 +4,12 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -167,6 +170,21 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
      * @return la pendenza, se esiste
      */
     Optional<Pendenza> findByIdDominioAndIuv(Long idDominio, String iuv);
+
+    /**
+     * Come {@link #findById}, con {@code SELECT ... FOR UPDATE}: serializza le attivazioni
+     * concorrenti di una RPT sulla stessa pendenza (usata da pafornode-api prima di
+     * {@code RptRepository#findByCodDominioAndIuvAndStatoInAndModelloPagamento} — un lock solo
+     * sulle RPT pendenti non basta quando non ce n'e' ancora nessuna: due attivazioni
+     * concorrenti senza RPT precedente troverebbero entrambe un risultato vuoto e
+     * creerebbero due RPT attive sulla stessa pendenza).
+     *
+     * @param id chiave della pendenza
+     * @return la pendenza, se esiste, con il lock acquisito per la transazione corrente
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Pendenza p where p.id = :id")
+    Optional<Pendenza> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * Ricerca per numero avviso ({@code GET /pendenze/{idA2A}} dello YAML v3:

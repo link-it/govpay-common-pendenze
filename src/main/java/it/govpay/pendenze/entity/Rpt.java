@@ -45,6 +45,10 @@ import jakarta.persistence.UniqueConstraint;
  * {@code ctReceiptV2}) e' responsabilita' del livello che espone i bean API, non di
  * questa libreria (stesso principio del vecchio model {@code TipoRicevuta}, rimosso
  * perche' senza piu' alcun campo tipizzato a cui applicarlo).</p>
+ *
+ * <p>Scritta (non solo letta) da pafornode-api per l'attivazione della RPT. I campi
+ * marcati {@code @Deprecated} sono stati aggiunti solo per quella scrittura e sono
+ * candidati a essere ridotti da un'evolutiva futura.</p>
  */
 @Entity
 @Table(name = "rpt", uniqueConstraints = @UniqueConstraint(
@@ -73,21 +77,20 @@ public class Rpt {
 
     /**
      * Stazione del dominio al momento dell'invio della RPT — colonna fisica NOT NULL in
-     * produzione, non vincolata qui per lo stesso motivo di {@link #dataMsgRichiesta} (sola
-     * lettura). Denormalizzata direttamente su {@code rpt}, non serve risalire a
+     * produzione. Denormalizzata direttamente su {@code rpt}, non serve risalire a
      * {@code Dominio.getStazione()}: serve al wrapper verso i client v2 per ricostruire
      * {@code CtDominio.identificativoStazioneRichiedente} quando ricostruisce l'intera RPT in
      * formato V1 (nessun consumatore v3-nativo la legge).
      */
-    @Column(name = "cod_stazione", length = 35)
+    @Column(name = "cod_stazione", nullable = false, length = 35)
     private String codStazione;
 
     /**
-     * Identificativo del messaggio RPT usato come riferimento nell'RT — colonna legacy gia'
-     * esistente, non ancora mappata prima d'ora. Stesso ambito di {@link #codStazione}: serve
-     * solo al wrapper verso i client v2 per la ricostruzione in formato V1.
+     * Identificativo del messaggio RPT usato come riferimento nell'RT. Stesso ambito di
+     * {@link #codStazione}: serve solo al wrapper verso i client v2 per la ricostruzione in
+     * formato V1.
      */
-    @Column(name = "cod_msg_richiesta", length = 35)
+    @Column(name = "cod_msg_richiesta", nullable = false, length = 35)
     private String codMsgRichiesta;
 
     /**
@@ -103,7 +106,7 @@ public class Rpt {
      * il wrapper verso i client v2 lo passa semplicemente attraverso, come fa il legacy
      * stesso ({@code RptConverter.setStato(rpt.getStato().toString())}).
      */
-    @Column(name = "stato", length = 35)
+    @Column(name = "stato", nullable = false, length = 35)
     private String stato;
 
     /** Dettaglio testuale libero di {@link #stato} — stesso ambito, solo per il wrapper v2. */
@@ -119,15 +122,14 @@ public class Rpt {
     private OffsetDateTime dataMsgRicevuta;
 
     /**
-     * Data della richiesta di pagamento (RPT) — colonna fisica NOT NULL in produzione, non
-     * vincolata qui perche' questa libreria non scrive mai righe {@code rpt} (solo lettura).
+     * Data della richiesta di pagamento (RPT) — colonna fisica NOT NULL in produzione.
      * Fonte per {@code dataOperazione} nella stampa PDF della ricevuta in formato SANP_230
      * (vedi {@link it.govpay.pendenze.ricevuta.RicevutaPdfPayloadMapper}): e' la stessa
      * colonna da cui il legacy popola il campo omonimo dell'XML della RPT in uscita
      * ({@code MessaggiPagoPAUtils.setDataOraMessaggioRichiesta(..., rpt.getDataMsgRichiesta())}),
      * quindi equivalente anche quando l'XML della RPT originale non e' disponibile.
      */
-    @Column(name = "data_msg_richiesta")
+    @Column(name = "data_msg_richiesta", nullable = false)
     private OffsetDateTime dataMsgRichiesta;
 
     /** Esito del pagamento secondo la codifica pagoPA (0/1/2/3/4 — non interpretato qui). */
@@ -137,6 +139,51 @@ public class Rpt {
     /** Valore legacy grezzo di {@code VersioneRPT} — vedi nota di classe. */
     @Column(name = "versione", nullable = false, length = 35)
     private String versione;
+
+    /**
+     * Data di aggiornamento dello stato della RPT — colonna fisica NOT NULL senza default: va
+     * sempre impostata da chi inserisce/aggiorna la riga.
+     */
+    @Column(name = "data_aggiornamento_stato", nullable = false)
+    private OffsetDateTime dataAggiornamentoStato;
+
+    /**
+     * Corpo della RPT (richiesta di pagamento) in uscita, XML grezzo.
+     *
+     * @deprecated campo aggiunto per la scrittura dell'attivazione da parte di
+     * pafornode-api; candidato a essere ridotto da una evolutiva futura sui dati salvati
+     * su {@code rpt} all'attivazione.
+     */
+    @Deprecated
+    @Column(name = "xml_rpt")
+    private byte[] xmlRpt;
+
+    /**
+     * Identificativo del carrello multi-pagamento.
+     *
+     * @deprecated vedi {@link #xmlRpt}.
+     */
+    @Deprecated
+    @Column(name = "cod_carrello", length = 35)
+    private String codCarrello;
+
+    /**
+     * Modello di pagamento pagoPA (codifica legacy {@code ModelloPagamento}).
+     *
+     * @deprecated vedi {@link #xmlRpt}.
+     */
+    @Deprecated
+    @Column(name = "modello_pagamento", length = 16)
+    private String modelloPagamento;
+
+    /**
+     * Identificativo di transazione dell'RPT.
+     *
+     * @deprecated vedi {@link #xmlRpt}.
+     */
+    @Deprecated
+    @Column(name = "cod_transazione_rpt", length = 36)
+    private String codTransazioneRpt;
 
     // ── Accessori ────────────────────────────────────────────────────────────
 
@@ -258,5 +305,53 @@ public class Rpt {
 
     public void setVersione(String versione) {
         this.versione = versione;
+    }
+
+    public OffsetDateTime getDataAggiornamentoStato() {
+        return dataAggiornamentoStato;
+    }
+
+    public void setDataAggiornamentoStato(OffsetDateTime dataAggiornamentoStato) {
+        this.dataAggiornamentoStato = dataAggiornamentoStato;
+    }
+
+    @Deprecated
+    public byte[] getXmlRpt() {
+        return xmlRpt;
+    }
+
+    @Deprecated
+    public void setXmlRpt(byte[] xmlRpt) {
+        this.xmlRpt = xmlRpt;
+    }
+
+    @Deprecated
+    public String getCodCarrello() {
+        return codCarrello;
+    }
+
+    @Deprecated
+    public void setCodCarrello(String codCarrello) {
+        this.codCarrello = codCarrello;
+    }
+
+    @Deprecated
+    public String getModelloPagamento() {
+        return modelloPagamento;
+    }
+
+    @Deprecated
+    public void setModelloPagamento(String modelloPagamento) {
+        this.modelloPagamento = modelloPagamento;
+    }
+
+    @Deprecated
+    public String getCodTransazioneRpt() {
+        return codTransazioneRpt;
+    }
+
+    @Deprecated
+    public void setCodTransazioneRpt(String codTransazioneRpt) {
+        this.codTransazioneRpt = codTransazioneRpt;
     }
 }
