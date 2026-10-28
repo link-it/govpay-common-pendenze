@@ -200,13 +200,14 @@ public class Pendenza {
     /**
      * Causale della pendenza nel formato codificato legacy (es. {@code "01 "+base64}, vedi
      * {@code it.govpay.model.Versamento.Causale} del monolite) — colonna legacy gia'
-     * esistente, non ancora mappata prima d'ora. Mai decodificata qui: resta nel formato
-     * con cui il legacy la scrive/legge perche' {@code govpay-aca-batch} ha gia' una vista
-     * ({@code sql/&lt;dialetto&gt;/create-db.sql}, {@code v_versamenti_gpd}) che la decodifica
-     * da sola assumendo quel formato — decodificarla qui romperebbe quella vista. Nessun consumatore v3-nativo
-     * la legge (i mapper di stampa usano solo {@code PosizioneDebitoria.descrizione}): serve
-     * solo al wrapper verso i client v2, che la espone/accetta nel campo {@code causale}
-     * della risposta/richiesta REST legacy, decodificandola/codificandola lui stesso.
+     * esistente. Mai decodificata qui: resta nel formato con cui il legacy la scrive/legge
+     * perche' {@code govpay-aca-batch} ha gia' una vista ({@code sql/&lt;dialetto&gt;/
+     * create-db.sql}, {@code v_versamenti_gpd}) che la decodifica da sola assumendo quel
+     * formato — decodificarla qui romperebbe quella vista. Codificata/decodificata da
+     * {@code CausaleVersamentoCodec} (stesso package), usato dal comando ({@code DatiPendenza}/
+     * {@code AggiornamentoPendenza}, che espongono il testo in chiaro) e dai mapper delle API
+     * (v2 e v3-nativa) in lettura. Distinta da {@code PosizioneDebitoria.descrizione}
+     * (condivisa dall'intera posizione): questa e' testo per la singola pendenza.
      */
     @Column(name = "causale_versamento", length = 1024)
     private String causaleVersamento;

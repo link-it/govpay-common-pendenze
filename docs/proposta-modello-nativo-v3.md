@@ -1223,25 +1223,23 @@ rimozione. Se in futuro nascerà un servizio che implementa la verifica
 pagamento verso il Nodo, dovrà applicare questo filtro con una propria query,
 non riusando questi metodi pensati per il gestionale.
 
-**Nota collaterale emersa durante questa verifica, non ancora affrontata**:
-esiste nel legacy un meccanismo reale di autorizzazione per dominio
-(tabella `utenze_domini`, many-to-many utenza↔dominio con `id_uo` opzionale,
-flag `autorizzazione_domini_star` per bypassarla; classe
-`AuthorizationManager`/`AutorizzazioneUtils` in `jars/core`, usata in modo
-pervasivo in api-backoffice/api-ragioneria e nel listato di api-pendenze
-**v1**). **api-pendenze v2** (il predecessore diretto di questa v3) è invece
-più permissivo: il listato filtra solo per `idA2A` ("un'applicazione vede solo
-le sue pendenze", commento esplicito nel codice), non per domini autorizzati;
-il controllo di autorizzazione sul dominio scatta lì solo puntualmente, in
-lettura/patch di una singola pendenza. **`govpay-pendenze-api` oggi non
-implementa alcun controllo di questo tipo**: `risolviIdDominio` nel converter
-verifica solo che il dominio esista, non che l'applicazione chiamante sia
-autorizzata su di esso — un'applicazione potrebbe creare una posizione
-debitoria per qualsiasi dominio censito. Il lead deve verificare con l'autore
-della specifica quale dei due modelli (v1 restrittivo, v2 permissivo) la v3
-debba seguire, prima che questo venga implementato. Richiederebbe comunque una
-nuova anagrafica (`Utenza`/`UtenzeDomini`), non ancora presente da nessuna
-parte per questa libreria.
+~~**Nota collaterale emersa durante questa verifica, non ancora affrontata**~~ —
+**CHIUSO (2026-10-25, vedi §36 punto 1)**: esiste nel legacy un meccanismo reale di
+autorizzazione per dominio (tabella `utenze_domini`, many-to-many utenza↔dominio con `id_uo`
+opzionale, flag `autorizzazione_domini_star` per bypassarla; classe
+`AuthorizationManager`/`AutorizzazioneUtils` in `jars/core`, usata in modo pervasivo in
+api-backoffice/api-ragioneria e nel listato di api-pendenze **v1**). **api-pendenze v2** (il
+predecessore diretto di questa v3) è invece più permissivo: il listato filtra solo per `idA2A`
+("un'applicazione vede solo le sue pendenze", commento esplicito nel codice), non per domini
+autorizzati; il controllo di autorizzazione sul dominio scatta lì solo puntualmente, in
+lettura/patch di una singola pendenza. L'anagrafica `Utenza`/`UtenzeDomini` che questa nota
+segnalava come assente ora esiste (`UtenzaEntity`/`UtenzaDominioEntity`/
+`UtenzaTipoVersamentoRepository`, package `it.govpay.pendenze.security`,
+govpay-pendenze-api): il §36 ha aggiunto `NuovaPendenzaMapper
+#verificaAutorizzazioneDominioETipoVersamento` (dominio E tipoVersamento, 403 se non
+autorizzata, bypassato solo da `autorizzazioneDominiStar`/`autorizzazioneTipiVersStar`),
+seguendo il modello **v1 restrittivo**, non quello v2 permissivo — decisione presa
+implementando il fix di sicurezza del §36, non con una discussione separata documentata qui.
 
 ## 28. Causale dei versamenti orfani: documento sintetizzato in migrazione, `descrizione` ampliata a 1024 (2026-10-20)
 
@@ -1254,7 +1252,7 @@ Il "punto 4" del wrapper v2 (`GET /pendenze/{idA2A}/{idPendenza}` su un'installa
 - **Decodifica riusata da `govpay-aca-batch`** (vista `v_versamenti_gpd`, gia' in produzione) invece di un passaggio Java separato: evita di reinventare 5 traduzioni SQL quando esiste gia' un precedente funzionante per postgresql/oracle/mysql (confermato dal lead attivo presso i clienti). SQL Server completato qui (la vista si fermava a `VARBINARY`, senza conversione finale a testo) ma non verificato contro un'istanza reale. **HSQL escluso**: confermato dal lead non utilizzato in produzione.
 - **Script a parte (`05_documenti_orfani.sql`, stessa cartella/convenzione di `01_documenti.sql`...`04_versamenti.sql`)**, non modifica retroattiva di `01_documenti.sql`: stesso principio di versioning incrementale degli script di migrazione gia' in uso in questa cartella.
 
-**Punto aperto emerso riverificando la stampa (2026-10-21), da portare al committente**: la precedente nota "nessuna regressione sulla stampa" era imprecisa. Il legacy ha **due** operazioni di stampa distinte: `GET /avvisi/{idDominio}/{numeroAvviso}` (`AvvisiDAO.getAvviso()`, sempre `AvvisoPagamentoUtils.fromVersamento()` → oggetto del pagamento = **causale della singola pendenza**, indipendentemente dal fatto che abbia un documento — verificato, il controllo su `documento != null` li' decide solo il nome del file) e `GET /documenti/.../avvisi` (stampa cumulativa di tutto il documento, **solo qui** `fromDocumento()` usa `documento.getDescrizione()`). `GET /pendenze/{idA2A}/{idPendenza}/stampa` di v3 (`AvvisoPdfPayloadMapper`) e' l'equivalente diretto della **prima** operazione (singola pendenza), ma usa sempre `PosizioneDebitoria.descrizione` (condivisa), mai la causale della singola pendenza. Per una pendenza raggruppata con causali diverse per rata, questo e' una **regressione reale** rispetto a `GET /avvisi/.../numeroAvviso` di v2 (mostrerebbe la descrizione condivisa del documento invece della causale specifica di quella rata) — non per gli orfani, dove i due valori coincidono per costruzione. Nessuna proposta di soluzione ancora formulata: va discusso con il committente prima di decidere se/come differenziare il comportamento di stampa per il wrapper sulle pendenze raggruppate.
+~~**Punto aperto emerso riverificando la stampa (2026-10-21), da portare al committente**~~ — **CHIUSO (2026-10-28, vedi §50)**: la precedente nota "nessuna regressione sulla stampa" era imprecisa. Il legacy ha **due** operazioni di stampa distinte: `GET /avvisi/{idDominio}/{numeroAvviso}` (`AvvisiDAO.getAvviso()`, sempre `AvvisoPagamentoUtils.fromVersamento()` → oggetto del pagamento = **causale della singola pendenza**, indipendentemente dal fatto che abbia un documento — verificato, il controllo su `documento != null` li' decide solo il nome del file) e `GET /documenti/.../avvisi` (stampa cumulativa di tutto il documento, **solo qui** `fromDocumento()` usa `documento.getDescrizione()`). `GET /pendenze/{idA2A}/{idPendenza}/stampa` di v3 (`AvvisoPdfPayloadMapper`) era l'equivalente diretto della **prima** operazione (singola pendenza), ma usava sempre `PosizioneDebitoria.descrizione` (condivisa), mai la causale della singola pendenza — una **regressione reale** rispetto a `GET /avvisi/.../numeroAvviso` di v2 per una pendenza raggruppata con causali diverse per rata. Risolto estendendo al PDF lo stesso fallback già presente per il JSON (`PendenzaV2Mapper#risolviDescrizioneAvviso`): nuovo `AvvisoPdfPayloadMapper#oggettoPagamentoRataUnica` (causale se presente, altrimenti descrizione), usato da `toPaymentNotice` — ma SOLO quando l'identità stampata è davvero la pendenza (`getStampaPendenza`/`getAvviso`/`generaPdfAvviso`), non quando `toPaymentNotice` viene riusato come scorciatoia per un documento/una posizione che si riduce a una sola rata (`getAvvisiDocumento`/`getStampaPosizioneDebitoria`): per quel caso, equivalente di `GET /documenti/.../avvisi`, nuovo `#toPaymentNoticeDocumento` (sempre `descrizioneDi`, mai la causale) — bug trovato in revisione indipendente e corretto, vedi §50. Gli avvisi cumulativi a più rate (`toPaymentNoticeRate`/`toPaymentNoticeOpzioni`/`toPaymentNoticeSoglie`) restano sempre su `descrizioneDi` (mai la causale della "prima" pendenza rappresentativa, che sarebbe un oggetto arbitrario per un avviso che copre più rate) — stessa distinzione del legacy, la scelta fra le due identità è esplicita nel codice, non dedotta dal numero di pendenze.
 
 **Non affrontato qui, resta apertura nota**: un `Versamento` migrato senza `id_opzione_pagamento` (mai assegnato dalla migrazione, §23: "nessuna riga esistente da migrare" per `opzioni_pagamento`) fa restituire `null` da `Pendenza.getOpzionePagamento()` — i mapper di stampa (`AvvisoPdfPayloadMapper`/`RicevutaPdfPayloadMapper`) risalgono a `descrizione` passando per `pendenza.getOpzionePagamento().getPosizioneDebitoria()`, quindi andrebbero in `NullPointerException` su una pendenza v2 migrata se usati prima che un'opzione di pagamento le venga assegnata. Non e' stato ancora verificato se/come questi mapper gestiscano gia' questo caso (atteso e tollerato altrove, vedi §24 sul `left join` opzionale in ricerca) — da controllare prima di considerare il wrapper v2 completo sul percorso di stampa.
 
@@ -1262,7 +1260,7 @@ Il "punto 4" del wrapper v2 (`GET /pendenze/{idA2A}/{idPendenza}` su un'installa
 
 **Decisione sulla validazione del `rata` dichiarato da v2 (2026-10-20)**: verificato che **v2 oggi non valida affatto `cod_rata`** — nessun codice di errore lo menziona, nessun controllo di unicità/sequenzialità in `VersamentiBD.insertVersamento`; `VersamentoUtils.isNumeroRata`/`getTipoSogliaPagamento`/`getGiorniSogliaPagamento` sono codice morto (nessun chiamante in tutto il monorepo), la decodifica reale (`VersamentoConverter.java:143-157`) avviene solo in lettura, per la stampa, senza validare nulla. Il client puo' oggi mandare qualunque intero, in qualunque ordine, anche duplicato, senza errore. **Deciso comunque di non replicare questa permissivita'**: questa API resta pensata per client che vogliono continuare a usare il contratto v2, ma i dati devono comunque entrare nello schema v3 — dove `numeroRata` e' posizionale, mai scritto dal client (vedi Javadoc di `PosizioneDebitoriaService.assegnaIndici`). Si da' errore esplicito (400) se il `rata` dichiarato non coincide con la posizione attesa (1 alla prima chiamata per un documento nuovo, conteggio attuale+1 per le successive) invece di accettarlo e lasciare che diverga silenziosamente da quanto effettivamente assegnato — e' un comportamento nuovo rispetto a v2, accettato consapevolmente: l'alternativa (ignorare `rata` e affidarsi solo all'ordine di arrivo delle chiamate) rischierebbe di divergere silenziosamente da quanto il client crede di aver dichiarato.
 
-**Decisione su `causale_versamento` per-pendenza (2026-10-20)**: v2 restituisce `causale` nel GET di ogni pendenza (`PendenzeConverter.java:90-92,254-256`), anche quelle raggruppate sotto un documento (dove `causale` e `documento.descrizione` sono due testi distinti, a grana diversa — es. un piano rateale puo' avere lo stesso `documento.descrizione` condiviso ma un `causale` diverso per rata, tipicamente perche' il testo stesso riporta il numero di rata). Nessun posto in v3 per questo testo per-pendenza: `PosizioneDebitoria.descrizione` e' condiviso dall'intera posizione, non per singola pendenza. **Stesso trattamento di `descrizioneStato`**: nuovo campo `Pendenza.causaleVersamento` (`@Column(name = "causale_versamento", length = 1024)`, colonna legacy gia' esistente, non ancora mappata), mantenuto **nel formato codificato legacy** (`"01 "+base64`), non decodificato dall'entity — perche' `govpay-aca-batch` ha gia' una vista (`v_versamenti_gpd`) che decodifica la stessa colonna assumendo quel formato: decodificarla qui romperebbe quella vista. Nessun consumatore v3-nativo la legge: **verificato che i mapper di stampa (`AvvisoPdfPayloadMapper`/`RicevutaPdfPayloadMapper`) usano solo `PosizioneDebitoria.descrizione`** per l'oggetto del pagamento, mai la causale della singola pendenza — esattamente come il legacy stesso (`AvvisoPagamentoUtils.fromDocumento()`: oggetto del pagamento = `documento.getDescrizione()`, mai `causale_versamento`, quando la pendenza e' raggruppata). Nessuna regressione quindi sulla stampa: il nuovo campo serve solo al wrapper per il GET, encode/decode resta suo compito.
+**Decisione su `causale_versamento` per-pendenza (2026-10-20)**: v2 restituisce `causale` nel GET di ogni pendenza (`PendenzeConverter.java:90-92,254-256`), anche quelle raggruppate sotto un documento (dove `causale` e `documento.descrizione` sono due testi distinti, a grana diversa — es. un piano rateale puo' avere lo stesso `documento.descrizione` condiviso ma un `causale` diverso per rata, tipicamente perche' il testo stesso riporta il numero di rata). Nessun posto in v3 per questo testo per-pendenza: `PosizioneDebitoria.descrizione` e' condiviso dall'intera posizione, non per singola pendenza. **Stesso trattamento di `descrizioneStato`**: nuovo campo `Pendenza.causaleVersamento` (`@Column(name = "causale_versamento", length = 1024)`, colonna legacy gia' esistente, non ancora mappata), mantenuto **nel formato codificato legacy** (`"01 "+base64`), non decodificato dall'entity — perche' `govpay-aca-batch` ha gia' una vista (`v_versamenti_gpd`) che decodifica la stessa colonna assumendo quel formato: decodificarla qui romperebbe quella vista. Nessun consumatore v3-nativo la legge: **verificato che i mapper di stampa (`AvvisoPdfPayloadMapper`/`RicevutaPdfPayloadMapper`) usano solo `PosizioneDebitoria.descrizione`** per l'oggetto del pagamento, mai la causale della singola pendenza — esattamente come il legacy stesso (`AvvisoPagamentoUtils.fromDocumento()`: oggetto del pagamento = `documento.getDescrizione()`, mai `causale_versamento`, quando la pendenza e' raggruppata). Nessuna regressione quindi sulla stampa: il nuovo campo serve solo al wrapper per il GET, encode/decode resta suo compito. **Aggiornato (2026-10-27, vedi §50)**: "nessun consumatore v3-nativo la legge" non è più vero — su decisione del committente, `causale` è stato esteso anche alla v3-nativa (lettura e scrittura), con la stessa distinzione concettuale da `PosizioneDebitoria.descrizione` qui descritta. L'encode/decode non è più "compito del wrapper": si è spostato nel comando (`DatiPendenza`/`AggiornamentoPendenza`, govpay-common-pendenze), condiviso da entrambe le API.
 
 **Dispatch completo di `rpp[].rpt`/`rpp[].rt` concluso (2026-10-21)**: `Rpt` ampliato con `codStazione`/`codMsgRichiesta`/`tipoVersamento`/`stato`/`descrizioneStato` (colonne legacy gia' esistenti, mai mappate — nessun consumatore v3-nativo le legge). In `govpay-common-pendenze`: `RicostruttoreRichiestaPagamento` (ricostruzione di `CtPaymentPA`/`CtPaymentPAV2` dalla RT quando `xml_rpt` e' assente, caso frequente nei formati paForNode — generale, non solo per il wrapper). Nel wrapper v2 (`it.govpay.pendenze.v2.ricevuta`, `govpay-pendenze-api`), scoped solo li' come deciso: `RichiestaPagamentoV1Mapper` (riformatta sempre nel vecchio formato V1, richiesto esplicitamente per questo contratto, mai per v3 nativo — l'ente beneficiario si risolve dall'unita' operativa "EC" del dominio, con eventuale override dall'unita' specifica della posizione) e `RppContenutoMapper` (dispatch completo per `versione`: SANP_230 passthrough, `ctReceipt`/`ctReceiptV2` letti da `xml_rpt` o ricostruiti dalla RT, poi sempre convertiti in V1 — `rt` invece mai convertito, stesso comportamento del legacy). Verificato che `Rpp.rpt`/`Rpp.rt` nello YAML v2 sono `type: object` generico (non schemi tipizzati): la serializzazione riusa lo stesso meccanismo del legacy (`RicevutaJsonConverter`, Jackson con `JakartaXmlBindAnnotationModule` sulle annotazioni JAXB), non un mapping bean-a-bean.
 
@@ -1303,9 +1301,9 @@ Verificato di nuovo dopo le correzioni: 275/275 in govpay-pendenze-api.
 
 **Punto aperto emerso lavorando su `getPendenzaByAvviso`, da portare ai committenti (2026-10-21)**: `PendenzaRepository.findByIdDominioAndIuv` esiste gia' (verificato: compila, ma **zero chiamanti** in tutto `govpay-common-pendenze` — nessun controller v3 lo usa) ma non e' mai stato esposto da nessun endpoint, ne' v2 ne' v3. A differenza di `numeroAvviso` (derivato dell'avviso di pagamento cartaceo/PDF, concetto specifico di v2 — l'AuxDigit+check digit incollati davanti allo IUV), `idDominio`+`iuv` e' la coppia di identificativi pagoPA "vera", quella usata dal Nodo dei Pagamenti e dal protocollo RPT/RT indipendentemente dal fatto che sia mai stato generato un avviso stampato (un pagamento spontaneo avviato via API/app potrebbe non averne mai avuto uno). Avrebbe quindi senso una `GET` per pendenza via `idDominio`+`iuv` **nella v3 nativa stessa** (non solo nel wrapper v2): utile a qualunque consumer v3 per risalire dalla transazione pagoPA alla pendenza (riconciliazione, supporto, debug), coerente con `GET /rpp/{idDominio}/{iuv}/{ccp}` che nello YAML v2 chiave gia' le transazioni su questa stessa tripla. **Decisione lasciata ai committenti**: se/quando aggiungere questo endpoint a v3, nessun codice scritto finora.
 
-**Non ancora affrontato**: il percorso di scrittura del wrapper v2 (`addPendenza`/`updatePendenza`/allegati in scrittura), gli altri endpoint di lettura v2 (`findPendenze`, `getAllegatoPendenza`, `/documenti/.../avvisi`, `/profilo`), il recupero dall'applicazione esterna per avvisi non ancora migrati (vedi sopra, in attesa di decisione del committente), l'eventuale `GET` per idDominio+iuv in v3 nativo (vedi sopra, idem), e i punti aperti gia' elencati sopra (opzioni RIDOTTO/SCONTATO/ENTRO-OLTRE, regressione di stampa sulle pendenze raggruppate, verifica degli script di migrazione su Oracle/MySQL/SQL Server reali).
+~~**Non ancora affrontato**~~ — **lista obsoleta, ripulita (2026-10-28)**: quasi tutto quanto elencato qui (2026-10-21) e' stato completato in sessioni successive — il percorso di scrittura del wrapper v2 (`addPendenza`/`updatePendenza`/allegati in scrittura), `findPendenze`, `/documenti/.../avvisi` (`getAvvisiDocumento`), `/profilo` (`ProfiloV2Controller`), le opzioni RIDOTTO/SCONTATO/ENTRO-OLTRE in migrazione (§22, implementate per PostgreSQL), il recupero dall'applicazione esterna per avvisi non migrati (chiuso con condizione, vedi sopra) e la regressione di stampa sulle pendenze raggruppate (chiusa, §50). Restano genuinamente aperti solo: **`getAllegatoPendenza`** (nessuna implementazione nel controller v2, solo il default 501 generato — stesso gap di fondo del punto 3 sul contenuto binario degli allegati), l'eventuale **`GET` per idDominio+iuv in v3 nativo** (deferito ai committenti, vedi sopra), e la **verifica degli script di migrazione su Oracle/MySQL/SQL Server contro istanze reali** (fatta solo per PostgreSQL; la vista SQL Server di `v_versamenti_gpd` e' stata completata ma non verificata contro un'istanza reale, vedi sopra).
 
-**Precondizione di migrazione ampliata di conseguenza**: il controllo sulle causali in formato diverso da "01" (vedi sopra, §causale dei versamenti orfani) andava scoped solo agli orfani perche' solo quelli la migrazione decodifica — ma ora che `causaleVersamento` e' letta dal wrapper per **qualunque** pendenza (anche quelle gia' raggruppate, mai toccate dalla migrazione), lo stesso controllo va rieseguito su tutta la tabella `versamenti` (non solo `WHERE id_documento IS NULL`) prima di mettere in produzione il wrapper — non blocca la migrazione in se' (che continua a toccare solo gli orfani), ma e' un rischio runtime latente per il wrapper se non risolto. **Nota**: un'ipotesi iniziale ("le raggruppate potrebbero avere causali 02/03 perche' legate a scenari rateali") non si sostiene — una pendenza orfana non puo' essere una rata per definizione (il concetto vive solo nel `documento`), quindi se quei formati storici esistono da qualche parte e' piu' plausibile trovarli proprio tra gli orfani (vecchio modo di codificare informazione multi-parte quando non si usava il raggruppamento via documento). Il controllo va comunque esteso a tutta la tabella per prudenza, indipendentemente da dove ci si aspetta di trovare le righe non conformi.
+~~**Precondizione di migrazione ampliata di conseguenza**~~ — **CHIUSO (2026-10-28), confermato dal committente**: il controllo sulle causali in formato diverso da "01" (vedi sopra, §causale dei versamenti orfani) andava scoped solo agli orfani perche' solo quelli la migrazione decodifica — ma visto che ora `causaleVersamento` e' letta/scritta per **qualunque** pendenza (wrapper v2 e v3-nativa, vedi §50), il controllo sembrava dover essere rieseguito su tutta la tabella `versamenti` prima della produzione. **Il committente ha confermato che `causale_versamento` ha sempre e solo formato "01"** in tutta l'installazione: non e' un'ipotesi da verificare riga per riga, e' un fatto noto sui dati reali. Nessuna verifica aggiuntiva necessaria, nessun rischio runtime residuo.
 
 **Decisione sul limite di opzioni ENTRO/OLTRE per posizione (2026-10-20)**: la libreria non impedisce piu' opzioni `SOLUZIONE_UNICA_ENTRO` (o piu' `SOLUZIONE_UNICA_OLTRE`) sulla stessa posizione — solo la cardinalita' di 1 pendenza per singola opzione resta vincolata (invariata). Il vincolo "al massimo una ENTRO e una OLTRE per posizione" (dedotto dal pattern legacy RIDOTTO/SCONTATO, sempre una coppia binaria) **non va in libreria**: a differenza del massimo di 1 pendenza per opzione (definizione stessa di un'alternativa a soglia singola, vale per qualunque chiamante), questo assume uno scenario specifico che potrebbe non generalizzare a un client v3-nativo con piu' soglie scaglionate (es. ENTRO 5gg/ENTRO 10gg/OLTRE 10gg) — nessuno ha confermato che sia fuori perimetro per v3. Resta quindi una scelta del **wrapper**, scoped al pattern v2 noto oggi, reversibile senza toccare la libreria.
 
@@ -1825,8 +1823,9 @@ modifica a `govpay-common-pendenze` in questo punto.
 ## 33. Wrapper v2: `findRpp` (GET `/rpp`) implementato (2026-10-25)
 
 Chiude un altro dei quattro operationId ancora 501 elencati al §32
-(`getAllegatoPendenza`/`getAvviso` restano sospesi su decisione esplicita,
-vedi §35). Vive in `RppV2Controller`, già sede di `getRpp`/`getRpt`/`getRt`.
+(`getAllegatoPendenza` resta sospeso su decisione esplicita, vedi §35;
+`getAvviso` è stato implementato successivamente, vedi §46/§47). Vive in
+`RppV2Controller`, già sede di `getRpp`/`getRpt`/`getRt`.
 
 Richiede una capacità non ancora presente in questa libreria: una query
 filtrata a join fra `Rpt` e `Pendenza` (nessuna relazione JPA mappata fra le
@@ -2586,6 +2585,90 @@ verificata sull'entity), `PendenzaV2ControllerTest#getPendenzaRestituisceCellula
 **Verificato**: 415/415 test in `govpay-pendenze-api` (+2 rispetto al §48), 213/213 in
 `govpay-common-pendenze` (invariato — nessun test diretto sul nuovo campo in questa libreria,
 coperto indirettamente dai test del wrapper e della posizione debitoria v3-nativa).
+
+## 50. `causale_versamento` per-pendenza: aggiunta alla v3-nativa, non più solo al wrapper v2 (2026-10-27)
+
+Decisione del committente: la lettura/scrittura di `causale_versamento` (vedi la "Decisione su
+`causale_versamento` per-pendenza" del 2026-10-20, più avanti in questo documento) era stata
+implementata solo nel wrapper v2 — la v3-nativa non la esponeva affatto. Estesa a entrambe,
+mantenendo la distinzione concettuale: `causale` è testo per la singola pendenza (rata),
+`PosizioneDebitoria.descrizione` resta condiviso dall'intera posizione — due concetti distinti,
+non uno sostituisce l'altro.
+
+**Spostamento di `CausaleVersamentoCodec`/`CausaleNonLeggibileException`**: vivevano nel
+wrapper (`it.govpay.pendenze.v2.pendenza`, govpay-pendenze-api) — non riutilizzabili dalla
+v3-nativa senza una dipendenza nella direzione sbagliata (govpay-common-pendenze non può
+dipendere da govpay-pendenze-api). Spostati in govpay-common-pendenze
+(`it.govpay.pendenze.service.CausaleVersamentoCodec`,
+`it.govpay.pendenze.exception.CausaleNonLeggibileException`): la codifica/decodifica è un
+dettaglio della colonna, non del wrapper v2 specificamente.
+
+**`causale` è ora un campo di comando "vero", non più un setter diretto "solo legacy"**:
+`DatiPendenza`/`AggiornamentoPendenza` (govpay-common-pendenze) hanno un nuovo componente
+`causale` (testo in chiaro, non il formato codificato — la codifica/decodifica resta
+responsabilità di chi applica il comando). `ApplicatoreComandi.pendenza`/
+`PosizioneDebitoriaService.aggiornaPendenza` codificano in scrittura; `DatiPendenza.da`/
+`AggiornamentoPendenza.da` (usati solo nei test e dal mapper v3-nativo che costruisce l'entity
+a mano prima di avvolgerla nel comando) decodificano. Rimossa la riga
+`pendenza.setCausaleVersamento(...)` da `NuovaPendenzaMapper#applicaCampiLegacy` (wrapper v2):
+non è più un campo "senza comando dedicato", lo stesso valore arriva ora tramite
+`DatiPendenza.causale()`/`AggiornamentoPendenza.causale()`, costruiti da `crea()`/
+`toAggiornamentoPendenza()` con `dto.getCausale()`.
+
+**v3-nativa**: nuovo campo `causale` (opzionale, `maxLength: 140` come l'omonimo v2) su
+`NuovaPendenza` (schema condiviso da creazione e aggiornamento) e su `PendenzaBase` (quindi su
+tutte le varianti di lettura: `Pendenza`, `PendenzaIndex`, `PendenzaOpzionePagamento`).
+`PosizioneDebitoriaMapper#toPendenza` (scrittura) codifica `dto.getCausale()` sull'entity;
+`toPendenzaDto`/`toPendenzaIndexDto`/`toPendenzaOpzionePagamentoDto` (lettura) decodificano
+`entity.getCausaleVersamento()`. Sostituzione integrale in aggiornamento (PUT), stessa
+semantica degli altri campi di `aggiornaPendenza`: omesso nel body, azzera il valore
+precedente — non è un PATCH parziale.
+
+~~**Rischio preesistente, ora con superficie più ampia**~~ — **NON È UN RISCHIO REALE, confermato dal committente (2026-10-28)**: il controllo "formato della causale diverso da `01` su dati storici" (vedi §28) si estende ora anche alle letture v3-native, non solo al wrapper v2 — prima solo il wrapper poteva incontrare un `CausaleNonLeggibileException`, ora anche `GET /pendenze/...` e la lettura di una posizione debitoria con pendenze sono esposte allo stesso percorso. Ma il committente ha confermato che `causale_versamento` ha sempre e solo formato "01" in tutta l'installazione: non un'ipotesi, un fatto noto sui dati reali — nessuna verifica preventiva necessaria, nessun prerequisito di go-live. Stessa chiusura della precondizione di migrazione equivalente (§28).
+
+Nuovi test: `PendenzaControllerTest#getPendenzaRestituisceCausaleDistintaDallaDescrizioneDellaPosizione`
+(crea via v3-nativa con `causale` sulla pendenza e `descrizione` diversa sulla posizione,
+verifica che restino due valori distinti), `PendenzaControllerTest#updatePendenzaAggiornaCausaleConSuccesso`
+(PUT con causale, poi PUT senza — verifica l'azzeramento). `CausaleVersamentoCodecTest` spostato
+in govpay-common-pendenze (`it.govpay.pendenze.service`), invariato nel contenuto.
+
+**Verificato**: 419/419 test in `govpay-pendenze-api` (+2 rispetto al §49), 217/217 in
+`govpay-common-pendenze` (+4, il codec spostato con i suoi test).
+
+**Aggiornamento (2026-10-28)**: chiuso anche il punto aperto sulla regressione di stampa
+(sopra in questo documento, "Punto aperto emerso riverificando la stampa") — `GET /pendenze/{idA2A}/{idPendenza}/stampa`
+usava sempre `PosizioneDebitoria.descrizione` come oggetto del pagamento, mai la causale della
+singola rata, a differenza di `GET /avvisi/.../numeroAvviso` del legacy. Esteso al PDF lo
+stesso fallback causale→descrizione già presente per il JSON (`PendenzaV2Mapper
+#risolviDescrizioneAvviso`): nuovo `AvvisoPdfPayloadMapper#oggettoPagamentoRataUnica`. Trovato e
+corretto anche un commento non più accurato in `PendenzaV2Mapper#risolviDescrizioneAvviso`, che
+affermava "mai scritta su causaleVersamento le pendenze create da API v3-nativa" — non più vero
+da quando questo stesso §50 ha esteso la scrittura di `causale` alla v3-nativa.
+
+**Bug trovato in revisione indipendente (2026-10-28) e corretto**: la prima versione di questo
+fix applicava il fallback causale→descrizione a `toPaymentNotice` incondizionatamente — ma
+quel metodo non e' usato solo per la stampa di UNA pendenza identificata per se' (equivalente
+di `GET /avvisi/.../numeroAvviso`): e' richiamato anche da `getAvvisiDocumento` (v2) e da
+`getStampaPosizioneDebitoria` (v3-nativo) come scorciatoia quando la stampa cumulativa del
+documento/della posizione si riduce a una sola rata pagabile — un caso che resta concettualmente
+l'equivalente di `GET /documenti/.../avvisi` (`fromDocumento()`), non di `GET /avvisi/...`. La
+causale finiva quindi anche nel titolo di un avviso-documento con una sola pendenza, quando il
+legacy userebbe comunque `documento.getDescrizione()`. Riprodotto: documento con descrizione
+"Documento di test" e una pendenza con causale "causale pend-su-1" produceva il titolo
+"causale pend-su-1" invece di "Documento di test". **Corretto distinguendo esplicitamente i due
+casi, non deducendoli dal numero di pendenze**: `toPaymentNotice` resta per l'identita'
+"pendenza" (usato da `getStampaPendenza`/`getAvviso`/`generaPdfAvviso`, genuinamente per-NAV);
+nuovo `AvvisoPdfPayloadMapper#toPaymentNoticeDocumento` (stessa logica, titolo sempre
+`descrizioneDi`, mai la causale) per l'identita' "documento/posizione", usato dai due punti di
+collasso-a-una-rata in `getAvvisiDocumento`/`getStampaPosizioneDebitoria`. Gli avvisi cumulativi
+a più rate (`toPaymentNoticeRate`/`toPaymentNoticeOpzioni`/`toPaymentNoticeSoglie`) erano già
+corretti (sempre `descrizioneDi`), non toccati da questo bug.
+
+**Verificato di nuovo**: 423/423 test in `govpay-pendenze-api` (+2 rispetto alla prima versione
+del fix — `GetStampaPosizioneDebitoriaControllerTest` con causale sulla singola pendenza ignorata,
+`AvvisoPdfPayloadMapperTest` su `toPaymentNoticeDocumento`; aggiunta anche l'asserzione sul
+titolo al test esistente `GetAvvisiDocumentoControllerTest#documentoConUnaSolaPendenza`, che gia'
+riproduceva lo scenario senza verificarlo).
 
 ## 36. Revisione indipendente del wrapper v2: 6 difetti confermati e corretti (2026-10-25)
 

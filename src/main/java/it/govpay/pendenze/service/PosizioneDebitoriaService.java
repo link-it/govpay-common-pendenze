@@ -1548,6 +1548,7 @@ public class PosizioneDebitoriaService {
         pendenza.setImporto(comando.importo());
         pendenza.setDataValidita(comando.dataValidita());
         pendenza.setDataScadenzaAvviso(comando.dataScadenzaAvviso());
+        pendenza.setCausaleVersamento(CausaleVersamentoCodec.encode(comando.causale()));
         if (pendenza.getNumeroAvviso() == null) {
             pendenza.setNumeroAvviso(comando.numeroAvviso());
         }

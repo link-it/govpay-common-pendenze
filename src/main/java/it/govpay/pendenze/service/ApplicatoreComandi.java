@@ -62,6 +62,7 @@ final class ApplicatoreComandi {
         e.setIuv(dati.iuv());
         e.setDataValidita(dati.dataValidita());
         e.setDataScadenzaAvviso(dati.dataScadenzaAvviso());
+        e.setCausaleVersamento(CausaleVersamentoCodec.encode(dati.causale()));
         dati.voci().forEach(v -> e.addVocePendenza(vocePendenza(v)));
         e.setStato(StatoPendenza.NON_ESEGUITO);
         return e;
