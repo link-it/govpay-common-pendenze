@@ -206,6 +206,7 @@ public final class ValidatorePosizioneDebitoria {
             validaLimitiImporto(BigDecimal.valueOf(voce.getImporto()), "la voce [" + voce.getIdVocePendenza() + "]");
             sommaVoci = sommaVoci.add(BigDecimal.valueOf(voce.getImporto()));
             validaDettaglioContabile(voce);
+            validaTassonomiaBollo(voce);
         }
         if (sommaVoci.compareTo(BigDecimal.valueOf(pendenza.getImporto())) != 0) {
             throw new ValidazioneNonSuperataException(
@@ -274,6 +275,24 @@ public final class ValidatorePosizioneDebitoria {
         }
         for (DettaglioContabile dettaglio : voce.getDettaglioContabile()) {
             validaVoceDettaglioContabile(voce, dettaglio);
+        }
+    }
+
+    /**
+     * Una voce {@code BOLLO} richiede la tassonomia completa ({@link
+     * VocePendenza#getTipoContabilita()} e {@link VocePendenza#getCodiceContabilita()}
+     * entrambi presenti): e' l'unica classificazione contabile ammessa per il bollo (vedi
+     * {@link #validaDettaglioContabile}), quindi la sua assenza o il suo stato parziale
+     * lascerebbero la voce senza alcuna classificazione.
+     */
+    private static void validaTassonomiaBollo(VocePendenza voce) {
+        if (voce.getTipoRiferimento() != TipoRiferimentoVocePendenza.BOLLO) {
+            return;
+        }
+        if (voce.getTipoContabilita() == null || voce.getCodiceContabilita() == null) {
+            throw new ValidazioneNonSuperataException(
+                    "la voce [" + voce.getIdVocePendenza() + "] e' di tipo BOLLO: richiede la tassonomia "
+                            + "(tipoContabilita e codiceContabilita entrambi presenti)");
         }
     }
 

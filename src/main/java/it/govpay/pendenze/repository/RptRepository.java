@@ -93,6 +93,21 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
     List<Rpt> findByIdVersamentoOrderByDataMsgRichiestaAsc(Long idVersamento);
 
     /**
+     * Esiste gia' una richiesta di pagamento di questo modello per questa pendenza? Usata
+     * da {@code PaSendRTService} (pafornode-api) per decidere se ricostruire una RPT
+     * "standin" ({@code CtReceiptUtils.ricostruisciRPT} nel legacy): il legacy stesso
+     * cerca {@code rptBD.getRpt(codDominio, iuv, ModelloPagamento.ATTIVATO_PRESSO_PSP,
+     * null)} — filtrato per modello, non per qualunque RPT della pendenza. Una RPT di un
+     * altro modello (es. {@code IMMEDIATO}/{@code DIFFERITO}, altri canali di pagamento)
+     * non blocca lo standin.
+     *
+     * @param idVersamento     chiave interna della pendenza ({@code Rpt.idVersamento})
+     * @param modelloPagamento valore di {@link Rpt#getModelloPagamento()} da filtrare
+     * @return {@code true} se esiste almeno una RPT di questo modello per questa pendenza
+     */
+    boolean existsByIdVersamentoAndModelloPagamento(Long idVersamento, String modelloPagamento);
+
+    /**
      * Identificazione della RPT per la chiave pagoPA ({@code GET /rpp/{idDominio}/{iuv}/{ccp}}
      * e varianti {@code /rpt}/{@code /rt} dello YAML v2) — stesso vincolo fisico della tabella
      * ({@code unique_rpt_id_transazione} su {@code iuv, ccp, cod_dominio}), usato dal wrapper v2
@@ -116,14 +131,21 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * {@code paSendRT}/{@code paSendRTV2} per trovare la riga a cui agganciare la
      * ricevuta in arrivo, con lock ({@code SELECT ... FOR UPDATE}, stesso principio di
      * {@link #findByCodDominioAndIuvAndStatoInAndModelloPagamento}: evita due ricevute
-     * concorrenti sulla stessa RPT).
+     * concorrenti sulla stessa RPT). Filtrata anche per {@code modelloPagamento}, stesso
+     * filtro del legacy ({@code rptBD.getRpt(codDominio, iuv,
+     * ModelloPagamento.ATTIVATO_PRESSO_PSP, null)}, vedi Javadoc di {@code
+     * PaSendRTService#standin}) — senza questo filtro, una RPT di un ALTRO modello
+     * ancora in questo stato verrebbe selezionata ed usata al posto della ricostruzione
+     * "standin".
      *
-     * @param idVersamento chiave interna della pendenza ({@code Rpt.idVersamento})
-     * @param stato        stato da cercare
-     * @return la RPT in attesa di ricevuta, se esiste
+     * @param idVersamento     chiave interna della pendenza ({@code Rpt.idVersamento})
+     * @param stato            stato da cercare
+     * @param modelloPagamento valore di {@link Rpt#getModelloPagamento()} da filtrare
+     * @return la RPT in attesa di ricevuta di questo modello, se esiste
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<Rpt> findByIdVersamentoAndStato(Long idVersamento, String stato);
+    Optional<Rpt> findByIdVersamentoAndStatoAndModelloPagamento(Long idVersamento, String stato,
+            String modelloPagamento);
 
     /**
      * RPT pendenti sulla stessa coppia dominio/iuv, da annullare prima di attivarne una

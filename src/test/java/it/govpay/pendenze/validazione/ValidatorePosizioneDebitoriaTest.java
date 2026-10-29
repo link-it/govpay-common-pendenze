@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import it.govpay.common.entity.TipoContabilita;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
@@ -253,6 +254,47 @@ class ValidatorePosizioneDebitoriaTest {
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class)
                 .hasMessageContaining("BOLLO");
+    }
+
+    @Test
+    @DisplayName("una voce BOLLO senza tassonomia (tipoContabilita/codiceContabilita) e' rifiutata")
+    void bolloSenzaTassonomiaERifiutato() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("BOLLO").hasMessageContaining("tassonomia");
+    }
+
+    @Test
+    @DisplayName("una voce BOLLO con solo uno dei due componenti della tassonomia e' rifiutata")
+    void bolloConTassonomiaIncompletaERifiutato() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
+        voce.setTipoContabilita(TipoContabilita.ALTRO);
+        // codiceContabilita volutamente assente: senza il controllo su entrambi i
+        // componenti, il builder costruirebbe "9/null" invece di fallire qui.
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("BOLLO").hasMessageContaining("tassonomia");
+    }
+
+    @Test
+    @DisplayName("una voce BOLLO con tassonomia completa e' accettata, senza bisogno di un tributo")
+    void bolloConTassonomiaCompletaEAccettato() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
+        voce.setTassonomia("9/3321");
+
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
     }
 
     @Test
