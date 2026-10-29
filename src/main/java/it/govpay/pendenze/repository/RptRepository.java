@@ -110,6 +110,22 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
     Optional<Rpt> findByCodDominioAndIuvAndIur(String codDominio, String iuv, String iur);
 
     /**
+     * La RPT in attesa di ricevuta per questa pendenza (tipicamente {@code stato =
+     * "RPT_ACCETTATA_NODO"}, valore di {@code it.govpay.pafornode.rpt.StatoRpt} in
+     * govpay-pafornode-api — qui solo una stringa, vedi Javadoc di classe) — usata da
+     * {@code paSendRT}/{@code paSendRTV2} per trovare la riga a cui agganciare la
+     * ricevuta in arrivo, con lock ({@code SELECT ... FOR UPDATE}, stesso principio di
+     * {@link #findByCodDominioAndIuvAndStatoInAndModelloPagamento}: evita due ricevute
+     * concorrenti sulla stessa RPT).
+     *
+     * @param idVersamento chiave interna della pendenza ({@code Rpt.idVersamento})
+     * @param stato        stato da cercare
+     * @return la RPT in attesa di ricevuta, se esiste
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Rpt> findByIdVersamentoAndStato(Long idVersamento, String stato);
+
+    /**
      * RPT pendenti sulla stessa coppia dominio/iuv, da annullare prima di attivarne una
      * nuova ({@code Rpt#annullaRPTPendenti} nel legacy, {@code SELECT ... FOR UPDATE} compreso)
      * — usata da pafornode-api in {@code paGetPayment}/{@code paGetPaymentV2}. Il lock da solo
