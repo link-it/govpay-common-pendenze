@@ -25,7 +25,7 @@ La pipeline e' allineata a quella del progetto
 2. **Security scanning**
    - Cache del database OWASP Dependency-Check (`.dependency-check/data`).
      Chiave: versione del plugin (letta dal POM) + data corrente; se la cache e' esatta
-     (stessa giornata) l'update NVD viene skippato con `-DautoUpdate=false`
+     (stessa giornata) l'update NVD viene skippato con `-Dowasp.autoUpdate=false`
    - Verifica delle vulnerabilita' note (NVD + OSS Index)
    - Report di sicurezza in formato HTML e XML
 
