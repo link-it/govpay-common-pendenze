@@ -1,5 +1,8 @@
 package it.govpay.pendenze.entity;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -51,8 +54,16 @@ public class SoggettoDebitore {
     @Column(name = "ordine", nullable = false)
     private int ordine;
 
+    /**
+     * {@code @JdbcTypeCode(SqlTypes.VARCHAR)}: senza, Hibernate per un enum-stringa di
+     * lunghezza 1 si aspetta {@code CHAR(1)} in validazione schema — la colonna reale
+     * (schema del core, script di migrazione della libreria) e' {@code VARCHAR(1)}, come
+     * {@code versamenti.debitore_tipo}. H2 (test) non distingue i due tipi, quindi il gap
+     * non emergeva dai test della libreria.
+     */
     @Column(name = "tipo", nullable = false, length = 1)
     @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
     private TipoSoggetto tipo;
 
     /** Codice fiscale o partita IVA del soggetto — 35 per combaciare con {@code versamenti.debitore_identificativo}. */
