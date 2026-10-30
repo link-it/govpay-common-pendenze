@@ -9,7 +9,7 @@ package it.govpay.pendenze.spi;
  * codice separati.
  *
  * <p>{@link it.govpay.pendenze.iuv.GeneratoreIuvStandard} fornisce un'implementazione
- * condivisa (registrata da {@code PendenzeAutoConfiguration} come bean
+ * condivisa (registrata da {@code GeneratoreIuvAutoConfiguration} come bean
  * {@code @ConditionalOnMissingBean}, se un {@code DominioRepository} di
  * {@code govpay-common} e' disponibile nel contesto), cosi' l'algoritmo standard
  * pagoPA non va reimplementato da ogni consumatore. Un consumatore puo' comunque
