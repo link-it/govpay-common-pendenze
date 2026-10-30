@@ -132,11 +132,10 @@
             </plugin>
 
             <!-- xjc: genera i bean JAXB dei tracciati PagoPA (RT) dalle XSD vendorizzate in
-                 src/main/resources/xsd/pagopa. Stesso pattern/versione di govpay-console-api. -->
+                 src/main/resources/xsd/pagopa. Versione dal BOM (pluginManagement). -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>jaxb2-maven-plugin</artifactId>
-                <version>3.3.0</version>
                 <executions>
                     <execution>
                         <id>xjc-rpt-rt</id>
