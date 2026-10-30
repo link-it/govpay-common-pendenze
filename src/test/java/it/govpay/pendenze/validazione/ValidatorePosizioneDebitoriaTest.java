@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import it.govpay.common.entity.TipoContabilita;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
@@ -29,9 +30,27 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 class ValidatorePosizioneDebitoriaTest {
 
     @Test
-    void rifiutaPendenzeMisteAnnullateENonEseguiteSenzaEsiti() {
+    @DisplayName("pendenze miste annullate/non eseguite senza esiti: l'opzione resta DISPONIBILE, non rifiutata")
+    void accettaPendenzeMisteAnnullateENonEseguiteSenzaEsitiComeDisponibile() {
+        // Scenario reale sui dati migrati da v2 (annullamento indipendente della singola
+        // pendenza, mai esposto in v3 — vedi Javadoc di validaStati): nessuna pendenza e'
+        // "eseguita", quindi l'opzione non e' mai stata esercitata e resta DISPONIBILE
+        // (stato di default di posizioneValida), anche se una sua pendenza e' ANNULLATO.
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
         posizione.getOpzioniPagamento().get(0).getPendenze().get(1).setStato(StatoPendenza.ANNULLATO);
+        assertThatCode(() -> ValidatorePosizioneDebitoria.validaStati(posizione)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rifiutaOpzioneAnnullataConPendenzeMisteAnnullateENonEseguite() {
+        // Stesso aggregato del test sopra, ma con l'opzione (erroneamente) marcata
+        // ANNULLATA: non tutte le pendenze sono ANNULLATO, quindi resta un disallineamento
+        // da rifiutare — la nuova regola amplia cosa conta come DISPONIBILE, non rimuove il
+        // controllo di coerenza in se'.
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 2);
+        OpzionePagamento opzione = posizione.getOpzioniPagamento().get(0);
+        opzione.getPendenze().get(1).setStato(StatoPendenza.ANNULLATO);
+        opzione.setStato(StatoOpzionePagamento.ANNULLATA);
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class);
     }
@@ -95,13 +114,17 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
-    @DisplayName("PIANO_RATEALE con una sola pendenza viola il minimo di 2")
-    void pianoRatealeSottoMinimo() {
+    @DisplayName("PIANO_RATEALE con una sola pendenza e' ammesso in questa libreria")
+    void pianoRatealeConUnaSolaPendenzaAmmesso() {
+        // Il minimo di 2 rate per un vero piano rateale resta nel contratto REST v3
+        // (NuovaOpzionePagamentoPianoRateale.pendenze, minItems: 2, applicato da Spring con
+        // @Valid prima che la richiesta arrivi qui) — questa libreria resta piu' permissiva
+        // perche' serve anche chiamanti diretti in Java che costruiscono l'aggregato un passo
+        // alla volta (es. il wrapper verso i client v2), dove la prima rata va persistita da
+        // sola prima che arrivi la seconda.
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.PIANO_RATEALE, 1);
 
-        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("almeno 2");
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
     }
 
     @Test
@@ -234,6 +257,47 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
+    @DisplayName("una voce BOLLO senza tassonomia (tipoContabilita/codiceContabilita) e' rifiutata")
+    void bolloSenzaTassonomiaERifiutato() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("BOLLO").hasMessageContaining("tassonomia");
+    }
+
+    @Test
+    @DisplayName("una voce BOLLO con solo uno dei due componenti della tassonomia e' rifiutata")
+    void bolloConTassonomiaIncompletaERifiutato() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
+        voce.setTipoContabilita(TipoContabilita.ALTRO);
+        // codiceContabilita volutamente assente: senza il controllo su entrambi i
+        // componenti, il builder costruirebbe "9/null" invece di fallire qui.
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("BOLLO").hasMessageContaining("tassonomia");
+    }
+
+    @Test
+    @DisplayName("una voce BOLLO con tassonomia completa e' accettata, senza bisogno di un tributo")
+    void bolloConTassonomiaCompletaEAccettato() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        VocePendenza voce = primaVoce(posizione);
+        voce.setIdTributo(null);
+        voce.setTipoBollo("01");
+        voce.setTassonomia("9/3321");
+
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("CORRISPETTIVO_DL118 senza nessuno tra capitolo/accertamento/pianoFinanziario5Livello e' rifiutato")
     void corrispettivoDl118SenzaAlternativi() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
@@ -338,7 +402,7 @@ class ValidatorePosizioneDebitoriaTest {
     private PosizioneDebitoria posizioneValida(TipologiaOpzionePagamento tipologia, int numeroPendenze) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(1L);
-        posizione.setIdPosizioneDebitoria("pos-1");
+        posizione.setCodDocumento("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
 

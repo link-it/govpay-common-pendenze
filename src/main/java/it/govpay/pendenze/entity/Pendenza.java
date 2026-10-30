@@ -189,6 +189,74 @@ public class Pendenza {
     @Enumerated(EnumType.STRING)
     private StatoPagamento statoPagamento = StatoPagamento.NON_PAGATO;
 
+    /**
+     * Motivazione testuale libera di {@link #stato}, impostata dal chiamante (es. in fase di
+     * annullamento). Colonna legacy gia' esistente, non ancora mappata prima d'ora: serve al
+     * wrapper verso i client v2, che la espone nel campo omonimo della risposta REST legacy.
+     */
+    @Column(name = "descrizione_stato")
+    private String descrizioneStato;
+
+    /**
+     * Causale della pendenza nel formato codificato legacy (es. {@code "01 "+base64}, vedi
+     * {@code it.govpay.model.Versamento.Causale} del monolite) — colonna legacy gia'
+     * esistente. Mai decodificata qui: resta nel formato con cui il legacy la scrive/legge
+     * perche' {@code govpay-aca-batch} ha gia' una vista ({@code sql/&lt;dialetto&gt;/
+     * create-db.sql}, {@code v_versamenti_gpd}) che la decodifica da sola assumendo quel
+     * formato — decodificarla qui romperebbe quella vista. Codificata/decodificata da
+     * {@code CausaleVersamentoCodec} (stesso package), usato dal comando ({@code DatiPendenza}/
+     * {@code AggiornamentoPendenza}, che espongono il testo in chiaro) e dai mapper delle API
+     * (v2 e v3-nativa) in lettura. Distinta da {@code PosizioneDebitoria.descrizione}
+     * (condivisa dall'intera posizione): questa e' testo per la singola pendenza.
+     */
+    @Column(name = "causale_versamento", length = 1024)
+    private String causaleVersamento;
+
+    // ── Colonne legacy aggiuntive, nessun uso v3-nativo: servono solo al wrapper
+    //    verso i client v2, che le espone/accetta cosi' come sono (nessuna di queste
+    //    e' mai letta da un consumatore v3-nativo o da questa libreria). ──────────
+
+    /** {@code annoRiferimento} dello YAML v2 — numero in forma di stringa, mai validato qui. */
+    @Column(name = "cod_anno_tributario", length = 35)
+    private String codAnnoTributario;
+
+    /** {@code cartellaPagamento} dello YAML v2. */
+    @Column(name = "cod_lotto", length = 35)
+    private String codLotto;
+
+    /** {@code datiAllegati} dello YAML v2 — JSON libero del chiamante, mai interpretato. */
+    @Column(name = "dati_allegati")
+    private String datiAllegati;
+
+    /**
+     * {@code segnalazioni} dello YAML v2 — formato legacy grezzo
+     * ({@code "codice#descrizione|codice#descrizione|..."}), decodificato dal wrapper, non da
+     * questa libreria (stesso principio di {@link #causaleVersamento}: nessuna logica di
+     * dominio qui, solo una colonna legacy non ancora mappata).
+     */
+    @Column(name = "anomalie")
+    private String anomalie;
+
+    @Column(name = "direzione", length = 35)
+    private String direzione;
+
+    @Column(name = "divisione", length = 35)
+    private String divisione;
+
+    @Column(name = "tassonomia", length = 35)
+    private String tassonomia;
+
+    @Column(name = "tassonomia_avviso", length = 35)
+    private String tassonomiaAvviso;
+
+    /** {@code UUID} dello YAML v2 — nome legacy storico, non un vero {@code java.util.UUID}. */
+    @Column(name = "id_sessione", length = 35)
+    private String idSessione;
+
+    /** {@code proprieta} dello YAML v2 — JSON libero, mai interpretato da questa libreria. */
+    @Column(name = "proprieta")
+    private String proprieta;
+
     /** Sempre {@code "DOVUTO"}: v3 carica solo pendenze DOVUTO. */
     @Column(name = "tipo", nullable = false, length = 35)
     private String tipo = "DOVUTO";
@@ -438,6 +506,102 @@ public class Pendenza {
 
     public void setStatoPagamento(StatoPagamento statoPagamento) {
         this.statoPagamento = statoPagamento;
+    }
+
+    public String getDescrizioneStato() {
+        return descrizioneStato;
+    }
+
+    public void setDescrizioneStato(String descrizioneStato) {
+        this.descrizioneStato = descrizioneStato;
+    }
+
+    public String getCausaleVersamento() {
+        return causaleVersamento;
+    }
+
+    public void setCausaleVersamento(String causaleVersamento) {
+        this.causaleVersamento = causaleVersamento;
+    }
+
+    public String getCodAnnoTributario() {
+        return codAnnoTributario;
+    }
+
+    public void setCodAnnoTributario(String codAnnoTributario) {
+        this.codAnnoTributario = codAnnoTributario;
+    }
+
+    public String getCodLotto() {
+        return codLotto;
+    }
+
+    public void setCodLotto(String codLotto) {
+        this.codLotto = codLotto;
+    }
+
+    public String getDatiAllegati() {
+        return datiAllegati;
+    }
+
+    public void setDatiAllegati(String datiAllegati) {
+        this.datiAllegati = datiAllegati;
+    }
+
+    public String getAnomalie() {
+        return anomalie;
+    }
+
+    public void setAnomalie(String anomalie) {
+        this.anomalie = anomalie;
+    }
+
+    public String getDirezione() {
+        return direzione;
+    }
+
+    public void setDirezione(String direzione) {
+        this.direzione = direzione;
+    }
+
+    public String getDivisione() {
+        return divisione;
+    }
+
+    public void setDivisione(String divisione) {
+        this.divisione = divisione;
+    }
+
+    public String getTassonomia() {
+        return tassonomia;
+    }
+
+    public void setTassonomia(String tassonomia) {
+        this.tassonomia = tassonomia;
+    }
+
+    public String getTassonomiaAvviso() {
+        return tassonomiaAvviso;
+    }
+
+    public void setTassonomiaAvviso(String tassonomiaAvviso) {
+        this.tassonomiaAvviso = tassonomiaAvviso;
+    }
+
+    public String getIdSessione() {
+        return idSessione;
+    }
+
+    public void setIdSessione(String idSessione) {
+        this.idSessione = idSessione;
+    }
+
+    public String getProprieta() {
+        return proprieta;
+    }
+
+    public void setProprieta(String proprieta) {
+        this.proprieta = proprieta;
     }
 
     public String getTipo() {

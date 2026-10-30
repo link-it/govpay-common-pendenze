@@ -14,7 +14,8 @@ public record DatiSoggettoDebitore(
         String localita,
         String provincia,
         String nazione,
-        String email) {
+        String email,
+        String cellulare) {
     /** Copia i soli campi ammessi; successive modifiche all'entita non modificano il comando. */
     public static DatiSoggettoDebitore da(SoggettoDebitore e) {
         return new DatiSoggettoDebitore(e.getTipo(),
@@ -26,6 +27,7 @@ public record DatiSoggettoDebitore(
                 e.getLocalita(),
                 e.getProvincia(),
                 e.getNazione(),
-                e.getEmail());
+                e.getEmail(),
+                e.getCellulare());
     }
 }

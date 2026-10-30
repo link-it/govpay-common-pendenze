@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 
 import it.govpay.pendenze.entity.FlussoRendicontazione;
 import it.govpay.pendenze.entity.Rendicontazione;
+import it.govpay.pendenze.model.StatoRendicontazione;
 
 /**
  * Repository Spring Data per {@link Rendicontazione}.
@@ -93,4 +94,29 @@ public interface RendicontazioneRepository extends JpaRepository<Rendicontazione
      * @return {@code true} se esiste almeno una rendicontazione che referenzia questa voce
      */
     boolean existsByIdSingoloVersamento(Long idSingoloVersamento);
+
+    /**
+     * Rendicontazione ANOMALA arrivata PRIMA della ricevuta corrispondente, con gli stessi
+     * estremi del pagamento (dominio/iuv/iur/indiceDati) e non ancora collegata a nessun
+     * pagamento — usata da {@code AcquisizioneRicevutaService
+     * #riconciliaRendicontazioneAnomala} (pafornode-api) per richiuderla quando la
+     * ricevuta arriva. Porting di {@code RendicontazioniBD#getRendicontazione(String,
+     * String, String, Integer, StatoRendicontazione, boolean)} del legacy: stesso
+     * confronto su {@code indiceDati} (una rendicontazione con indice assente, {@code
+     * null}, corrisponde a QUALUNQUE indice richiesto — il legacy non lo tratta come un
+     * mancato confronto) e stesso filtro {@code idPagamento is null}.
+     *
+     * @param codDominio dominio creditore (tramite {@code flusso.codDominio})
+     * @param iuv        identificativo univoco di versamento
+     * @param iur        identificativo univoco di riscossione
+     * @param indiceDati indice del trasferimento nella ricevuta
+     * @param stato      stato da cercare (sempre {@code ANOMALA} dal chiamante)
+     * @return le rendicontazioni che soddisfano il criterio (il chiamante ne usa al più una)
+     */
+    @Query("select r from Rendicontazione r where r.flusso.codDominio = :codDominio and r.iuv = :iuv "
+            + "and r.iur = :iur and (r.indiceDati = :indiceDati or r.indiceDati is null) "
+            + "and r.stato = :stato and r.idPagamento is null")
+    List<Rendicontazione> findAnomalaNonCollegata(@Param("codDominio") String codDominio, @Param("iuv") String iuv,
+            @Param("iur") String iur, @Param("indiceDati") Integer indiceDati,
+            @Param("stato") StatoRendicontazione stato);
 }

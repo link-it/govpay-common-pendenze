@@ -18,11 +18,12 @@ import it.govpay.pendenze.entity.PosizioneDebitoria;
 public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDebitoria, Long> {
 
     /**
-     * Cerca per la chiave logica (applicazione + identificativo della posizione). {@code idA2A}
-     * (parametro pubblico del servizio) e' risolto in {@code idApplicazione} dal chiamante:
-     * {@code idA2A} non e' piu' una colonna propria di
-     * {@code PosizioneDebitoria} da quando e' mappata su {@code documenti} — coincide con
-     * {@code Applicazione.codApplicazione}.
+     * Cerca per la chiave logica reale a tre colonne (applicazione + dominio + business key).
+     * {@code idA2A}/{@code idPosizioneDebitoria} (il pubblico IUPD) non sono colonne proprie di
+     * {@code PosizioneDebitoria} — la decomposizione del secondo (via
+     * {@code it.govpay.pendenze.identificativo.IdentificatorePosizioneDebitoria}) e la risoluzione
+     * del primo sono compito del chiamante ({@code PosizioneDebitoriaService}), prima di arrivare
+     * qui.
      *
      * <p><b>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()}</b> (non riaprire
      * senza rileggere §24/§27 di {@code proposta-modello-nativo-v3.md}): lo YAML v3 dice che una
@@ -35,19 +36,22 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * ancora come servizio). Filtrare qui avrebbe nascosto la posizione proprio a chi la spec
      * dice debba vederla sempre.</p>
      *
-     * @param idApplicazione       FK verso l'anagrafica esterna del gestionale responsabile
-     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
+     * @param idDominio      FK verso l'anagrafica esterna del dominio creditore
+     * @param codDocumento   business key scelta dal gestionale
      * @return la posizione, se esiste
      */
-    Optional<PosizioneDebitoria> findByIdApplicazioneAndIdPosizioneDebitoria(Long idApplicazione,
-            String idPosizioneDebitoria);
+    Optional<PosizioneDebitoria> findByIdApplicazioneAndIdDominioAndCodDocumento(Long idApplicazione, Long idDominio,
+            String codDocumento);
 
     /**
-     * @param idApplicazione       FK verso l'anagrafica esterna del gestionale responsabile
-     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
+     * @param idDominio      FK verso l'anagrafica esterna del dominio creditore
+     * @param codDocumento   business key scelta dal gestionale
      * @return {@code true} se esiste gia' una posizione con questa chiave logica
      */
-    boolean existsByIdApplicazioneAndIdPosizioneDebitoria(Long idApplicazione, String idPosizioneDebitoria);
+    boolean existsByIdApplicazioneAndIdDominioAndCodDocumento(Long idApplicazione, Long idDominio,
+            String codDocumento);
 
     /**
      * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3:
@@ -58,7 +62,7 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * posizione avessero — per un dato scorretto — lo stesso identificativo.
      *
      * <p>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()} — vedi Javadoc di
-     * {@link #findByIdApplicazioneAndIdPosizioneDebitoria}.</p>
+     * {@link #findByIdApplicazioneAndIdDominioAndCodDocumento}.</p>
      *
      * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
      * @param idDebitore     identificativo (codice fiscale/partita IVA) di un soggetto debitore

@@ -6,6 +6,8 @@ import javax.xml.transform.stream.StreamSource;
 
 import it.gov.digitpa.schemas._2011.pagamenti.RPT;
 import it.gov.digitpa.schemas._2011.pagamenti.RT;
+import it.gov.pagopa.pagopa_api.pa.pafornode.PaGetPaymentRes;
+import it.gov.pagopa.pagopa_api.pa.pafornode.PaGetPaymentV2Response;
 import it.gov.pagopa.pagopa_api.pa.pafornode.PaSendRTReq;
 import it.gov.pagopa.pagopa_api.pa.pafornode.PaSendRTV2Request;
 import jakarta.xml.bind.JAXBContext;
@@ -13,14 +15,17 @@ import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Unmarshaller;
 
 /**
- * Unmarshalling JAXB dei tracciati XML PagoPA (RT, e RPT per il solo SANP_230) verso i modelli
+ * Unmarshalling JAXB dei tracciati XML PagoPA (RT e RPT, tutti e 3 i formati) verso i modelli
  * generati — stesso pattern e stesse XSD vendorizzate di {@code govpay-console-api.JaxbUtils}.
  *
- * <p>{@link #toRPT(byte[])} e' l'unica variante RPT: serve solo a leggere
- * {@code dataOraMessaggioRichiesta} per la stampa PDF della ricevuta in formato SANP_230 (vedi
- * {@code RicevutaPdfPayloadMapper} in {@code govpay-pendenze-api}) — per {@code ctReceipt}/
- * {@code ctReceiptV2} lo stesso dato e' gia' nella RT ({@code paymentDateTime}), nessuna
- * variante RPT di quei due formati e' mai stata necessaria.</p>
+ * <p>{@link #toRPT(byte[])} (SANP_230) serve solo a leggere {@code dataOraMessaggioRichiesta}
+ * per la stampa PDF della ricevuta in quel formato (vedi {@code RicevutaPdfPayloadMapper} in
+ * {@code govpay-pendenze-api}) — per {@code ctReceipt}/{@code ctReceiptV2} lo stesso dato e'
+ * gia' nella RT ({@code paymentDateTime}). {@link #toPaGetPaymentResRPT(byte[])}/
+ * {@link #toPaGetPaymentV2ResponseRPT(byte[])} servono invece l'intero contenuto della
+ * richiesta, per il wrapper verso i client v2 (vedi
+ * {@link RicostruttoreRichiestaPagamento}) — letta solo se {@code rpt.xml_rpt} e' presente,
+ * altrimenti va ricostruita dalla RT.</p>
  *
  * <p>Solo lettura: l'XML proviene dal DB e non viene validato contro gli XSD (la validazione
  * e' gia' garantita a monte dal Nodo).</p>
@@ -63,5 +68,22 @@ public final class JaxbUtils {
 
     public static PaSendRTV2Request toPaSendRTV2RequestRT(byte[] xml) throws JAXBException {
         return unmarshal(PA_FOR_NODE_CONTEXT, xml, PaSendRTV2Request.class);
+    }
+
+    /**
+     * Richiesta di pagamento (RPT) in formato {@code ctReceipt} (SANP_240/RPTV1_RTV2), quando
+     * {@code rpt.xml_rpt} e' presente. Non sempre lo e' (vedi
+     * {@link it.govpay.pendenze.ricevuta.pagopa.RicostruttoreRichiestaPagamento}): a
+     * differenza di {@link #toRPT(byte[])} (sola lettura di
+     * {@code dataOraMessaggioRichiesta} per la stampa SANP_230), qui serve l'intero
+     * {@code CtPaymentPA} per popolare il wrapper verso i client v2.
+     */
+    public static PaGetPaymentRes toPaGetPaymentResRPT(byte[] xml) throws JAXBException {
+        return unmarshal(PA_FOR_NODE_CONTEXT, xml, PaGetPaymentRes.class);
+    }
+
+    /** Come {@link #toPaGetPaymentResRPT(byte[])}, per il formato {@code ctReceiptV2} (SANP_321_V2/RPTV2_RTV1). */
+    public static PaGetPaymentV2Response toPaGetPaymentV2ResponseRPT(byte[] xml) throws JAXBException {
+        return unmarshal(PA_FOR_NODE_CONTEXT, xml, PaGetPaymentV2Response.class);
     }
 }

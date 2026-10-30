@@ -29,6 +29,7 @@ final class ApplicatoreComandi {
         e.setProvincia(dati.provincia());
         e.setNazione(dati.nazione());
         e.setEmail(dati.email());
+        e.setCellulare(dati.cellulare());
         return e;
     }
 
@@ -61,6 +62,7 @@ final class ApplicatoreComandi {
         e.setIuv(dati.iuv());
         e.setDataValidita(dati.dataValidita());
         e.setDataScadenzaAvviso(dati.dataScadenzaAvviso());
+        e.setCausaleVersamento(CausaleVersamentoCodec.encode(dati.causale()));
         dati.voci().forEach(v -> e.addVocePendenza(vocePendenza(v)));
         e.setStato(StatoPendenza.NON_ESEGUITO);
         return e;
@@ -79,7 +81,7 @@ final class ApplicatoreComandi {
 
     static PosizioneDebitoria posizioneDebitoria(DatiPosizioneDebitoria dati) {
         PosizioneDebitoria e = new PosizioneDebitoria();
-        e.setIdPosizioneDebitoria(dati.idPosizioneDebitoria());
+        e.setCodDocumento(dati.codDocumento());
         e.setIdApplicazione(dati.idApplicazione());
         e.setIdDominio(dati.idDominio());
         e.setIdUnitaOperativa(dati.idUnitaOperativa());

@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS tributi
 CREATE TABLE IF NOT EXISTS documenti
 (
 	cod_documento VARCHAR(35) NOT NULL,
-	descrizione VARCHAR(255) NOT NULL,
+	descrizione VARCHAR(1024) NOT NULL,
 	-- aggiunte additive per PosizioneDebitoria (assenti nel legacy)
 	data_pubblicazione DATE,
 	notifica_send BOOLEAN NOT NULL,
@@ -325,7 +325,6 @@ CREATE TABLE IF NOT EXISTS documenti
 	id_applicazione BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_documenti_1 UNIQUE (cod_documento, id_applicazione, id_dominio),
-	CONSTRAINT unique_documenti_applicazione UNIQUE (cod_documento, id_applicazione),
 	-- fk/pk keys constraints
 	-- Nessuna FK verso applicazioni (M4, coerente con id_dominio sopra): a differenza del
 	-- legacy reale, che la ha (fk_doc_id_applicazione) — tolta qui per la stessa ragione
@@ -370,6 +369,7 @@ CREATE TABLE IF NOT EXISTS soggetti_debitori
 	provincia VARCHAR(35),
 	nazione VARCHAR(2),
 	email VARCHAR(256),
+	cellulare VARCHAR(35),
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_soggetti_debitori') NOT NULL,
 	id_documento BIGINT NOT NULL,
@@ -408,6 +408,7 @@ CREATE TABLE IF NOT EXISTS versamenti
 	debitore_fax VARCHAR(35),
 	tassonomia_avviso VARCHAR(35),
 	tassonomia VARCHAR(35),
+	cod_lotto VARCHAR(35),
 	cod_anno_tributario VARCHAR(35),
 	dati_allegati TEXT,
 	anomalie TEXT,
@@ -415,6 +416,9 @@ CREATE TABLE IF NOT EXISTS versamenti
 	numero_avviso VARCHAR(35),
 	ack BOOLEAN NOT NULL,
 	anomalo BOOLEAN NOT NULL,
+	divisione VARCHAR(35),
+	direzione VARCHAR(35),
+	id_sessione VARCHAR(35),
 	data_pagamento TIMESTAMP,
 	importo_pagato DOUBLE PRECISION NOT NULL,
 	importo_incassato DOUBLE PRECISION NOT NULL,
@@ -469,6 +473,7 @@ CREATE TABLE IF NOT EXISTS singoli_versamenti
 	tipo_bollo VARCHAR(2),
 	hash_documento VARCHAR(70),
 	provincia_residenza VARCHAR(2),
+	descrizione_causale_rpt VARCHAR(140),
 	tipo_contabilita VARCHAR(1),
 	codice_contabilita VARCHAR(255),
 	descrizione VARCHAR(256),
@@ -630,6 +635,7 @@ CREATE TABLE IF NOT EXISTS domini (
     cod_connettore_secim VARCHAR(255),
     cod_connettore_gov_pay VARCHAR(255),
     cod_connettore_hyper_sic_apk VARCHAR(255),
+    cod_connettore_send VARCHAR(255),
     intermediato BOOLEAN NOT NULL,
     tassonomia_pago_pa VARCHAR(35),
     scarica_fr BOOLEAN NOT NULL,
@@ -657,12 +663,21 @@ CREATE TABLE IF NOT EXISTS rpt
 	iuv VARCHAR(35) NOT NULL,
 	ccp VARCHAR(35) NOT NULL,
 	cod_dominio VARCHAR(35) NOT NULL,
+	cod_stazione VARCHAR(35) NOT NULL,
+	cod_msg_richiesta VARCHAR(35) NOT NULL,
+	tipo_versamento VARCHAR(35),
+	stato VARCHAR(35) NOT NULL,
+	descrizione_stato TEXT,
 	xml_rt BYTEA,
 	xml_rpt BYTEA,
 	data_msg_ricevuta TIMESTAMP,
-	data_msg_richiesta TIMESTAMP,
+	data_msg_richiesta TIMESTAMP NOT NULL,
+	data_aggiornamento_stato TIMESTAMP NOT NULL,
 	cod_esito_pagamento INT,
 	versione VARCHAR(35) NOT NULL,
+	cod_carrello VARCHAR(35),
+	modello_pagamento VARCHAR(16),
+	cod_transazione_rpt VARCHAR(36),
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_rpt') NOT NULL,
 	id_versamento BIGINT NOT NULL,
@@ -734,12 +749,36 @@ CREATE TABLE IF NOT EXISTS rendicontazioni
 	esito INT,
 	data TIMESTAMP,
 	stato VARCHAR(35) NOT NULL,
+	anomalie TEXT,
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_rendicontazioni') NOT NULL,
 	id_fr BIGINT NOT NULL,
+	id_pagamento BIGINT,
 	id_singolo_versamento BIGINT,
 	-- fk/pk keys constraints
 	CONSTRAINT fk_rnd_id_fr FOREIGN KEY (id_fr) REFERENCES fr(id),
+	CONSTRAINT fk_rnd_id_pagamento FOREIGN KEY (id_pagamento) REFERENCES pagamenti(id),
 	CONSTRAINT fk_rnd_id_singolo_versamento FOREIGN KEY (id_singolo_versamento) REFERENCES singoli_versamenti(id),
 	CONSTRAINT pk_rendicontazioni PRIMARY KEY (id)
+);
+
+CREATE SEQUENCE IF NOT EXISTS seq_notifiche start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+
+CREATE TABLE IF NOT EXISTS notifiche
+(
+	tipo_esito VARCHAR(16) NOT NULL,
+	data_creazione TIMESTAMP NOT NULL,
+	stato VARCHAR(16) NOT NULL,
+	descrizione_stato VARCHAR(255),
+	data_aggiornamento_stato TIMESTAMP NOT NULL,
+	data_prossima_spedizione TIMESTAMP NOT NULL,
+	tentativi_spedizione BIGINT,
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_notifiche') NOT NULL,
+	id_applicazione BIGINT NOT NULL,
+	id_rpt BIGINT,
+	-- fk/pk keys constraints
+	CONSTRAINT fk_ntf_id_applicazione FOREIGN KEY (id_applicazione) REFERENCES applicazioni(id),
+	CONSTRAINT fk_ntf_id_rpt FOREIGN KEY (id_rpt) REFERENCES rpt(id),
+	CONSTRAINT pk_notifiche PRIMARY KEY (id)
 );

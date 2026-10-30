@@ -172,6 +172,14 @@ public class VocePendenza {
     private String provinciaResidenza;
 
     /**
+     * {@code descrizioneCausaleRPT} dello YAML v2 — colonna legacy gia' esistente (su
+     * {@code singoli_versamenti}, "Descrizione da inserire nella RPT"), non ancora mappata.
+     * Nessun consumatore v3-nativo la legge: serve solo al wrapper verso i client v2.
+     */
+    @Column(name = "descrizione_causale_rpt", length = 140)
+    private String descrizioneCausaleRpt;
+
+    /**
      * Riconciliazione contabile pagoPA (mai per {@code BOLLO}), su colonna legacy riusata
      * {@code contabilita} — vedi nota di classe. Vuota, non {@code null}, quando assente.
      */
@@ -372,6 +380,14 @@ public class VocePendenza {
 
     public void setProvinciaResidenza(String provinciaResidenza) {
         this.provinciaResidenza = provinciaResidenza;
+    }
+
+    public String getDescrizioneCausaleRpt() {
+        return descrizioneCausaleRpt;
+    }
+
+    public void setDescrizioneCausaleRpt(String descrizioneCausaleRpt) {
+        this.descrizioneCausaleRpt = descrizioneCausaleRpt;
     }
 
     public List<DettaglioContabile> getDettaglioContabile() {

@@ -11,15 +11,13 @@ import org.springframework.stereotype.Service;
 
 /**
  * Distribuisce progressivi per chiave, riservando un blocco alla volta da
- * {@link AllocatoreBloccoProgressivoIuv} e tenendone il resto in un buffer in memoria — stesso
- * principio del buffer statico per JVM del generatore legacy
- * ({@code org.openspcoop2.utils.id.serial.IDSerialGeneratorBuffer}): un riavvio del processo
- * perde il buffer residuo (buchi accettabili), non tocca il DB a ogni singolo IUV.
+ * {@link AllocatoreBloccoProgressivoIuv} e tenendone il resto in un buffer in memoria: un
+ * riavvio del processo perde il buffer residuo (buchi accettabili nella sequenza), non tocca
+ * il DB a ogni singolo IUV.
  *
  * <p>Due chiamate concorrenti che trovano entrambe il buffer vuoto per la stessa chiave
  * possono allocare due blocchi distinti invece di uno: nessuna duplicazione (i blocchi non si
- * sovrappongono mai), solo un margine di spreco nel caso raro — stesso comportamento del
- * meccanismo legacy, che non serializza la decisione "buffer vuoto, vado sul DB" fra thread.</p>
+ * sovrappongono mai), solo un margine di spreco nel caso raro.</p>
  */
 @Service
 public class GeneratoreProgressivoIuv {

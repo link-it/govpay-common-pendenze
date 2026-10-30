@@ -35,11 +35,11 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
  * funziona davvero nel contesto Spring della libreria.
  *
  * <p>{@code @EntityScan}/{@code @EnableJpaRepositories} su {@code it.govpay.common} sono
- * dichiarati solo qui, non su {@code PendenzeTestApplication}: renderebbero altrimenti
- * {@code DominioRepository} disponibile in ogni test della libreria, facendo scattare
- * ovunque il bean {@code @ConditionalOnBean(DominioRepository.class)} di
- * {@code PendenzeAutoConfiguration} anche dove {@code GeneratoreProgressivoIuv} non e'
- * importato.</p>
+ * dichiarati solo qui, non su {@code PendenzeTestApplication}: questo test costruisce
+ * {@link GeneratoreIuvStandard} direttamente con {@code @Import}, non tramite il bean
+ * {@code @ConditionalOnBean(DominioRepository.class)} di {@code GeneratoreIuvAutoConfiguration}
+ * (mai importata qui) — vedi Javadoc di {@code PendenzeTestApplication} per perche' quel bean
+ * resta comunque inerte altrove.</p>
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

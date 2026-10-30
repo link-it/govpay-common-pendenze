@@ -24,6 +24,7 @@ CREATE TABLE soggetti_debitori
 	provincia VARCHAR2(35),
 	nazione VARCHAR2(2),
 	email VARCHAR2(256),
+	cellulare VARCHAR2(35),
 	-- fk/pk columns
 	id NUMBER NOT NULL,
 	id_documento NUMBER NOT NULL,
