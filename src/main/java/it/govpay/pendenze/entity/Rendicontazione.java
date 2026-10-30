@@ -24,9 +24,21 @@ import it.govpay.pendenze.model.StatoRendicontazione;
  *
  * <p><b>Non ha una colonna {@code id_pendenza}</b> (correzione rispetto a una prima
  * ipotesi): il legacy correla la rendicontazione alla pendenza solo tramite
- * {@link #iuv} (stringa) — {@code id_pagamento} esiste ma e' nullable e non e' mappata
- * qui (fuori scopo per ora). La risoluzione verso una {@link Pendenza} specifica resta a
+ * {@link #iuv} (stringa). La risoluzione verso una {@link Pendenza} specifica resta a
  * carico del chiamante, vedi {@link it.govpay.pendenze.service.RicevutaRendicontazioneService}.</p>
+ *
+ * <p><b>{@link #idPagamento}</b> (FK fisica reale verso {@code pagamenti(id)}) e'
+ * popolata dalla riconciliazione — vedi {@code AcquisizioneRicevutaService
+ * #riconciliaRendicontazioneAnomala} in govpay-pafornode-api, porting di
+ * {@code RtUtils#checkEsistenzaRendicontazioneAnomalaPerIlPagamento}: quando arriva una
+ * ricevuta per un pagamento gia' rendicontato in anticipo (riga ANOMALA, non ancora
+ * collegata), la richiude collegandola al pagamento appena acquisito.</p>
+ *
+ * <p><b>{@link #anomalie}</b> e' il testo grezzo della colonna legacy omonima (lista di
+ * anomalie serializzata con un formato proprio, {@code pipe}-delimitato) — non spacchettata
+ * in oggetti strutturati qui: nessun consumatore v3-nativo legge le singole anomalie, la
+ * riconciliazione sopra la azzera semplicemente (nessuna anomalia residua) quando richiude
+ * la riga.</p>
  *
  * <p><b>{@link #idSingoloVersamento} e' invece mappato</b> (a differenza di
  * {@code id_pagamento}): e' una FK fisica reale verso {@code singoli_versamenti(id)}
@@ -95,6 +107,14 @@ public class Rendicontazione {
     @Column(name = "stato", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)
     private StatoRendicontazione stato;
+
+    /** FK fisica verso {@code pagamenti(id)} — vedi Javadoc di classe. */
+    @Column(name = "id_pagamento")
+    private Long idPagamento;
+
+    /** Testo grezzo, non spacchettato — vedi Javadoc di classe. */
+    @Column(name = "anomalie")
+    private String anomalie;
 
     // ── Accessori ────────────────────────────────────────────────────────────
 
@@ -176,5 +196,21 @@ public class Rendicontazione {
 
     public void setStato(StatoRendicontazione stato) {
         this.stato = stato;
+    }
+
+    public Long getIdPagamento() {
+        return idPagamento;
+    }
+
+    public void setIdPagamento(Long idPagamento) {
+        this.idPagamento = idPagamento;
+    }
+
+    public String getAnomalie() {
+        return anomalie;
+    }
+
+    public void setAnomalie(String anomalie) {
+        this.anomalie = anomalie;
     }
 }

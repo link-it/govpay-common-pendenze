@@ -5,13 +5,19 @@
 -- Stesse motivazioni/precondizioni di postgresql/migrazione/05_documenti_orfani.sql
 -- (leggere quel file per il dettaglio) — qui solo la sintassi SQL Server.
 --
--- Decodifica base64: la vista v_versamenti_gpd di govpay-aca-batch
--- (sql/sqlserver/create-db.sql) si ferma alla conversione a VARBINARY(MAX),
--- senza un passo finale a testo — qui completata con una collation UTF-8
--- (richiede SQL Server 2019+). NON verificata contro un'istanza reale: va
--- riconfermata prima dell'uso in produzione, con attenzione particolare a
--- caratteri accentati nella causale (es. "città", "perché").
+-- Decodifica base64: CONVERT(VARCHAR, varbinary) legge i byte decodificati
+-- nella code page del database, non in UTF-8 — una COLLATE applicata DOPO
+-- non li reinterpreta, risultato corrotto su qualunque lettera accentata
+-- (es. "città" diventa "citt?" o peggio). I byte passano invece da un
+-- documento XML che dichiara esplicitamente la codifica UTF-8: i metodi del
+-- tipo XML la decodificano correttamente. TRY_CONVERT torna NULL se i byte
+-- non sono UTF-8 valido (causale corrotta) invece di interrompere lo
+-- script. Richiede SET QUOTED_IDENTIFIER ON (sotto), che sqlcmd non imposta
+-- da solo.
 -- ---------------------------------------------------------------------------
+
+SET QUOTED_IDENTIFIER ON;
+GO
 
 ALTER TABLE documenti ALTER COLUMN descrizione VARCHAR(1024) NOT NULL;
 
@@ -22,15 +28,15 @@ SELECT
     v.id_applicazione,
     'MIGR-' + CAST(v.id AS VARCHAR(20)),
     COALESCE(
-        CONVERT(VARCHAR(1024),
-            CAST(N'' AS XML).value(
-                'xs:base64Binary(substring(sql:column("v.causale_versamento"), 3))',
-                'VARBINARY(MAX)'
-            )
-        ) COLLATE Latin1_General_100_CI_AS_SC_UTF8,
+        CAST(TRY_CONVERT(XML,
+            CONVERT(VARBINARY(MAX), '<?xml version="1.0" encoding="UTF-8"?><x><![CDATA[')
+            + CAST(N'' AS XML).value('xs:base64Binary(sql:column("b.b64"))', 'VARBINARY(MAX)')
+            + CONVERT(VARBINARY(MAX), ']]></x>')
+        ).value('(/x)[1]', 'NVARCHAR(1024)') AS VARCHAR(1024)),
         ''
     )
 FROM versamenti v
+CROSS APPLY (SELECT SUBSTRING(v.causale_versamento, 3, 8000) AS b64) b
 WHERE v.id_documento IS NULL;
 
 UPDATE v
