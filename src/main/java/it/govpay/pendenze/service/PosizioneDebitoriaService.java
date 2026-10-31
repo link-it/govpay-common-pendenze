@@ -100,9 +100,8 @@ public class PosizioneDebitoriaService {
     /**
      * {@code generatoreIuvProvider} e' un {@link ObjectProvider}, non una dipendenza
      * diretta: {@link GeneratoreIuv} e' una SPI opzionale (vedi Javadoc
-     * dell'interfaccia). Stesso idioma gia' usato in
-     * {@code PendenzeAutoConfiguration.proprietaPendenzaCodec} per non far fallire
-     * l'avvio del consumatore se non fornisce un'implementazione — semplicemente
+     * dell'interfaccia): non fa fallire l'avvio del consumatore se non fornisce
+     * un'implementazione — semplicemente
      * {@link #crea(DatiPosizioneDebitoria)} rifiutera' le pendenze prive di IUV/numero
      * avviso proprio.
      */

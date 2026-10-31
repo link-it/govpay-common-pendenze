@@ -88,10 +88,12 @@ class GeneratoreIuvStandardTest {
     @DisplayName("AuxDigit 0 usa l'application code della stazione collegata al dominio")
     void generaAuxDigit0UsaStazioneCollegata() {
         IntermediarioEntity intermediario = IntermediarioEntity.builder()
-                .codIntermediario("INT-1").abilitato(true).build();
+                .codIntermediario("INT-1").codConnettorePdd("INT-1_PDD").denominazione("Intermediario 1")
+                .principal("INT-1").principalOriginale("INT-1").abilitato(true).build();
         em.persistAndFlush(intermediario);
         StazioneEntity stazione = StazioneEntity.builder()
-                .codStazione("STAZ-1").abilitato(true).applicationCode(7).intermediario(intermediario).build();
+                .codStazione("STAZ-1").password("pwd-test").versione("V2").abilitato(true).applicationCode(7)
+                .intermediario(intermediario).build();
         em.persistAndFlush(stazione);
         DominioEntity dominio = dominioAuxDigit1("ENTE-3");
         dominio.setAuxDigit(0);
