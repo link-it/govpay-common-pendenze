@@ -20,7 +20,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
@@ -52,11 +51,10 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
  */
 @Entity
 @Table(name = "opzioni_pagamento")
-@SequenceGenerator(name = "seq_opzioni_pagamento", sequenceName = "seq_opzioni_pagamento", allocationSize = 1)
 public class OpzionePagamento {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_opzioni_pagamento")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 

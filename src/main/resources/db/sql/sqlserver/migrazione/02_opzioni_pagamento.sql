@@ -10,16 +10,10 @@
 -- SQLServerDialect contro l'esatta versione di Hibernate usata dal progetto,
 -- non per lettura di documentazione).
 --
--- L'id usa una sequenza esplicita (CREATE SEQUENCE + colonna BIGINT
--- semplice), non IDENTITY: l'entity JPA dichiara GenerationType.SEQUENCE
--- (@SequenceGenerator su seq_opzioni_pagamento) — Hibernate quindi interroga
--- la sequenza e fornisce l'id esplicito nell'INSERT, mentre una colonna
--- IDENTITY rifiuta un INSERT che specifichi un valore esplicito per quella
--- colonna (a meno di SET IDENTITY_INSERT, che Hibernate non usa). SQL Server
--- supporta CREATE SEQUENCE nativamente dalla versione 2012.
+-- L'id usa IDENTITY: l'entity JPA dichiara GenerationType.IDENTITY, stessa
+-- convenzione gia' in uso dal core per questo dialetto sulle tabelle legacy
+-- (vedi id delle tabelle esistenti in gov_pay.sql) — issue #10.
 -- ---------------------------------------------------------------------------
-
-CREATE SEQUENCE seq_opzioni_pagamento START WITH 1 INCREMENT BY 1;
 
 CREATE TABLE opzioni_pagamento
 (
@@ -33,7 +27,7 @@ CREATE TABLE opzioni_pagamento
 	data_creazione DATETIME2 NOT NULL,
 	data_ultimo_aggiornamento DATETIME2 NOT NULL,
 	-- fk/pk columns
-	id BIGINT NOT NULL,
+	id BIGINT IDENTITY,
 	id_documento BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_opzioni_pagamento_id_opzione UNIQUE (id_opzione_pagamento),

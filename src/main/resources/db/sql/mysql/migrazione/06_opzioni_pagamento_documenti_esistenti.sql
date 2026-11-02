@@ -11,11 +11,11 @@
 --
 -- id_opzione_pagamento (BINARY(16)) e' generato con UNHEX(REPLACE(UUID(),
 -- '-', '')), non UUID_TO_BIN(UUID()): quest'ultima esiste solo su MySQL 8,
--- non su MariaDB. id (seq_opzioni_pagamento emulata con una tabella a riga
--- singola, vedi 02_opzioni_pagamento.sql di questa cartella) segue la stessa
--- convenzione gia' in uso in questo script: un blocco di id viene riservato
--- in anticipo (una sola volta, per entrambi i pattern A/B e C) e assegnato
--- per riga con ROW_NUMBER().
+-- non su MariaDB. id e' AUTO_INCREMENT (issue #10): non piu' pre-calcolabile
+-- come con la sequenza emulata, quindi viene materializzato prima
+-- l'id_opzione_pagamento (UUID, univoco per vincolo) in ciascuna tabella
+-- temporanea, poi usato per ritrovare l'id fisico generato dall'insert e
+-- collegarlo al versamento corrispondente.
 -- ---------------------------------------------------------------------------
 
 CREATE TEMPORARY TABLE tmp_vrs_rata AS
@@ -96,26 +96,24 @@ FROM tmp_vrs_rata vc
 JOIN tmp_doc_soglia ds ON ds.id_documento = vc.id_documento;
 
 -- ---------------------------------------------------------------------------
--- Riserva di un blocco di id per entrambi i pattern (A/B + C) in un solo
--- colpo, poi assegnazione per riga con ROW_NUMBER() sulle due tabelle.
+-- Materializzazione dell'id_opzione_pagamento (UUID) per entrambi i pattern
+-- PRIMA dell'insert: con id AUTO_INCREMENT non e' piu' pre-calcolabile come
+-- con la sequenza emulata, quindi e' questo UUID — univoco per vincolo — a
+-- correlare ogni riga neo-inserita in opzioni_pagamento con il relativo
+-- versamento, dopo l'insert.
 -- ---------------------------------------------------------------------------
-
-SET @cnt_ab = (SELECT COUNT(*) FROM tmp_classificazione WHERE tipologia IS NOT NULL);
-SET @cnt_c = (SELECT COUNT(*) FROM tmp_vrs_soglia);
-SET @start_id = (SELECT next_val FROM seq_opzioni_pagamento);
-UPDATE seq_opzioni_pagamento SET next_val = next_val + @cnt_ab + @cnt_c;
 
 CREATE TEMPORARY TABLE tmp_nuove_opzioni_ab AS
 SELECT
-    @start_id + ROW_NUMBER() OVER (ORDER BY id_documento) - 1 AS id,
-    id_documento, tipologia, stato
+    id_documento, tipologia, stato,
+    UNHEX(REPLACE(UUID(), '-', '')) AS id_opzione_pagamento
 FROM tmp_classificazione
 WHERE tipologia IS NOT NULL;
 
 INSERT INTO opzioni_pagamento
-    (id, id_opzione_pagamento, id_documento, tipologia, stato, versione,
+    (id_opzione_pagamento, id_documento, tipologia, stato, versione,
      data_creazione, data_ultimo_aggiornamento)
-SELECT id, UNHEX(REPLACE(UUID(), '-', '')), id_documento, tipologia, stato, 0, NOW(3), NOW(3)
+SELECT id_opzione_pagamento, id_documento, tipologia, stato, 0, NOW(3), NOW(3)
 FROM tmp_nuove_opzioni_ab;
 
 -- numero_rata: valore dichiarato preservato (PIANO_RATEALE) oppure, per
@@ -123,29 +121,31 @@ FROM tmp_nuove_opzioni_ab;
 -- il documento — solo per garantire indici distinti.
 UPDATE versamenti v
 JOIN tmp_nuove_opzioni_ab no ON no.id_documento = v.id_documento
+JOIN opzioni_pagamento op ON op.id_opzione_pagamento = no.id_opzione_pagamento
 JOIN (
     SELECT id, id_documento,
            COALESCE(valore_numerico, ROW_NUMBER() OVER (PARTITION BY id_documento ORDER BY id)) AS numero_rata_calcolato
     FROM tmp_vrs_rata
 ) vn ON vn.id = v.id
-SET v.id_opzione_pagamento = no.id,
+SET v.id_opzione_pagamento = op.id,
     v.numero_rata = vn.numero_rata_calcolato;
 
 CREATE TEMPORARY TABLE tmp_nuove_opzioni_c AS
 SELECT
-    @start_id + @cnt_ab + ROW_NUMBER() OVER (ORDER BY id) - 1 AS id_opzione,
-    id AS id_versamento, id_documento, tipologia, giorni, stato
+    id AS id_versamento, id_documento, tipologia, giorni, stato,
+    UNHEX(REPLACE(UUID(), '-', '')) AS id_opzione_pagamento
 FROM tmp_vrs_soglia;
 
 INSERT INTO opzioni_pagamento
-    (id, id_opzione_pagamento, id_documento, tipologia, giorni, stato, versione,
+    (id_opzione_pagamento, id_documento, tipologia, giorni, stato, versione,
      data_creazione, data_ultimo_aggiornamento)
-SELECT id_opzione, UNHEX(REPLACE(UUID(), '-', '')), id_documento, tipologia, giorni, stato, 0, NOW(3), NOW(3)
+SELECT id_opzione_pagamento, id_documento, tipologia, giorni, stato, 0, NOW(3), NOW(3)
 FROM tmp_nuove_opzioni_c;
 
 UPDATE versamenti v
 JOIN tmp_nuove_opzioni_c no ON no.id_versamento = v.id
-SET v.id_opzione_pagamento = no.id_opzione,
+JOIN opzioni_pagamento op ON op.id_opzione_pagamento = no.id_opzione_pagamento
+SET v.id_opzione_pagamento = op.id,
     v.numero_rata = 1;
 
 -- ---------------------------------------------------------------------------

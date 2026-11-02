@@ -2,6 +2,9 @@ package it.govpay.pendenze.entity;
 
 import java.time.OffsetDateTime;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -12,7 +15,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 
 import it.govpay.pendenze.model.StatoRendicontazione;
@@ -67,11 +69,10 @@ import it.govpay.pendenze.model.StatoRendicontazione;
  */
 @Entity
 @Table(name = "rendicontazioni")
-@SequenceGenerator(name = "seq_rendicontazioni", sequenceName = "seq_rendicontazioni", allocationSize = 1)
 public class Rendicontazione {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_rendicontazioni")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 
@@ -113,6 +114,7 @@ public class Rendicontazione {
     private Long idPagamento;
 
     /** Testo grezzo, non spacchettato — vedi Javadoc di classe. */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "anomalie")
     private String anomalie;
 

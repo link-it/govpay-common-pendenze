@@ -12,7 +12,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -36,11 +35,10 @@ import it.govpay.pendenze.model.TipoPagamento;
 @Entity
 @Table(name = "pagamenti", uniqueConstraints = @UniqueConstraint(
         name = "unique_pag_id_riscossione", columnNames = {"cod_dominio", "iuv", "iur", "indice_dati"}))
-@SequenceGenerator(name = "seq_pagamenti", sequenceName = "seq_pagamenti", allocationSize = 1)
 public class Pagamento {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_pagamenti")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 

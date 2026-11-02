@@ -9,7 +9,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 
 import it.govpay.pendenze.model.StatoSpedizioneNotifica;
@@ -28,11 +27,10 @@ import it.govpay.pendenze.model.TipoNotifica;
  */
 @Entity
 @Table(name = "notifiche")
-@SequenceGenerator(name = "seq_notifiche", sequenceName = "seq_notifiche", allocationSize = 1)
 public class Notifica {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_notifiche")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 

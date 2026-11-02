@@ -13,20 +13,10 @@
 -- ENGINE/CHARACTER SET/COLLATE come da convenzione dello schema base del core
 -- per MySQL (vedi src/main/resources/db/sql/mysql/gov_pay.sql).
 --
--- L'id NON usa AUTO_INCREMENT: MySQL non supporta CREATE SEQUENCE, e
--- l'entity JPA dichiara GenerationType.SEQUENCE (@SequenceGenerator su
--- seq_opzioni_pagamento) — un id auto-incrementante in colonna e' in
--- conflitto con l'id esplicito che Hibernate fornisce nell'INSERT. Per
--- questo dialetto Hibernate 7 emula la sequenza con una tabella dedicata a
--- una riga (nome uguale al nome della sequenza, colonna next_val), che
--- interroga e aggiorna prima di ogni INSERT — verificato generando lo schema
--- con SchemaManagementToolCoordinator per la stessa combinazione
--- entity+dialetto, non per lettura di documentazione. La tabella va creata
--- qui manualmente con la stessa struttura, popolata con la riga iniziale.
+-- L'id usa AUTO_INCREMENT: l'entity JPA dichiara GenerationType.IDENTITY,
+-- stessa convenzione gia' in uso dal core per questo dialetto sulle tabelle
+-- legacy (vedi id delle tabelle esistenti in gov_pay.sql) — issue #10.
 -- ---------------------------------------------------------------------------
-
-CREATE TABLE seq_opzioni_pagamento (next_val BIGINT) ENGINE INNODB;
-INSERT INTO seq_opzioni_pagamento (next_val) VALUES (1);
 
 CREATE TABLE opzioni_pagamento
 (
@@ -40,7 +30,7 @@ CREATE TABLE opzioni_pagamento
 	data_creazione DATETIME(3) NOT NULL,
 	data_ultimo_aggiornamento DATETIME(3) NOT NULL,
 	-- fk/pk columns
-	id BIGINT NOT NULL,
+	id BIGINT NOT NULL AUTO_INCREMENT,
 	id_documento BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_opzioni_pagamento_id_opzione UNIQUE (id_opzione_pagamento),
