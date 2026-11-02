@@ -559,6 +559,36 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Legge una pendenza per chiave con il grafo che serve a chi la usa fuori transazione
+     * (es. govpay-notify-batch per la sezione {@code pendenza} della ricevuta): voci,
+     * opzione di pagamento, posizione debitoria e soggetti debitori della posizione, tutti
+     * gia' caricati e navigabili anche dopo la chiusura della sessione.
+     *
+     * <p>Due query invece di una: voci e soggetti debitori sono entrambe {@code List} e non
+     * possono stare nello stesso fetch join (vedi
+     * {@link PendenzaRepository#findByIdConVociEOpzione}). La seconda query deve girare nella
+     * stessa transazione della prima per riempire la stessa istanza della posizione: per
+     * questo il punto d'ingresso e' questo metodo e non i due metodi di repository.</p>
+     *
+     * <p>Non sono caricate le altre pendenze dell'opzione ({@link OpzionePagamento#getPendenze()},
+     * es. le altre rate di un piano rateale) ne' le altre opzioni della posizione: fuori
+     * transazione non vanno usate. A differenza di {@link #trovaPendenzaPerIdentificativo} le
+     * pendenze v2 senza opzione di pagamento non sono escluse: sono restituite con le sole
+     * voci.</p>
+     *
+     * @param id chiave della pendenza ({@code versamenti.id}, es. {@code rpt.id_versamento})
+     * @return la pendenza con il grafo caricato, se esiste
+     */
+    @Transactional(readOnly = true)
+    public Optional<Pendenza> trovaPendenzaCompletaPerId(Long id) {
+        Optional<Pendenza> pendenza = pendenzaRepository.findByIdConVociEOpzione(id);
+        pendenza.map(Pendenza::getOpzionePagamento)
+                .map(OpzionePagamento::getPosizioneDebitoria)
+                .ifPresent(posizioneDebitoriaRepository::caricaSoggettiDebitori);
+        return pendenza;
+    }
+
+    /**
      * Aggiorna esclusivamente i campi dichiarati dal comando della posizione.
      * Un campo assente resta invariato; un valore nullo rimuove solo i campi facoltativi.
      * Rivalida l'aggregato, inclusi gli stati, e aggiorna le marcature ACA.

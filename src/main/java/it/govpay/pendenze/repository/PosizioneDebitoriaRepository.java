@@ -104,4 +104,17 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
             @Param("idApplicazione") Long idApplicazione, @Param("idDebitore") String idDebitore,
             @Param("cursorDataCreazione") OffsetDateTime cursorDataCreazione, @Param("cursorId") Long cursorId,
             Pageable pageable);
+
+    /**
+     * Inizializza i soggetti debitori di una posizione gia' caricata. Ha effetto solo se
+     * chiamata nella stessa transazione in cui la posizione e' stata letta: la query
+     * restituisce la stessa istanza gestita e ne riempie la collezione. Usata da
+     * {@code PosizioneDebitoriaService#trovaPendenzaCompletaPerId}, dopo
+     * {@link PendenzaRepository#findByIdConVociEOpzione}.
+     *
+     * @param posizione posizione gestita dal persistence context corrente
+     * @return la stessa posizione, con i soggetti debitori caricati
+     */
+    @Query("select p from PosizioneDebitoria p left join fetch p.soggettiDebitori where p = :posizione")
+    PosizioneDebitoria caricaSoggettiDebitori(@Param("posizione") PosizioneDebitoria posizione);
 }
