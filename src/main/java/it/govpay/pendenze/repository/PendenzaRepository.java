@@ -187,6 +187,25 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
     Optional<Pendenza> findByIdForUpdate(@Param("id") Long id);
 
     /**
+     * Come {@link #findById}, caricando nella stessa query le voci, l'opzione di pagamento e
+     * la sua posizione debitoria. I soggetti debitori della posizione restano fuori: sono
+     * anch'essi una {@code List}, e due collezioni {@code List} nello stesso fetch join fanno
+     * fallire Hibernate ({@code MultipleBagFetchException}). Per avere il grafo completo
+     * usare {@code PosizioneDebitoriaService#trovaPendenzaCompletaPerId}, che li carica con
+     * {@link PosizioneDebitoriaRepository#caricaSoggettiDebitori} nella stessa transazione.
+     *
+     * <p>Solo {@code left join}: una pendenza v2 non migrata (senza opzione) viene restituita
+     * comunque, con le sole voci.</p>
+     *
+     * @param id chiave della pendenza
+     * @return la pendenza, se esiste
+     */
+    @Query("select p from Pendenza p left join fetch p.voci "
+            + "left join fetch p.opzionePagamento o left join fetch o.posizioneDebitoria "
+            + "where p.id = :id")
+    Optional<Pendenza> findByIdConVociEOpzione(@Param("id") Long id);
+
+    /**
      * Ricerca per numero avviso ({@code GET /pendenze/{idA2A}} dello YAML v3:
      * {@code numeroAvviso} e' l'unico criterio di ricerca, richiesto). A differenza di
      * {@link #findByIdDominioAndNumeroAvviso}, qui {@code idDominio} e' assente: puo'
