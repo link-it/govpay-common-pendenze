@@ -2,12 +2,14 @@ package it.govpay.pendenze.entity;
 
 import java.time.OffsetDateTime;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -53,11 +55,10 @@ import jakarta.persistence.UniqueConstraint;
 @Entity
 @Table(name = "rpt", uniqueConstraints = @UniqueConstraint(
         name = "unique_rpt_id_transazione", columnNames = {"iuv", "ccp", "cod_dominio"}))
-@SequenceGenerator(name = "seq_rpt", sequenceName = "seq_rpt", allocationSize = 1)
 public class Rpt {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_rpt")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 
@@ -110,6 +111,7 @@ public class Rpt {
     private String stato;
 
     /** Dettaglio testuale libero di {@link #stato} — stesso ambito, solo per il wrapper v2. */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "descrizione_stato")
     private String descrizioneStato;
 

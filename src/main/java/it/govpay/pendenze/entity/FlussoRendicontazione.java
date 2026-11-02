@@ -9,7 +9,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -56,11 +55,10 @@ import it.govpay.pendenze.model.StatoFlussoRendicontazione;
         @UniqueConstraint(name = "unique_fr_1", columnNames = {"id_dominio", "cod_flusso", "data_ora_flusso"}),
         @UniqueConstraint(name = "unique_fr_2", columnNames = {"id_dominio", "cod_flusso", "cod_psp", "revisione"})
 })
-@SequenceGenerator(name = "seq_fr", sequenceName = "seq_fr", allocationSize = 1)
 public class FlussoRendicontazione {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_fr")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 

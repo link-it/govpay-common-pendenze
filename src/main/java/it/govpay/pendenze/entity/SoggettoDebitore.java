@@ -13,7 +13,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -38,11 +37,10 @@ import it.govpay.pendenze.model.TipoSoggetto;
 @Entity
 @Table(name = "soggetti_debitori", uniqueConstraints = @UniqueConstraint(
         name = "unique_soggetti_debitori_1", columnNames = {"id_documento", "ordine"}))
-@SequenceGenerator(name = "seq_soggetti_debitori", sequenceName = "seq_soggetti_debitori", allocationSize = 1)
 public class SoggettoDebitore {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_soggetti_debitori")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 

@@ -6,6 +6,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -19,7 +22,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
-import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
@@ -90,11 +92,10 @@ import it.govpay.pendenze.model.StatoPendenza;
 @Entity
 @Table(name = "versamenti", uniqueConstraints = @UniqueConstraint(
         name = "unique_versamenti_1", columnNames = {"cod_versamento_ente", "id_applicazione"}))
-@SequenceGenerator(name = "seq_versamenti", sequenceName = "seq_versamenti", allocationSize = 1)
 public class Pendenza {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_versamenti")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 
@@ -225,6 +226,7 @@ public class Pendenza {
     private String codLotto;
 
     /** {@code datiAllegati} dello YAML v2 — JSON libero del chiamante, mai interpretato. */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "dati_allegati")
     private String datiAllegati;
 
@@ -234,6 +236,7 @@ public class Pendenza {
      * questa libreria (stesso principio di {@link #causaleVersamento}: nessuna logica di
      * dominio qui, solo una colonna legacy non ancora mappata).
      */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "anomalie")
     private String anomalie;
 
@@ -254,6 +257,7 @@ public class Pendenza {
     private String idSessione;
 
     /** {@code proprieta} dello YAML v2 — JSON libero, mai interpretato da questa libreria. */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     @Column(name = "proprieta")
     private String proprieta;
 

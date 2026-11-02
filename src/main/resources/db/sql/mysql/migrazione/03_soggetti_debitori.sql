@@ -4,18 +4,10 @@
 -- versamenti.debitore_*, un solo soggetto per versamento. Nessuna riga
 -- esistente da migrare: tabella vuota alla creazione.
 --
--- L'id NON usa AUTO_INCREMENT: MySQL non supporta CREATE SEQUENCE, e
--- l'entity JPA dichiara GenerationType.SEQUENCE (@SequenceGenerator su
--- seq_soggetti_debitori) — un id auto-incrementante in colonna e' in
--- conflitto con l'id esplicito che Hibernate fornisce nell'INSERT. Per
--- questo dialetto Hibernate 7 emula la sequenza con una tabella dedicata a
--- una riga (nome uguale al nome della sequenza, colonna next_val), che
--- interroga e aggiorna prima di ogni INSERT. La tabella va creata qui
--- manualmente con la stessa struttura, popolata con la riga iniziale.
+-- L'id usa AUTO_INCREMENT: l'entity JPA dichiara GenerationType.IDENTITY,
+-- stessa convenzione gia' in uso dal core per questo dialetto sulle tabelle
+-- legacy (vedi id delle tabelle esistenti in gov_pay.sql) — issue #10.
 -- ---------------------------------------------------------------------------
-
-CREATE TABLE seq_soggetti_debitori (next_val BIGINT) ENGINE INNODB;
-INSERT INTO seq_soggetti_debitori (next_val) VALUES (1);
 
 CREATE TABLE soggetti_debitori
 (
@@ -32,7 +24,7 @@ CREATE TABLE soggetti_debitori
 	email VARCHAR(256),
 	cellulare VARCHAR(35),
 	-- fk/pk columns
-	id BIGINT NOT NULL,
+	id BIGINT NOT NULL AUTO_INCREMENT,
 	id_documento BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_soggetti_debitori_1 UNIQUE (id_documento, ordine),

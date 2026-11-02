@@ -8,6 +8,12 @@
 -- LIKE/SUBSTRING. La classificazione viene materializzata in tabelle
 -- temporanee locali (#tmp, droppate automaticamente a fine sessione,
 -- comunque droppate esplicitamente in fondo).
+--
+-- id e' IDENTITY (issue #10): non piu' pre-calcolabile con NEXT VALUE FOR
+-- come con la sequenza esplicita. L'id fisico generato dall'insert si
+-- recupera con la clausola OUTPUT, dentro una tabella temporanea creata
+-- apposta (OUTPUT ... INTO richiede che la tabella di destinazione esista
+-- gia', a differenza di SELECT ... INTO).
 -- ---------------------------------------------------------------------------
 
 SELECT
@@ -60,28 +66,31 @@ FROM (
     GROUP BY id_documento
 ) aggr;
 
-SELECT id_documento, tipologia, stato, NEXT VALUE FOR seq_opzioni_pagamento AS id
+SELECT id_documento, tipologia, stato
 INTO #tmp_nuove_opzioni
 FROM #tmp_classificazione
 WHERE tipologia IS NOT NULL;
 
+CREATE TABLE #tmp_nuove_opzioni_id (id BIGINT, id_documento BIGINT);
+
 INSERT INTO opzioni_pagamento
-    (id, id_opzione_pagamento, id_documento, tipologia, stato, versione,
+    (id_opzione_pagamento, id_documento, tipologia, stato, versione,
      data_creazione, data_ultimo_aggiornamento)
-SELECT id, NEWID(), id_documento, tipologia, stato, 0, SYSDATETIME(), SYSDATETIME()
+OUTPUT inserted.id, inserted.id_documento INTO #tmp_nuove_opzioni_id (id, id_documento)
+SELECT NEWID(), id_documento, tipologia, stato, 0, SYSDATETIME(), SYSDATETIME()
 FROM #tmp_nuove_opzioni;
 
 -- numero_rata: valore dichiarato preservato (PIANO_RATEALE) oppure, per
 -- SOLUZIONE_UNICA (cod_rata NULL), posizione 1-based per id crescente dentro
 -- il documento — solo per garantire indici distinti. Il join parte da
--- #tmp_nuove_opzioni (solo documenti A/B): nessuna ambiguita' con le opzioni
+-- #tmp_nuove_opzioni_id (solo documenti A/B): nessuna ambiguita' con le opzioni
 -- del pattern C sotto, che restano sotto lo stesso id_documento ma non
 -- finiscono in questa tabella.
 UPDATE v
 SET v.id_opzione_pagamento = no.id,
     v.numero_rata = vn.numero_rata_calcolato
 FROM versamenti v
-JOIN #tmp_nuove_opzioni no ON no.id_documento = v.id_documento
+JOIN #tmp_nuove_opzioni_id no ON no.id_documento = v.id_documento
 JOIN (
     SELECT id, id_documento,
            COALESCE(valore_numerico, ROW_NUMBER() OVER (PARTITION BY id_documento ORDER BY id)) AS numero_rata_calcolato
@@ -92,10 +101,10 @@ JOIN (
 -- Pattern C: ENTRO/OLTRE espliciti, inclusa la coppia RIDOTTO/SCONTATO. Una
 -- opzione PER VERSAMENTO (cardinalita' massima 1 per queste tipologie), non
 -- un'aggregazione per documento come A/B — solo se TUTTO il documento e'
--- fatto di valori-soglia riconosciuti e senza duplicati. Id e GUID generati
--- qui, in #tmp_vrs_soglia: una volta materializzati sono stabili, il join
--- verso versamenti sotto si fa sul loro id originale (vc.id), senza bisogno
--- di un correlatore separato.
+-- fatto di valori-soglia riconosciuti e senza duplicati. Il GUID
+-- id_opzione_pagamento e' generato qui, in #tmp_vrs_soglia, prima
+-- dell'insert: una volta materializzato e' stabile e correla la riga di
+-- opzioni_pagamento (via OUTPUT) al versamento originale (vc.id).
 -- ---------------------------------------------------------------------------
 
 SELECT
@@ -113,7 +122,6 @@ SELECT
          WHEN vc.stato_versamento = 'ANNULLATO' THEN 'ANNULLATA'
          ELSE 'ATTIVATA'
     END AS stato,
-    NEXT VALUE FOR seq_opzioni_pagamento AS id_opzione,
     NEWID() AS id_opzione_pagamento
 INTO #tmp_vrs_soglia
 FROM #tmp_vrs_rata vc
@@ -124,17 +132,21 @@ JOIN (
     HAVING SUM(flag_soglia) = COUNT(*) AND COUNT(DISTINCT cod_rata) = COUNT(*) AND COUNT(*) > 0
 ) ds ON ds.id_documento = vc.id_documento;
 
+CREATE TABLE #tmp_vrs_soglia_id (id BIGINT, id_opzione_pagamento UNIQUEIDENTIFIER);
+
 INSERT INTO opzioni_pagamento
-    (id, id_opzione_pagamento, id_documento, tipologia, giorni, stato, versione,
+    (id_opzione_pagamento, id_documento, tipologia, giorni, stato, versione,
      data_creazione, data_ultimo_aggiornamento)
-SELECT id_opzione, id_opzione_pagamento, id_documento, tipologia, giorni, stato, 0, SYSDATETIME(), SYSDATETIME()
+OUTPUT inserted.id, inserted.id_opzione_pagamento INTO #tmp_vrs_soglia_id (id, id_opzione_pagamento)
+SELECT id_opzione_pagamento, id_documento, tipologia, giorni, stato, 0, SYSDATETIME(), SYSDATETIME()
 FROM #tmp_vrs_soglia;
 
 UPDATE v
-SET v.id_opzione_pagamento = vs.id_opzione,
+SET v.id_opzione_pagamento = idc.id,
     v.numero_rata = 1
 FROM versamenti v
-JOIN #tmp_vrs_soglia vs ON vs.id = v.id;
+JOIN #tmp_vrs_soglia vs ON vs.id = v.id
+JOIN #tmp_vrs_soglia_id idc ON idc.id_opzione_pagamento = vs.id_opzione_pagamento;
 
 -- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa
@@ -192,4 +204,6 @@ HAVING NOT (SUM(flag_null) = COUNT(*))
 DROP TABLE #tmp_vrs_rata;
 DROP TABLE #tmp_classificazione;
 DROP TABLE #tmp_nuove_opzioni;
+DROP TABLE #tmp_nuove_opzioni_id;
 DROP TABLE #tmp_vrs_soglia;
+DROP TABLE #tmp_vrs_soglia_id;

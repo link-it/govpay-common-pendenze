@@ -4,15 +4,10 @@
 -- versamenti.debitore_*, un solo soggetto per versamento. Nessuna riga
 -- esistente da migrare: tabella vuota alla creazione.
 --
--- L'id usa una sequenza esplicita (CREATE SEQUENCE + colonna BIGINT
--- semplice), non IDENTITY: l'entity JPA dichiara GenerationType.SEQUENCE
--- (@SequenceGenerator su seq_soggetti_debitori) — Hibernate quindi interroga
--- la sequenza e fornisce l'id esplicito nell'INSERT, mentre una colonna
--- IDENTITY rifiuta un INSERT che specifichi un valore esplicito per quella
--- colonna (a meno di SET IDENTITY_INSERT, che Hibernate non usa).
+-- L'id usa IDENTITY: l'entity JPA dichiara GenerationType.IDENTITY, stessa
+-- convenzione gia' in uso dal core per questo dialetto sulle tabelle legacy
+-- (vedi id delle tabelle esistenti in gov_pay.sql) — issue #10.
 -- ---------------------------------------------------------------------------
-
-CREATE SEQUENCE seq_soggetti_debitori START WITH 1 INCREMENT BY 1;
 
 CREATE TABLE soggetti_debitori
 (
@@ -29,7 +24,7 @@ CREATE TABLE soggetti_debitori
 	email VARCHAR(256),
 	cellulare VARCHAR(35),
 	-- fk/pk columns
-	id BIGINT NOT NULL,
+	id BIGINT IDENTITY,
 	id_documento BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_soggetti_debitori_1 UNIQUE (id_documento, ordine),
