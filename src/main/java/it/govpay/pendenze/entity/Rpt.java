@@ -51,6 +51,15 @@ import jakarta.persistence.UniqueConstraint;
  * <p>Scritta (non solo letta) da pafornode-api per l'attivazione della RPT. I campi
  * marcati {@code @Deprecated} sono stati aggiunti solo per quella scrittura e sono
  * candidati a essere ridotti da un'evolutiva futura.</p>
+ *
+ * <p><b>Ricevuta senza pendenza</b> (stazione in broadcast, issue #6/govpay-pafornode-api):
+ * {@link #idVersamento} e' nullable per questo motivo — una ricevuta che arriva per uno
+ * IUV che GovPay non conosce viene comunque salvata (richiesta pagoPA, il Nodo va in ogni
+ * caso in OK), ma senza nessuna {@link Pendenza} a cui agganciarla. {@link #idApplicazione}
+ * e' popolato SOLO in questo caso, con l'applicazione risolta dal dominio (non dalla
+ * pendenza, che non esiste): serve a rendere la riga visibile a chi gestisce quel dominio,
+ * nelle API v3. Per una RPT con pendenza l'applicazione resta quella della pendenza stessa
+ * ({@code Pendenza#getIdApplicazione()}) — qui resta {@code null}, nessuna duplicazione.</p>
  */
 @Entity
 @Table(name = "rpt", uniqueConstraints = @UniqueConstraint(
@@ -62,8 +71,11 @@ public class Rpt {
     @Column(name = "id")
     private Long id;
 
-    /** FK piatta verso {@link Pendenza}: vedi nota di classe sul perimetro dell'aggregato. */
-    @Column(name = "id_versamento", nullable = false)
+    /**
+     * FK piatta verso {@link Pendenza}: vedi nota di classe sul perimetro dell'aggregato.
+     * Nullable: {@code null} per una ricevuta senza pendenza (vedi nota di classe).
+     */
+    @Column(name = "id_versamento")
     private Long idVersamento;
 
     @Column(name = "iuv", nullable = false, length = 35)
@@ -141,6 +153,13 @@ public class Rpt {
     /** Valore legacy grezzo di {@code VersioneRPT} — vedi nota di classe. */
     @Column(name = "versione", nullable = false, length = 35)
     private String versione;
+
+    /**
+     * FK piatta verso {@code ApplicazioneEntity} (govpay-common), popolata SOLO per una
+     * ricevuta senza pendenza — vedi nota di classe. {@code null} in tutti gli altri casi.
+     */
+    @Column(name = "id_applicazione")
+    private Long idApplicazione;
 
     /**
      * Data di aggiornamento dello stato della RPT — colonna fisica NOT NULL senza default: va
@@ -307,6 +326,14 @@ public class Rpt {
 
     public void setVersione(String versione) {
         this.versione = versione;
+    }
+
+    public Long getIdApplicazione() {
+        return idApplicazione;
+    }
+
+    public void setIdApplicazione(Long idApplicazione) {
+        this.idApplicazione = idApplicazione;
     }
 
     public OffsetDateTime getDataAggiornamentoStato() {
