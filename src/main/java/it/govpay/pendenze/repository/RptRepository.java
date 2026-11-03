@@ -228,8 +228,11 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * relazione JPA tra le due entita' (vedi Javadoc di classe di {@link Rpt}), ma i filtri
      * {@code idApplicazione}/{@code idPendenza}/{@code idDebitore} stanno sulla pendenza e il
      * chiamante ha bisogno di entrambe per costruire la risposta — vedi {@link RptConPendenza}.
-     * Inner join, come la vista legacy: una RPT senza pendenza non e' rappresentabile (e il
-     * vincolo FK reale su {@code rpt.id_versamento} lo impedisce comunque).</p>
+     * Inner join, come la vista legacy: dall'issue #6/govpay-pafornode-api {@code
+     * rpt.id_versamento} puo' essere {@code null} (ricevuta senza pendenza), quindi
+     * "irrappresentabile" non e' piu' garantito dal solo vincolo FK — ma resta comunque
+     * escluso naturalmente dall'inner join, che e' l'esito voluto: senza pendenza non esiste
+     * un {@code idA2A}/{@code idPendenza} su cui esporre la riga in questa ricerca v2.</p>
      *
      * <p>Ogni filtro e' opzionale (un parametro {@code null} lo disattiva) e rispecchia
      * l'operatore del legacy: {@code codDominio}/{@code idPendenza}/{@code codEsitoPagamento}
