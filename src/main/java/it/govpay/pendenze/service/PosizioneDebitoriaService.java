@@ -1510,6 +1510,80 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Variante esplicita di {@link #registraEsitoPendenza} per un SOLO caso d'uso: una
+     * ricevuta di pagamento REALMENTE avvenuta (secondo il sistema di pagamento) che arriva
+     * per una pendenza la cui opzione e' GIA' {@code ANNULLATA} — tipicamente perche' un
+     * canale di pagamento concorrente ha nel frattempo attivato un'opzione alternativa
+     * della stessa posizione, annullando questa. {@link #registraEsitoPendenza} rifiuta
+     * sempre questo caso (giustamente, nell'uso generico): qui invece si vuole
+     * deliberatamente preservare il pagamento, non perderlo.
+     *
+     * <p><b>Nome esplicito apposta</b> (deciso con il committente, 2026-11-04): questo NON
+     * e' un {@code registraEsitoPendenza} piu' permissivo per uso generale — e' riservato
+     * a questo singolo scenario (il controllo sotto lo impone) e produce deliberatamente
+     * un aggregato con un'incoerenza LOCALIZZATA e ACCETTATA: l'opzione resta
+     * {@code ANNULLATA} (stato definitivo, non si "riattiva" — nessuna chiamata a
+     * {@link #attiva(UUID)}), ma QUESTA pendenza assume {@code nuovoStato} invece di
+     * restare {@code ANNULLATO} come le sue "sorelle". {@link
+     * ValidatorePosizioneDebitoria#validaStati} non viene invocato: quella coerenza
+     * ("un'opzione ANNULLATA ha tutte le pendenze ANNULLATO") e' esattamente cio' che qui
+     * si rinuncia a mantenere, di proposito. Conseguenza nota, non un bug: un consumer che
+     * filtra le opzioni per il loro stato (es. {@code GetPaymentOptionsService} di
+     * govpay-pafornode-api, che esclude le {@code ANNULLATA} a monte) non vedra' mai questa
+     * pendenza, pur essendo pagata — segnalato come punto aperto da confermare, non ancora
+     * una decisione definitiva sul lungo periodo.</p>
+     *
+     * <p>{@code anomalo=true} e {@code descrizioneStato} sono sempre impostati da questo
+     * metodo (a differenza di {@link #registraEsitoPendenza}, dove sono responsabilita' del
+     * chiamante): qui il motivo dell'anomalia e' un dato obbligatorio del caso d'uso stesso,
+     * non opzionale.</p>
+     *
+     * @param idA2A            identificativo del gestionale responsabile
+     * @param idPendenza       identificativo della pendenza nel gestionale
+     * @param nuovoStato       esito di pagamento da registrare (stesso vincolo di {@link
+     *                         #registraEsitoPendenza}: diverso da {@code NON_ESEGUITO}/
+     *                         {@code ANNULLATO}/{@code null})
+     * @param descrizioneStato motivo dell'anomalia, da riportare su {@code
+     *                         pendenza.descrizioneStato} — non nullo né vuoto
+     * @return la pendenza aggiornata, con {@code anomalo=true}
+     * @throws RisorsaNonTrovataException          se non esiste una pendenza con questa chiave
+     * @throws TransizioneStatoNonAmmessaException se {@code nuovoStato}/{@code
+     *                                              descrizioneStato} non sono validi, o se
+     *                                              l'opzione della pendenza NON e'
+     *                                              {@code ANNULLATA} (per quel caso va usato
+     *                                              {@link #registraEsitoPendenza})
+     */
+    public Pendenza registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente(String idA2A, String idPendenza,
+            StatoPendenza nuovoStato, String descrizioneStato) {
+        if (nuovoStato == null || !statoEseguito(nuovoStato)) {
+            throw new TransizioneStatoNonAmmessaException("'" + nuovoStato + "' non e' un esito di pagamento "
+                    + "valido per questo metodo: deve essere diverso da NON_ESEGUITO/ANNULLATO/null");
+        }
+        if (descrizioneStato == null || descrizioneStato.isBlank()) {
+            throw new TransizioneStatoNonAmmessaException(
+                    "descrizioneStato e' obbligatoria per questo metodo (motivo dell'anomalia)");
+        }
+        Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        OpzionePagamento opzione = pendenza.getOpzionePagamento();
+        if (opzione.getStato() != StatoOpzionePagamento.ANNULLATA) {
+            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] appartiene a "
+                    + "un'opzione di pagamento NON annullata: usare registraEsitoPendenza, non questo metodo "
+                    + "riservato al caso di una ricevuta su un'opzione gia' annullata da un canale concorrente");
+        }
+
+        entityManager.lock(opzione.getPosizioneDebitoria(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        pendenza.setStato(nuovoStato);
+        pendenza.setAnomalo(true);
+        pendenza.setDescrizioneStato(descrizioneStato);
+        pendenza.setDataUltimoAggiornamento(adesso);
+        // Solo questa pendenza, non l'intera opzione (a differenza di marcaModificaAca):
+        // le sue "sorelle" non sono cambiate, l'opzione stessa resta ANNULLATA.
+        pendenza.setDataUltimaModificaAca(adesso);
+        return pendenza;
+    }
+
+    /**
      * Registra l'importo delle spese di notifica SEND quantificato dal servizio di
      * pagamento interrogando il connettore SEND del dominio (percorso automatico,
      * {@code sendAbilitato} {@code true} sulla pendenza) — equivalente di

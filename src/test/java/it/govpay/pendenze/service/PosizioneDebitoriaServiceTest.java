@@ -723,6 +723,78 @@ class PosizioneDebitoriaServiceTest {
                 .containsOnly(StatoPendenza.ANNULLATO);
     }
 
+    /**
+     * Caso d'uso dedicato (issue #6/govpay-pafornode-api, 2026-11-04): una ricevuta
+     * REALMENTE avvenuta arriva per "pendenza-b1", la cui opzione e' stata ANNULLATA nel
+     * frattempo dall'attivazione dell'alternativa "a" (stesso scenario di {@link
+     * #registraEsitoPendenzaAnnullaAutomaticamenteLeAlternative}). L'opzione resta
+     * ANNULLATA (stato definitivo, nessuna cascata), solo questa pendenza assume
+     * {@code ESEGUITO}+anomalo — la sua "sorella" "b2" (seconda rata, stessa opzione) resta
+     * ANNULLATO, non toccata.
+     */
+    @Test
+    @DisplayName("registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente marca anomalo senza riattivare l'opzione")
+    void registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrenteMarcaAnomalo() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-" + UUID.randomUUID().toString().substring(0, 8)));
+        posizione.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
+        posizione.setIdDominio(idDominioPer(DOMINIO_1));
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
+        OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
+        opzioneConPendenza(alternativa, "b2");
+
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        String idA2A = codApplicazioneDi(salvata);
+        service.registraEsitoPendenza(idA2A, "pendenza-a", StatoPendenza.ESEGUITO);
+
+        Pendenza risultato = service.registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente(idA2A, "pendenza-b1",
+                StatoPendenza.ESEGUITO, "Ricevuta acquisita su un'opzione di pagamento gia' annullata");
+
+        assertThat(risultato.getStato()).isEqualTo(StatoPendenza.ESEGUITO);
+        assertThat(risultato.isAnomalo()).isTrue();
+        assertThat(risultato.getDescrizioneStato())
+                .isEqualTo("Ricevuta acquisita su un'opzione di pagamento gia' annullata");
+
+        OpzionePagamento alternativaRiletta = salvata.getOpzioniPagamento().get(1);
+        assertThat(alternativaRiletta.getStato()).isEqualTo(StatoOpzionePagamento.ANNULLATA);
+        Pendenza sorella = alternativaRiletta.getPendenze().stream()
+                .filter(p -> p.getIdPendenza().equals("pendenza-b2")).findFirst().orElseThrow();
+        assertThat(sorella.getStato()).isEqualTo(StatoPendenza.ANNULLATO);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente rifiuta se l'opzione NON e' annullata")
+    void registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrenteRifiutaSeOpzioneNonAnnullata() {
+        PosizioneDebitoria posizione = service
+                .crea(DatiPosizioneDebitoria.da(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
+
+        assertThatThrownBy(() -> service.registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente(
+                codApplicazioneDi(posizione), "pendenza-1", StatoPendenza.ESEGUITO, "motivo"))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente rifiuta descrizioneStato vuota")
+    void registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrenteRifiutaDescrizioneVuota() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-" + UUID.randomUUID().toString().substring(0, 8)));
+        posizione.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
+        posizione.setIdDominio(idDominioPer(DOMINIO_1));
+        posizione.setDescrizione("test");
+        posizione.addSoggettoDebitore(soggettoDiProva());
+        opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
+        OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "b");
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        String idA2A = codApplicazioneDi(salvata);
+        service.registraEsitoPendenza(idA2A, "pendenza-a", StatoPendenza.ESEGUITO);
+
+        assertThatThrownBy(() -> service.registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente(idA2A,
+                "pendenza-b", StatoPendenza.ESEGUITO, " "))
+                .isInstanceOf(TransizioneStatoNonAmmessaException.class);
+    }
+
     @Test
     @DisplayName("registraEsitoPendenza non richiama di nuovo la cascata se l'opzione e' gia' ATTIVATA")
     void registraEsitoPendenzaNonRipeteLaCascataSeGiaAttivata() {
