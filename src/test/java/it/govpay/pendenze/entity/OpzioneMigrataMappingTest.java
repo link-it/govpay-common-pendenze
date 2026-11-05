@@ -82,9 +82,9 @@ class OpzioneMigrataMappingTest {
 
     private void inserisciDocumento() {
         em.getEntityManager().createNativeQuery("""
-                INSERT INTO documenti (id, cod_documento, descrizione, notifica_send, data_creazione,
+                INSERT INTO documenti (id, cod_documento, descrizione, notifica_send, anomalo, data_creazione,
                         data_ultimo_aggiornamento, versione, id_dominio, id_applicazione)
-                VALUES (?, 'VERBALE-CDS-1', 'Verbale CdS', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, 1)
+                VALUES (?, 'VERBALE-CDS-1', 'Verbale CdS', FALSE, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, 1)
                 """).setParameter(1, ID_DOCUMENTO).executeUpdate();
     }
 

@@ -1613,6 +1613,37 @@ public class PosizioneDebitoriaService {
     }
 
     /**
+     * Segnala un'anomalia a livello dell'intera posizione debitoria (non della singola
+     * pendenza, vedi {@link #registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente}).
+     * Riusabile da qualunque caso che debba marcare l'aggregato come anomalo, non solo
+     * dalla ricevuta su opzione annullata da canale concorrente.
+     *
+     * @param idApplicazione   identificativo numerico dell'applicazione proprietaria
+     * @param idDominio        identificativo numerico del dominio
+     * @param codDocumento     business key della posizione debitoria
+     * @param descrizioneStato motivo dell'anomalia, obbligatorio
+     * @return la posizione debitoria aggiornata
+     * @throws RisorsaNonTrovataException se non esiste una posizione con questa chiave
+     */
+    public PosizioneDebitoria segnalaAnomalia(Long idApplicazione, Long idDominio, String codDocumento,
+            String descrizioneStato) {
+        if (descrizioneStato == null || descrizioneStato.isBlank()) {
+            throw new IllegalArgumentException("descrizioneStato e' obbligatoria per segnalare un'anomalia");
+        }
+        PosizioneDebitoria posizione = posizioneDebitoriaRepository
+                .findByIdApplicazioneAndIdDominioAndCodDocumento(idApplicazione, idDominio, codDocumento)
+                .orElseThrow(() -> new RisorsaNonTrovataException(
+                        "nessuna posizione debitoria [idApplicazione:" + idApplicazione + ", idDominio:" + idDominio
+                                + ", codDocumento:" + codDocumento + "]"));
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        posizione.setAnomalo(true);
+        posizione.setDescrizioneStato(descrizioneStato);
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+        return posizione;
+    }
+
+    /**
      * Sostituisce i dati ammessi di una pendenza NON_ESEGUITO o ANNULLATO.
      * Identita, stato, IUV, riferimenti all'aggregato e dati di pagamento non sono
      * scrivibili tramite questo comando. Numero avviso omesso conserva l'originale;

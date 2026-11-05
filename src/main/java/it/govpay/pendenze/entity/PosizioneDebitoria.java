@@ -142,6 +142,14 @@ public class PosizioneDebitoria {
     @Column(name = "notifica_send", nullable = false)
     private boolean notificaSend;
 
+    /** Colonna aggiunta: analoga a {@link Pendenza#isAnomalo()}, a livello di posizione. */
+    @Column(name = "anomalo", nullable = false)
+    private boolean anomalo = false;
+
+    /** Colonna aggiunta: analoga a {@link Pendenza#getDescrizioneStato()}, a livello di posizione. */
+    @Column(name = "descrizione_stato", length = 255)
+    private String descrizioneStato;
+
     /** Colonna aggiunta. Deve corrispondere al {@code numeroAvviso} di una pendenza della posizione. */
     @Column(name = "nav_notifica", length = 18)
     private String navNotifica;
@@ -305,6 +313,22 @@ public class PosizioneDebitoria {
 
     public void setNotificaSend(boolean notificaSend) {
         this.notificaSend = notificaSend;
+    }
+
+    public boolean isAnomalo() {
+        return anomalo;
+    }
+
+    public void setAnomalo(boolean anomalo) {
+        this.anomalo = anomalo;
+    }
+
+    public String getDescrizioneStato() {
+        return descrizioneStato;
+    }
+
+    public void setDescrizioneStato(String descrizioneStato) {
+        this.descrizioneStato = descrizioneStato;
     }
 
     public String getNavNotifica() {
