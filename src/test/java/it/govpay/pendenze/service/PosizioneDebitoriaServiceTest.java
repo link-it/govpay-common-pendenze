@@ -796,6 +796,41 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("segnalaAnomalia marca la posizione debitoria e aggiorna le marcature")
+    void segnalaAnomaliaMarcaPosizione() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        azzeraMarcatureAca(salvata);
+        em.flush();
+
+        PosizioneDebitoria risultato = service.segnalaAnomalia(salvata.getIdApplicazione(),
+                salvata.getIdDominio(), salvata.getCodDocumento(), "Ricevuta acquisita su un'opzione annullata");
+
+        assertThat(risultato.isAnomalo()).isTrue();
+        assertThat(risultato.getDescrizioneStato()).isEqualTo("Ricevuta acquisita su un'opzione annullata");
+        assertThat(risultato.getDataUltimoAggiornamento()).isNotNull();
+        assertThat(risultato.getDataUltimaModificaAca()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("segnalaAnomalia rifiuta se non esiste una posizione con questa chiave")
+    void segnalaAnomaliaRifiutaSeNonTrovata() {
+        assertThatThrownBy(() -> service.segnalaAnomalia(999999L, idDominioPer(DOMINIO_1), "inesistente", "motivo"))
+                .isInstanceOf(RisorsaNonTrovataException.class);
+    }
+
+    @Test
+    @DisplayName("segnalaAnomalia rifiuta descrizioneStato vuota")
+    void segnalaAnomaliaRifiutaDescrizioneVuota() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+
+        assertThatThrownBy(() -> service.segnalaAnomalia(salvata.getIdApplicazione(), salvata.getIdDominio(),
+                salvata.getCodDocumento(), " "))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("registraEsitoPendenza non richiama di nuovo la cascata se l'opzione e' gia' ATTIVATA")
     void registraEsitoPendenzaNonRipeteLaCascataSeGiaAttivata() {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);

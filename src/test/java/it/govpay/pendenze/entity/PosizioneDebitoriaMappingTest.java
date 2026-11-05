@@ -74,6 +74,8 @@ class PosizioneDebitoriaMappingTest {
         assertThat(riletta.getDataCreazione().toInstant()).isEqualTo(ADESSO.toInstant());
         assertThat(riletta.getDataPubblicazione()).isEqualTo(LocalDate.of(2026, 8, 1));
         assertThat(riletta.isNotificaSend()).isFalse();
+        assertThat(riletta.isAnomalo()).isFalse();
+        assertThat(riletta.getDescrizioneStato()).isNull();
 
         assertThat(riletta.getSoggettiDebitori()).hasSize(1);
         SoggettoDebitore soggettoLetto = riletta.getSoggettiDebitori().get(0);
@@ -101,6 +103,24 @@ class PosizioneDebitoriaMappingTest {
         assertThat(voceLetta.getIdDominio()).isEqualTo(99L);
         assertThat(voceLetta.getIdIbanAccredito()).isNull();
         assertThat(voceLetta.getDettaglioContabile()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("anomalo e descrizioneStato sopravvivono alla rilettura")
+    void anomaloEDescrizioneStatoSopravvivonoAllaRilettura() {
+        PosizioneDebitoria posizione = posizioneMinima();
+        posizione.setAnomalo(true);
+        posizione.setDescrizioneStato("Ricevuta acquisita su un'opzione di pagamento gia' annullata");
+        posizione.addSoggettoDebitore(soggetto(0, "RSSMRA80A01H501U", "Mario Rossi"));
+
+        em.persistAndFlush(posizione);
+        em.clear();
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
+
+        assertThat(riletta.isAnomalo()).isTrue();
+        assertThat(riletta.getDescrizioneStato())
+                .isEqualTo("Ricevuta acquisita su un'opzione di pagamento gia' annullata");
     }
 
     @Test
