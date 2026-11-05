@@ -1617,6 +1617,10 @@ public class PosizioneDebitoriaService {
      * pendenza, vedi {@link #registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente}).
      * Riusabile da qualunque caso che debba marcare l'aggregato come anomalo, non solo
      * dalla ricevuta su opzione annullata da canale concorrente.
+     * <p>Non accumula: una chiamata successiva sovrascrive {@code descrizioneStato} con
+     * l'ultimo motivo passato, sulla posizione resta visibile solo quest'ultimo. Lo storico
+     * delle segnalazioni, se serve, va ricostruito dagli eventi sul Giornale degli Eventi
+     * (un evento per ogni chiamata), non da questo campo.
      *
      * @param idApplicazione   identificativo numerico dell'applicazione proprietaria
      * @param idDominio        identificativo numerico del dominio
