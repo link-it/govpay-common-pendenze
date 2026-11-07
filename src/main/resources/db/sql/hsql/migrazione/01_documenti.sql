@@ -48,6 +48,15 @@ ALTER TABLE documenti ADD COLUMN data_ultimo_aggiornamento TIMESTAMP DEFAULT TIM
 -- senza che nessuno dei due veda le modifiche dell'altro.
 ALTER TABLE documenti ADD COLUMN versione BIGINT DEFAULT 0 NOT NULL;
 
+-- Scritta una sola volta da 06_opzioni_pagamento_documenti_esistenti.sql, nello stesso
+-- istante in cui un versamento del documento riceve il suo primo id_opzione_pagamento:
+-- true se almeno uno dei suoi versamenti era gia' stato comunicato ad ACA (vecchio IUPD
+-- per-pendenza) prima di quel momento. Nessun writer del batch ACA, legacy o v3, la
+-- tocca mai dopo: a differenza di data_ultima_comunicazione_aca, che entrambi
+-- sovrascrivono a ogni invio successivo, questo flag resta l'unica prova duratura della
+-- storia precedente alla migrazione.
+ALTER TABLE documenti ADD COLUMN aca_legacy BOOLEAN DEFAULT FALSE NOT NULL;
+
 -- Nessun vincolo aggiuntivo da aggiungere qui: l'identita' pubblica (idPosizioneDebitoria,
 -- l'IUPD standard pagoPA GPD) si deriva al volo da idA2A+idDominio+cod_documento, che
 -- incorpora gia' tutte e tre le colonne del vincolo legacy unique_documenti_1

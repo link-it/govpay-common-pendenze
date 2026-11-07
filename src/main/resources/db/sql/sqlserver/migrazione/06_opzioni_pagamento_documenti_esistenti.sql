@@ -9,6 +9,15 @@
 -- temporanee locali (#tmp, droppate automaticamente a fine sessione,
 -- comunque droppate esplicitamente in fondo).
 --
+-- documenti.aca_legacy: a differenza di PostgreSQL, qui non c'e' un singolo
+-- statement che aggancia e marca insieme (nessuna CTE scrivibile a
+-- disposizione). Lo stesso risultato si ottiene con una UPDATE finale, DOPO
+-- che entrambi i pattern A/B e C hanno gia' agganciato i rispettivi
+-- versamenti: id_opzione_pagamento diventa NOT NULL solo per le righe
+-- appena agganciate in questa stessa esecuzione (lo script non tocca mai
+-- righe gia' agganciate), quindi e' equivalente a leggere la provenienza
+-- legacy nello stesso istante dell'aggancio.
+--
 -- id e' IDENTITY (issue #10): non piu' pre-calcolabile con NEXT VALUE FOR
 -- come con la sequenza esplicita. L'id fisico generato dall'insert si
 -- recupera con la clausola OUTPUT, dentro una tabella temporanea creata
@@ -21,6 +30,7 @@ SELECT
     v.id_documento,
     v.cod_rata,
     v.stato_versamento,
+    v.data_ultima_comunicazione_aca,
     CASE WHEN v.cod_rata IS NULL THEN 1 ELSE 0 END AS flag_null,
     CASE WHEN v.cod_rata IS NOT NULL AND v.cod_rata NOT LIKE '%[^0-9]%' AND v.cod_rata NOT LIKE '0%'
          THEN 1 ELSE 0 END AS flag_numerico,
@@ -147,6 +157,21 @@ SET v.id_opzione_pagamento = idc.id,
 FROM versamenti v
 JOIN #tmp_vrs_soglia vs ON vs.id = v.id
 JOIN #tmp_vrs_soglia_id idc ON idc.id_opzione_pagamento = vs.id_opzione_pagamento;
+
+-- Vedi nota in testa al file: unico punto in cui si legge la provenienza
+-- legacy, dopo l'aggancio A/B e C, prima che il batch ACA possa aver
+-- scritto altro su data_ultima_comunicazione_aca.
+UPDATE d
+SET d.aca_legacy = 1
+FROM documenti d
+WHERE d.aca_legacy = 0
+  AND EXISTS (
+      SELECT 1 FROM #tmp_vrs_rata vr
+      JOIN versamenti v ON v.id = vr.id
+       WHERE vr.id_documento = d.id
+         AND v.id_opzione_pagamento IS NOT NULL
+         AND vr.data_ultima_comunicazione_aca IS NOT NULL
+  );
 
 -- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa

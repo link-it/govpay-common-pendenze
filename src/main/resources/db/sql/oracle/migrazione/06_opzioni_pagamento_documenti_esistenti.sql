@@ -7,6 +7,15 @@
 -- Oracle non supporta CTE scrivibili (niente "WITH cte AS (INSERT ...
 -- RETURNING ...) UPDATE ..." come in PostgreSQL): la classificazione viene
 -- materializzata in tabelle di appoggio (DROP alla fine).
+--
+-- documenti.aca_legacy: a differenza di PostgreSQL, qui non c'e' un singolo
+-- statement che aggancia e marca insieme (nessuna CTE scrivibile a
+-- disposizione). Lo stesso risultato si ottiene con una UPDATE finale,
+-- DOPO che entrambi i pattern A/B e C hanno gia' agganciato i rispettivi
+-- versamenti: id_opzione_pagamento diventa NOT NULL solo per le righe
+-- appena agganciate in questa stessa esecuzione (lo script non tocca mai
+-- righe gia' agganciate), quindi e' equivalente a leggere la provenienza
+-- legacy nello stesso istante dell'aggancio.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE tmp_vrs_rata AS
@@ -15,6 +24,7 @@ SELECT
     v.id_documento,
     v.cod_rata,
     v.stato_versamento,
+    v.data_ultima_comunicazione_aca,
     CASE WHEN v.cod_rata IS NULL THEN 1 ELSE 0 END AS flag_null,
     CASE WHEN REGEXP_LIKE(v.cod_rata, '^[1-9][0-9]*$') THEN 1 ELSE 0 END AS flag_numerico,
     CASE WHEN REGEXP_LIKE(v.cod_rata, '^[1-9][0-9]*$') THEN TO_NUMBER(v.cod_rata) END AS valore_numerico,
@@ -149,6 +159,20 @@ SET (id_opzione_pagamento, numero_rata) = (
     WHERE vs.id = v.id
 )
 WHERE v.id IN (SELECT id FROM tmp_vrs_soglia);
+
+-- Vedi nota in testa al file: unico punto in cui si legge la provenienza
+-- legacy, dopo l'aggancio A/B e C, prima che il batch ACA possa aver
+-- scritto altro su data_ultima_comunicazione_aca.
+UPDATE documenti d
+SET aca_legacy = 1
+WHERE d.aca_legacy = 0
+  AND EXISTS (
+      SELECT 1 FROM tmp_vrs_rata vr
+      JOIN versamenti v ON v.id = vr.id
+       WHERE vr.id_documento = d.id
+         AND v.id_opzione_pagamento IS NOT NULL
+         AND vr.data_ultima_comunicazione_aca IS NOT NULL
+  );
 
 -- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa

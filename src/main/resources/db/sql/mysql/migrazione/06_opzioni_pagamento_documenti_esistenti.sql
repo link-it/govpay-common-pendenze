@@ -9,6 +9,15 @@
 -- in tabelle temporanee di sessione (si eliminano da sole a fine sessione,
 -- comunque droppate esplicitamente in fondo).
 --
+-- documenti.aca_legacy: a differenza di PostgreSQL, qui non c'e' un singolo
+-- statement che aggancia e marca insieme (nessuna CTE scrivibile a
+-- disposizione). Lo stesso risultato si ottiene con una UPDATE finale, DOPO
+-- che entrambi i pattern A/B e C hanno gia' agganciato i rispettivi
+-- versamenti: id_opzione_pagamento diventa NOT NULL solo per le righe
+-- appena agganciate in questa stessa esecuzione (lo script non tocca mai
+-- righe gia' agganciate), quindi e' equivalente a leggere la provenienza
+-- legacy nello stesso istante dell'aggancio.
+--
 -- id_opzione_pagamento (BINARY(16)) e' generato con UNHEX(REPLACE(UUID(),
 -- '-', '')), non UUID_TO_BIN(UUID()): quest'ultima esiste solo su MySQL 8,
 -- non su MariaDB. id e' AUTO_INCREMENT (issue #10): non piu' pre-calcolabile
@@ -24,6 +33,7 @@ SELECT
     v.id_documento,
     v.cod_rata,
     v.stato_versamento,
+    v.data_ultima_comunicazione_aca,
     CASE WHEN v.cod_rata IS NULL THEN 1 ELSE 0 END AS flag_null,
     CASE WHEN v.cod_rata REGEXP '^[1-9][0-9]*$' THEN 1 ELSE 0 END AS flag_numerico,
     CASE WHEN v.cod_rata REGEXP '^[1-9][0-9]*$' THEN CAST(v.cod_rata AS UNSIGNED) END AS valore_numerico,
@@ -147,6 +157,20 @@ JOIN tmp_nuove_opzioni_c no ON no.id_versamento = v.id
 JOIN opzioni_pagamento op ON op.id_opzione_pagamento = no.id_opzione_pagamento
 SET v.id_opzione_pagamento = op.id,
     v.numero_rata = 1;
+
+-- Vedi nota in testa al file: unico punto in cui si legge la provenienza
+-- legacy, dopo l'aggancio A/B e C, prima che il batch ACA possa aver
+-- scritto altro su data_ultima_comunicazione_aca.
+UPDATE documenti d
+SET aca_legacy = true
+WHERE d.aca_legacy = false
+  AND EXISTS (
+      SELECT 1 FROM tmp_vrs_rata vr
+      JOIN versamenti v ON v.id = vr.id
+       WHERE vr.id_documento = d.id
+         AND v.id_opzione_pagamento IS NOT NULL
+         AND vr.data_ultima_comunicazione_aca IS NOT NULL
+  );
 
 -- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa

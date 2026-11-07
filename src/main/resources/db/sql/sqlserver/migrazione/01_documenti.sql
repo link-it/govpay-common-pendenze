@@ -52,6 +52,15 @@ ALTER TABLE documenti ADD data_ultimo_aggiornamento DATETIME2 NOT NULL DEFAULT '
 -- senza che nessuno dei due veda le modifiche dell'altro.
 ALTER TABLE documenti ADD versione BIGINT NOT NULL DEFAULT 0;
 
+-- Scritta una sola volta da 06_opzioni_pagamento_documenti_esistenti.sql, nello stesso
+-- istante in cui un versamento del documento riceve il suo primo id_opzione_pagamento:
+-- true se almeno uno dei suoi versamenti era gia' stato comunicato ad ACA (vecchio IUPD
+-- per-pendenza) prima di quel momento. Nessun writer del batch ACA, legacy o v3, la
+-- tocca mai dopo: a differenza di data_ultima_comunicazione_aca, che entrambi
+-- sovrascrivono a ogni invio successivo, questo flag resta l'unica prova duratura della
+-- storia precedente alla migrazione.
+ALTER TABLE documenti ADD aca_legacy BIT NOT NULL DEFAULT 0;
+
 -- Nessun vincolo aggiuntivo da aggiungere qui: l'identita' pubblica (idPosizioneDebitoria,
 -- l'IUPD standard pagoPA GPD) si deriva al volo da idA2A+idDominio+cod_documento, che
 -- incorpora gia' tutte e tre le colonne del vincolo legacy unique_documenti_1

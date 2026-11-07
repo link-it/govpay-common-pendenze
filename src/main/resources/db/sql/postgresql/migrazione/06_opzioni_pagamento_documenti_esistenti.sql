@@ -50,12 +50,24 @@
 -- dato anomalo segnalato dal report), ed e' indifferente l'ordine A/B
 -- rispetto a C (nessuno dei due pattern puo' matchare i versamenti dell'altro).
 --
--- Dialetto: PostgreSQL soltanto. A differenza di 05_documenti_orfani.sql,
--- qui non e' stata ancora scritta/verificata una traduzione per gli altri 4
--- dialetti: la classificazione usa espressioni regolari e funzioni finestra
--- la cui sintassi varia sensibilmente (es. FILTER non esiste su MySQL/
--- SQL Server, servirebbe riscriverla con CASE WHEN dentro COUNT) — da
--- valutare se e quando servira' davvero su quei motori.
+-- documenti.aca_legacy: entrambi i blocchi, nello stesso statement che
+-- aggancia i versamenti alla loro prima opzione, marcano il documento se
+-- almeno uno dei versamenti appena agganciati aveva gia' data_ultima_
+-- comunicazione_aca valorizzata (spedito ad ACA col vecchio IUPD per-
+-- pendenza, prima che esistesse un'opzione). E' l'unico istante in cui
+-- quella colonna e' ancora una fotografia pura della storia legacy: va
+-- letta qui, nello stesso statement che fa l'aggancio, non in un passo
+-- successivo (a quel punto il batch ACA l'avrebbe gia' sovrascritta).
+--
+-- Dialetto: PostgreSQL. Tradotto anche per oracle/mysql/sqlserver/hsql
+-- (stessa cartella migrazione/, stesso nome file): quelle traduzioni non
+-- usano CTE scrivibili (non disponibili sugli altri motori) ne' funzioni
+-- finestra (FILTER non esiste su MySQL/SQL Server; ROW_NUMBER() con
+-- PARTITION BY/ORDER BY non e' stato possibile su HSQLDB 2.7.3, verificato
+-- empiricamente - la numerazione posizionale usa invece una COUNT(*)
+-- correlata), e materializzano la classificazione in tabelle di appoggio
+-- al posto delle CTE. HSQLDB e' verificato contro un'istanza reale (2.7.3),
+-- oracle/mysql/sqlserver no (vedi l'intestazione di ciascun file).
 -- ---------------------------------------------------------------------------
 
 WITH versamenti_candidati AS (
@@ -126,13 +138,23 @@ nuove_opzioni AS (
     FROM documenti_eligibili de
     WHERE de.tipologia IS NOT NULL AND de.stato IS NOT NULL
     RETURNING id, id_documento
+),
+versamenti_agganciati AS (
+    UPDATE versamenti v
+    SET id_opzione_pagamento = no.id,
+        numero_rata = vn.numero_rata_calcolato
+    FROM nuove_opzioni no
+    JOIN versamenti_numerati vn ON vn.id_documento = no.id_documento
+    WHERE v.id = vn.id
+    RETURNING v.id_documento, v.data_ultima_comunicazione_aca
 )
-UPDATE versamenti v
-SET id_opzione_pagamento = no.id,
-    numero_rata = vn.numero_rata_calcolato
-FROM nuove_opzioni no
-JOIN versamenti_numerati vn ON vn.id_documento = no.id_documento
-WHERE v.id = vn.id;
+UPDATE documenti d
+SET aca_legacy = true
+WHERE EXISTS (
+    SELECT 1 FROM versamenti_agganciati va
+    WHERE va.id_documento = d.id
+      AND va.data_ultima_comunicazione_aca IS NOT NULL
+);
 
 -- ---------------------------------------------------------------------------
 -- Pattern C: ENTRO/OLTRE espliciti, inclusa la coppia RIDOTTO/SCONTATO
@@ -204,16 +226,26 @@ nuove_opzioni_soglia AS (
         now()
     FROM versamenti_soglia
     RETURNING id
-)
+),
 -- Il join con nuove_opzioni_soglia non e' solo logico: un CTE data-modifying
 -- in PostgreSQL esegue solo se e' effettivamente referenziato dalla query
 -- finale — senza questo join l'INSERT sopra non verrebbe mai eseguito.
-UPDATE versamenti v
-SET id_opzione_pagamento = vs.nuovo_id,
-    numero_rata = 1
-FROM versamenti_soglia vs
-JOIN nuove_opzioni_soglia nos ON nos.id = vs.nuovo_id
-WHERE v.id = vs.id;
+versamenti_agganciati_soglia AS (
+    UPDATE versamenti v
+    SET id_opzione_pagamento = vs.nuovo_id,
+        numero_rata = 1
+    FROM versamenti_soglia vs
+    JOIN nuove_opzioni_soglia nos ON nos.id = vs.nuovo_id
+    WHERE v.id = vs.id
+    RETURNING v.id_documento, v.data_ultima_comunicazione_aca
+)
+UPDATE documenti d
+SET aca_legacy = true
+WHERE EXISTS (
+    SELECT 1 FROM versamenti_agganciati_soglia va
+    WHERE va.id_documento = d.id
+      AND va.data_ultima_comunicazione_aca IS NOT NULL
+);
 
 -- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa
