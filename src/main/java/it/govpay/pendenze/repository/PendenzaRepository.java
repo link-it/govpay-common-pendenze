@@ -9,6 +9,7 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,8 +20,13 @@ import it.govpay.pendenze.model.StatoPendenza;
 
 /**
  * Repository Spring Data per {@link Pendenza}.
+ *
+ * <p>Estende {@link JpaSpecificationExecutor} per le ricerche libere dei back-office (es.
+ * govpay-console-api): filtri, visibilita' per operatore e paginazione restano nel chiamante,
+ * che li costruisce come {@code Specification<Pendenza>}, senza legare la libreria alle sue
+ * regole (issue #22).</p>
  */
-public interface PendenzaRepository extends JpaRepository<Pendenza, Long> {
+public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSpecificationExecutor<Pendenza> {
 
     /**
      * {@code from}+{@code where} condivisi da {@link #cercaFiltrate} (contenuto e conteggio) e
