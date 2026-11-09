@@ -38,7 +38,7 @@ Il modello è una posizione debitoria (`documenti`) con una o più opzioni di pa
 | [govpay-bom](https://github.com/link-it/govpay-bom) | build | sì | Parent Maven (`2.0.5-SNAPSHOT`): versioni delle dipendenze e dei plugin, compreso Spring Boot |
 | [govpay-common](https://github.com/link-it/govpay-common) | build e runtime | sì | Dipendenza diretta (`govpay-common.version`, oggi `2.0.4-SNAPSHOT`): `ApplicazioneRepository` e `DominioRepository` per risolvere `idA2A` e dominio, `IuvUtils` e `RisolutoreSegnaposto` per gli IUV, `DateTimePatterns` per il fuso orario di default, `TipoContabilita` per le voci |
 | Database di GovPay, schema 3.11.0 o successivo | runtime | sì | Tabelle scritte: `documenti`, `opzioni_pagamento`, `soggetti_debitori`, `versamenti`, `singoli_versamenti`, `id_messaggio_relativo` (progressivi IUV). Tabelle lette: `rpt`, `pagamenti`, `fr`, `rendicontazioni`, `notifiche` (i repository permettono anche di scriverle) e l'anagrafica `domini`, `applicazioni`. Lo schema è creato e aggiornato dagli script del core: vedi [Schema del database](#schema-del-database) |
-| Progetti che usano la libreria | build | - | Dipendenza diretta nel `pom.xml` (proprietà `govpay-common-pendenze.version`): [govpay-pendenze-api](https://github.com/link-it/govpay-pendenze-api), [govpay-pafornode-api](https://github.com/link-it/govpay-pafornode-api); [govpay-notify-batch](https://github.com/link-it/govpay-notify-batch) sul ramo `30-modello-dati-v3` |
+| Progetti che usano la libreria | build | - | Dipendenza diretta nel `pom.xml` (proprietà `govpay-common-pendenze.version`): [govpay-pendenze-api](https://github.com/link-it/govpay-pendenze-api), [govpay-pafornode-api](https://github.com/link-it/govpay-pafornode-api), [govpay-console-api](https://github.com/link-it/govpay-console-api) sul ramo `3.11`; [govpay-notify-batch](https://github.com/link-it/govpay-notify-batch) sul ramo `30-modello-dati-v3` |
 
 ## Compilazione
 
@@ -205,6 +205,7 @@ Le eccezioni sono tutte runtime; il livello REST le traduce (la colonna "Traduzi
 ### Ricerca e paginazione
 
 - `FiltriPendenze`, `FiltriRpt`: filtri di ricerca, un campo `null` disattiva il filtro.
+- `PendenzaRepository` estende anche `JpaSpecificationExecutor<Pendenza>`: i back-office (es. govpay-console-api) costruiscono le proprie ricerche libere con le `Specification`, compresi filtri, visibilità per operatore e paginazione, senza aggiungerli alla libreria.
 - `CriteriOrdinamento`: legge il parametro `sort` (`campo:asc,campo:desc`) con una mappa esplicita dei campi ordinabili.
 - `OffsetPageRequest` e `PaginaRisultati`: paginazione `offset`/`limit` con offset arbitrario.
 - `PaginaSenzaConteggio` e `CursorCodec`: pagine senza `COUNT(*)` e paginazione a cursore (base64 URL-safe di `<timestamp>|<id>`, non firmato).
