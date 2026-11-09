@@ -2,11 +2,11 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "3.11.x" ]
     tags:
       - "[0-9]*" # tag che iniziano con un numero (validiamo X.Y.Z nel job release)
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "3.11.x" ]
 
 permissions:
   contents: write
@@ -158,7 +158,7 @@ jobs:
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.5"
     with:
       matrix-property: ''
-      fail-on-vuln: ${{ github.ref_name == 'main' || github.ref_type == 'tag' }}
+      fail-on-vuln: ${{ github.ref_name == 'main' || github.ref_name == '3.11.x' || github.ref_type == 'tag' }}
       results-file-name: osv-report.sarif
       scan-args: |-
         -r
@@ -218,7 +218,7 @@ jobs:
     if: >-
       vars.DISABLE_DTRACK_UPLOAD_JOB != 'true' &&
       (github.ref_type == 'tag' ||
-       github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'staging' ||
+       github.ref_name == 'main' || github.ref_name == '3.11.x' || github.ref_name == 'master' || github.ref_name == 'staging' ||
        vars.FORCE_DTRACK_UPLOAD_JOB == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -226,7 +226,7 @@ jobs:
       contents: read
     # Come su GitLab, il fallimento blocca solo le esecuzioni su tag e sui
     # branch protetti; le esecuzioni forzate sono tolleranti.
-    continue-on-error: ${{ github.ref_type != 'tag' && github.ref_name != 'main' && github.ref_name != 'master' && github.ref_name != 'staging' }}
+    continue-on-error: ${{ github.ref_type != 'tag' && github.ref_name != 'main' && github.ref_name != '3.11.x' && github.ref_name != 'master' && github.ref_name != 'staging' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -267,7 +267,7 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "latest=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "master" ] || [ "${{ github.ref_name }}" = "staging" ]; then
+          elif [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "3.11.x" ] || [ "${{ github.ref_name }}" = "master" ] || [ "${{ github.ref_name }}" = "staging" ]; then
             echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "latest=false" >> "$GITHUB_OUTPUT"
           else
@@ -289,7 +289,7 @@ jobs:
             "${WORKSPACE}/sbom/cyclonedx/bom.cdx.json" \
             "GovPay-Backend"
 
-  # ── Deploy SNAPSHOT su Maven Central (solo push su main) ─────────────
+  # ── Deploy SNAPSHOT su Maven Central (solo push su main e sui rami di linea) ─────────────
   snapshot-on-main:
     needs: [ build, osv-scan, sbom ]
     if: startsWith(github.ref, 'refs/heads/')
