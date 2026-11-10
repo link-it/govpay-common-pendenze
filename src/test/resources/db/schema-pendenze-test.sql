@@ -676,6 +676,8 @@ CREATE TABLE IF NOT EXISTS domini (
     scarica_fr BOOLEAN NOT NULL,
     id_stazione BIGINT,
     id_applicazione_default BIGINT,
+    -- Colonna di DominioEntity (govpay-common 3.11.x, pagamentoSito).
+    pagamento_sito BOOLEAN NOT NULL DEFAULT false,
     CONSTRAINT uk_domini_cod UNIQUE (cod_dominio),
     CONSTRAINT fk_domini_stazione FOREIGN KEY (id_stazione) REFERENCES stazioni(id)
 );
