@@ -2,6 +2,8 @@ package it.govpay.pendenze.service;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -12,8 +14,11 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.Set;
 import it.govpay.pendenze.comando.AggiornamentoPendenza;
+import it.govpay.pendenze.comando.DatiAggiornamentoDebitore;
+import it.govpay.pendenze.comando.DatiPdDebitore;
 import it.govpay.pendenze.comando.AggiornamentoPosizioneDebitoria;
 import it.govpay.pendenze.comando.DatiOpzionePagamento;
+import it.govpay.pendenze.comando.DatiOpzionePagamentoDebitore;
 import it.govpay.pendenze.comando.DatiPendenza;
 import it.govpay.pendenze.comando.DatiPosizioneDebitoria;
 import it.govpay.pendenze.comando.DatiVocePendenza;
@@ -41,7 +46,7 @@ import it.govpay.pendenze.criteri.PaginaSenzaConteggio;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.ModificaConcorrenteException;
 import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
@@ -49,9 +54,7 @@ import it.govpay.pendenze.exception.RisorsaNonTrovataException;
 import it.govpay.pendenze.exception.TransizioneStatoNonAmmessaException;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.identificativo.IdentificatorePosizioneDebitoria;
-import it.govpay.pendenze.identificativo.IdentificatorePosizioneDebitoria.ComponentiIdentificativo;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
-import it.govpay.pendenze.model.StatoPagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 import it.govpay.pendenze.repository.OpzionePagamentoRepository;
@@ -345,7 +348,7 @@ public class PosizioneDebitoriaService {
     }
 
     /**
-     * Assegna {@code ordine} (0-based, sui soggetti) e {@code numeroRata} (1-based, sulle
+     * Assegna {@code posizione} (0-based, sui debitori) e {@code numeroRata} (1-based, sulle
      * pendenze di ciascuna opzione) dalla posizione nelle rispettive liste. Sovrascrive
      * sempre, anche se il chiamante li aveva gia' valorizzati: nessuno dei due e'
      * scrivibile in API (per {@code numeroRata} lo YAML lo dice esplicitamente), quindi
@@ -354,8 +357,8 @@ public class PosizioneDebitoriaService {
      */
     private void assegnaIndici(PosizioneDebitoria posizione) {
         int ordine = 0;
-        for (SoggettoDebitore soggetto : posizione.getSoggettiDebitori()) {
-            soggetto.setOrdine(ordine++);
+        for (PdDebitore pdDebitore : posizione.getPdDebitori()) {
+            pdDebitore.setPosizione(ordine++);
         }
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
             int numeroRata = 1;
@@ -462,61 +465,43 @@ public class PosizioneDebitoriaService {
                             + pendenza.getNumeroAvviso() + "] e nessun " + GeneratoreIuv.class.getSimpleName()
                             + " e' configurato nel contesto per ricavarne lo iuv");
         }
-        return generatore.convertiDaNumeroAvviso(posizione.getIdDominio(), pendenza.getNumeroAvviso());
+        try {
+            return generatore.convertiDaNumeroAvviso(posizione.getIdDominio(), pendenza.getNumeroAvviso());
+        } catch (IllegalArgumentException e) {
+            // numeroAvviso indicato dal chiamante e non valido per il dominio (check digit,
+            // AuxDigit, ...): un errore del chiamante, non un errore interno.
+            throw new ValidazioneNonSuperataException("numeroAvviso della pendenza ["
+                    + pendenza.getIdPendenza() + "] non valido: " + e.getMessage());
+        }
+    }
+
+    private void assegnaOValidaNavNotifica(PosizioneDebitoria posizione) {
+        posizione.getPdDebitori().forEach(this::assegnaOValidaNavNotifica);
     }
 
     /**
-     * Se {@link PosizioneDebitoria#getNavNotifica()} è già valorizzato, verifica che
-     * corrisponda al {@code numeroAvviso} di una pendenza della posizione (semantica
-     * dello YAML v3: "GovPay lo verifica e rifiuta la richiesta se non corrisponde a
-     * nessuna"). Se è assente e {@link PosizioneDebitoria#isNotificaSend()} è attivo, lo
-     * assegna automaticamente: alla pendenza dell'opzione {@code SOLUZIONE_UNICA} se
-     * presente, altrimenti alla rata 1 dell'unico {@code PIANO_RATEALE} (stessa
-     * semantica). Se nessuno dei due casi noti si applica (es. solo opzioni
-     * {@code SOLUZIONE_UNICA_ENTRO}/{@code OLTRE}) la creazione viene rifiutata: la regola
-     * non copre esplicitamente questo caso, e persistere {@code notificaSend} attivo con
-     * {@code navNotifica} nullo sarebbe una configurazione incompleta accettata in
-     * silenzio — meglio richiedere che il chiamante lo indichi esplicitamente.
+     * Se {@link PdDebitore#isNotificaSendPayed()} e' attivo il {@code navNotifica} del debitore
+     * e' obbligatorio: non viene assegnato in automatico, e' il NAV a cui l'Ente ha agganciato
+     * le spese di notifica. Se indicato, deve corrispondere al {@code numeroAvviso} di una
+     * pendenza dello stesso debitore.
      */
-    private void assegnaOValidaNavNotifica(PosizioneDebitoria posizione) {
-        if (posizione.getNavNotifica() != null) {
-            boolean corrisponde = posizione.getOpzioniPagamento().stream()
-                    .flatMap(o -> o.getPendenze().stream())
-                    .anyMatch(p -> posizione.getNavNotifica().equals(p.getNumeroAvviso()));
-            if (!corrisponde) {
+    private void assegnaOValidaNavNotifica(PdDebitore pdDebitore) {
+        if (pdDebitore.getNotificaSendNav() == null) {
+            if (pdDebitore.isNotificaSendPayed()) {
                 throw new ValidazioneNonSuperataException(
-                        "navNotifica [" + posizione.getNavNotifica()
-                                + "] non corrisponde al numeroAvviso di alcuna pendenza della posizione");
+                        "navNotifica e' obbligatorio per il debitore ["
+                                + pdDebitore.getDebitore().getIdentificativo() + "] con notificaSend attivo");
             }
             return;
         }
-
-        if (!posizione.isNotificaSend()) {
-            return;
-        }
-
-        Optional<Pendenza> candidata = posizione.getOpzioniPagamento().stream()
-                .filter(o -> o.getTipologia() == TipologiaOpzionePagamento.SOLUZIONE_UNICA)
+        boolean corrisponde = pdDebitore.getOpzioniPagamento().stream()
                 .flatMap(o -> o.getPendenze().stream())
-                .findFirst()
-                .or(() -> posizione.getOpzioniPagamento().stream()
-                        .filter(o -> o.getTipologia() == TipologiaOpzionePagamento.PIANO_RATEALE)
-                        .flatMap(o -> o.getPendenze().stream())
-                        .filter(p -> p.getNumeroRata() == 1)
-                        .findFirst());
-
-        if (candidata.isEmpty()) {
-            // Nessuna SOLUZIONE_UNICA ne' PIANO_RATEALE (es. solo ENTRO/OLTRE): la regola
-            // nota non copre questo caso. Meglio rifiutare esplicitamente e richiedere un
-            // navNotifica indicato dal chiamante che accettare in silenzio notificaSend
-            // attivo con navNotifica nullo — una configurazione incompleta persistita
-            // senza errore sarebbe peggio di un rifiuto.
+                .anyMatch(p -> pdDebitore.getNotificaSendNav().equals(p.getNumeroAvviso()));
+        if (!corrisponde) {
             throw new ValidazioneNonSuperataException(
-                    "notificaSend e' attivo ma non e' possibile assegnare automaticamente navNotifica "
-                            + "(nessuna opzione SOLUZIONE_UNICA o PIANO_RATEALE nella posizione): indicare "
-                            + "esplicitamente navNotifica");
+                    "navNotifica [" + pdDebitore.getNotificaSendNav()
+                            + "] non corrisponde al numeroAvviso di alcuna pendenza del debitore");
         }
-        posizione.setNavNotifica(candidata.get().getNumeroAvviso());
     }
 
     @Transactional(readOnly = true)
@@ -561,10 +546,10 @@ public class PosizioneDebitoriaService {
     /**
      * Legge una pendenza per chiave con il grafo che serve a chi la usa fuori transazione
      * (es. govpay-notify-batch per la sezione {@code pendenza} della ricevuta): voci,
-     * opzione di pagamento, posizione debitoria e soggetti debitori della posizione, tutti
+     * opzione di pagamento, posizione debitoria e debitori della posizione, tutti
      * gia' caricati e navigabili anche dopo la chiusura della sessione.
      *
-     * <p>Due query invece di una: voci e soggetti debitori sono entrambe {@code List} e non
+     * <p>Due query invece di una: voci e debitori sono entrambe {@code List} e non
      * possono stare nello stesso fetch join (vedi
      * {@link PendenzaRepository#findByIdConVociEOpzione}). La seconda query deve girare nella
      * stessa transazione della prima per riempire la stessa istanza della posizione: per
@@ -584,7 +569,7 @@ public class PosizioneDebitoriaService {
         Optional<Pendenza> pendenza = pendenzaRepository.findByIdConVociEOpzione(id);
         pendenza.map(Pendenza::getOpzionePagamento)
                 .map(OpzionePagamento::getPosizioneDebitoria)
-                .ifPresent(posizioneDebitoriaRepository::caricaSoggettiDebitori);
+                .ifPresent(posizioneDebitoriaRepository::caricaDebitori);
         return pendenza;
     }
 
@@ -603,7 +588,6 @@ public class PosizioneDebitoriaService {
         applicaAggiornamento(posizione, comando);
 
         ValidatorePosizioneDebitoria.valida(posizione);
-        assegnaOValidaNavNotifica(posizione);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         posizione.setDataUltimoAggiornamento(adesso);
@@ -637,32 +621,23 @@ public class PosizioneDebitoriaService {
             posizione.setDescrizione(descrizione);
         }
         if (comando.dataPubblicazione().presente()) posizione.setDataPubblicazione(comando.dataPubblicazione().valore());
-        if (comando.notificaSend().presente()) {
-            if (comando.notificaSend().valore() == null) {
-                throw new ValidazioneNonSuperataException("'notificaSend' non puo' essere nullo");
-            }
-            posizione.setNotificaSend(comando.notificaSend().valore());
-        }
-        if (comando.navNotifica().presente()) posizione.setNavNotifica(comando.navNotifica().valore());
-        if (comando.soggettiDebitori().presente()) {
-            if (comando.soggettiDebitori().valore() == null || comando.soggettiDebitori().valore().isEmpty()) {
-                throw new ValidazioneNonSuperataException("la posizione debitoria deve avere almeno un soggetto debitore");
-            }
-            posizione.sostituisciSoggettiDebitori(comando.soggettiDebitori().valore().stream()
-                    .map(ApplicatoreComandi::soggettoDebitore).toList());
-        }
     }
 
     /**
-     * Aggiunge un'alternativa DISPONIBILE a una posizione senza opzioni ATTIVATE.
-     * Il comando contiene i soli dati di creazione. Dominio e applicazione delle
-     * pendenze sono assegnati dal servizio in base alla posizione proprietaria.
-     * <p>Gli identificativi vengono assegnati PRIMA di collegare la nuova opzione
+     * Aggiunge un'alternativa DISPONIBILE a ciascun debitore di una posizione senza opzioni
+     * ATTIVATE. Il comando porta un'opzione per debitore, abbinata tramite l'identificativo
+     * fiscale, e deve coprire tutti i debitori della posizione e nessun altro: ogni debitore
+     * ha NAV e pendenze propri, quindi le opzioni non possono essere copie. Il comando
+     * contiene i soli dati di creazione. Dominio e applicazione delle pendenze sono assegnati
+     * dal servizio in base alla posizione proprietaria.
+     * <p>Gli identificativi vengono assegnati PRIMA di collegare le nuove opzioni
      * all'aggregato gestito: le query di unicita possono provocare un autoflush JPA,
      * che non deve trovare entita parzialmente inizializzate.</p>
+     *
+     * @return le nuove opzioni, nello stesso ordine dei debitori della posizione
      */
-    public OpzionePagamento aggiungiOpzionePagamento(String idA2A, String idPosizioneDebitoria,
-            DatiOpzionePagamento comando) {
+    public List<OpzionePagamento> aggiungiOpzionePagamento(String idA2A, String idPosizioneDebitoria,
+            List<DatiOpzionePagamentoDebitore> comando) {
         PosizioneDebitoria posizione = trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria)
                 .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
                         + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
@@ -682,45 +657,35 @@ public class PosizioneDebitoriaService {
                     + "possibile aggiungere alternative");
         }
 
-        OpzionePagamento nuovaOpzione = ApplicatoreComandi.opzionePagamento(comando);
+        Map<String, DatiOpzionePagamento> perDebitore = new HashMap<>();
+        for (DatiOpzionePagamentoDebitore dati : comando) {
+            if (perDebitore.put(dati.identificativoDebitore(), dati.opzionePagamento()) != null) {
+                throw new ValidazioneNonSuperataException("piu' opzioni indicate per il debitore ["
+                        + dati.identificativoDebitore() + "]");
+            }
+        }
+        Set<String> identificativiPosizione = posizione.getPdDebitori().stream()
+                .map(d -> d.getDebitore().getIdentificativo()).collect(Collectors.toSet());
+        if (!perDebitore.keySet().equals(identificativiPosizione)) {
+            throw new ValidazioneNonSuperataException("il comando deve indicare un'opzione per ciascun debitore "
+                    + "della posizione e nessun altro: debitori della posizione " + identificativiPosizione
+                    + ", debitori indicati " + perDebitore.keySet());
+        }
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
-
-        if (nuovaOpzione.getIdOpzionePagamento() == null) {
-            nuovaOpzione.setIdOpzionePagamento(UUID.randomUUID());
-        }
-        if (nuovaOpzione.getStato() == null) {
-            nuovaOpzione.setStato(StatoOpzionePagamento.DISPONIBILE);
-        }
-        nuovaOpzione.setDataCreazione(adesso);
-        nuovaOpzione.setDataUltimoAggiornamento(adesso);
-
-        int numeroRata = 1;
-        for (Pendenza pendenza : nuovaOpzione.getPendenze()) {
-            pendenza.setNumeroRata(numeroRata++);
-            pendenza.setDataCreazione(adesso);
-            pendenza.setDataUltimoAggiornamento(adesso);
-            pendenza.setDataUltimaModificaAca(adesso);
-            // Stesso principio di crea(): IUV/NAV sono univoci per dominio, la pendenza deve
-            // portare lo stesso dominio della posizione.
-            pendenza.setIdDominio(posizione.getIdDominio());
-                pendenza.setIdApplicazione(posizione.getIdApplicazione());
-
-            int indice = 1;
-            for (VocePendenza voce : pendenza.getVoci()) {
-                voce.setIndice(indice++);
-                if (voce.getIdDominio() == null) {
-                    voce.setIdDominio(posizione.getIdDominio());
-                }
-            }
-
-            // Ancora una pendenza autonoma, non collegata a "posizione" (entita' gestita):
-            // vedi Javadoc del metodo sul perche' l'ordine e' importante.
-            verificaIdPendenzaNonDuplicato(posizione, pendenza);
-            assegnaIdentificativiPagamento(posizione, pendenza);
+        List<OpzionePagamento> nuoveOpzioni = new ArrayList<>();
+        List<PdDebitore> destinatari = new ArrayList<>();
+        for (PdDebitore pdDebitore : posizione.getPdDebitori()) {
+            OpzionePagamento nuovaOpzione = ApplicatoreComandi.opzionePagamento(
+                    perDebitore.get(pdDebitore.getDebitore().getIdentificativo()));
+            preparaNuovaOpzione(posizione, nuovaOpzione, adesso);
+            nuoveOpzioni.add(nuovaOpzione);
+            destinatari.add(pdDebitore);
         }
 
-        posizione.addOpzionePagamento(nuovaOpzione);
+        for (int i = 0; i < nuoveOpzioni.size(); i++) {
+            destinatari.get(i).addOpzionePagamento(nuoveOpzioni.get(i));
+        }
 
         ValidatorePosizioneDebitoria.valida(posizione);
 
@@ -743,11 +708,220 @@ public class PosizioneDebitoriaService {
         } catch (DataIntegrityViolationException e) {
             if (violaVincolo(e, VINCOLO_UNICITA_ID_PENDENZA)) {
                 throw new RisorsaGiaEsistenteException(
-                        "la nuova opzione ha una pendenza con idPendenza gia' usato da questa applicazione");
+                        "una nuova opzione ha una pendenza con idPendenza gia' usato da questa applicazione");
             }
             throw e;
         }
-        return nuovaOpzione;
+        return nuoveOpzioni;
+    }
+
+    // ── Debitori di una posizione esistente ──────────────────────────────────
+
+    private PosizioneDebitoria trovaPosizione(String idA2A, String idPosizioneDebitoria) {
+        return trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria)
+                .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
+                        + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
+    }
+
+    private PdDebitore trovaDebitoreAttivo(PosizioneDebitoria posizione, String idPosizioneDebitoria,
+            String identificativoDebitore) {
+        return posizione.getPdDebitori().stream()
+                .filter(d -> d.getDebitore().getIdentificativo().equals(identificativoDebitore))
+                .findFirst()
+                .orElseThrow(() -> new RisorsaNonTrovataException("nessun debitore [" + identificativoDebitore
+                        + "] nella posizione debitoria [" + idPosizioneDebitoria + "]"));
+    }
+
+    private void salvaDebitori(PosizioneDebitoria posizione, String idPosizioneDebitoria) {
+        try {
+            posizioneDebitoriaRepository.saveAndFlush(posizione);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            throw new ModificaConcorrenteException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] e' stata modificata concorrentemente: riprovare");
+        } catch (DataIntegrityViolationException e) {
+            if (violaVincolo(e, VINCOLO_UNICITA_ID_PENDENZA)) {
+                throw new RisorsaGiaEsistenteException(
+                        "una pendenza ha un idPendenza gia' usato da questa applicazione");
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Aggiunge un debitore, con le sue opzioni di pagamento, a una posizione esistente. Stesse
+     * validazioni della creazione: almeno un'opzione, identificativo univoco tra i debitori
+     * attivi, {@code navNotifica} coerente. Rifiutata se la posizione ha gia' un'opzione
+     * {@code ATTIVATA}: le nuove opzioni sarebbero alternative mai passate dall'annullamento
+     * automatico, come per {@link #aggiungiOpzionePagamento}. La corrispondenza con le opzioni
+     * degli altri debitori non e' verificata.
+     *
+     * @return il debitore aggiunto
+     */
+    public PdDebitore aggiungiDebitore(String idA2A, String idPosizioneDebitoria, DatiPdDebitore comando) {
+        PosizioneDebitoria posizione = trovaPosizione(idA2A, idPosizioneDebitoria);
+        if (posizione.getOpzioniPagamento().stream().anyMatch(o -> o.getStato() == StatoOpzionePagamento.ATTIVATA)) {
+            throw new TransizioneStatoNonAmmessaException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] ha gia' un'opzione di pagamento ATTIVATA (pagamento gia' eseguito): non e' piu' "
+                    + "possibile aggiungere un debitore");
+        }
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        PdDebitore nuovo = ApplicatoreComandi.pdDebitore(comando);
+        for (OpzionePagamento opzione : nuovo.getOpzioniPagamento()) {
+            preparaNuovaOpzione(posizione, opzione, adesso);
+        }
+        nuovo.setPosizione(posizione.getPdDebitoriInclusiRimossi().stream()
+                .mapToInt(PdDebitore::getPosizione).max().orElse(-1) + 1);
+        assegnaOValidaNavNotifica(nuovo);
+        posizione.addPdDebitore(nuovo);
+
+        ValidatorePosizioneDebitoria.valida(posizione);
+
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+        salvaDebitori(posizione, idPosizioneDebitoria);
+        return nuovo;
+    }
+
+    /**
+     * Modifica anagrafica e notifica SEND di un debitore attivo, identificato dal suo
+     * {@code identificativo}. {@code tipo} e {@code identificativo} sono modificabili; il nuovo
+     * identificativo deve restare univoco tra i debitori attivi della posizione. La posizione e
+     * le pendenze del debitore sono marcate per ACA.
+     *
+     * @return il debitore modificato
+     */
+    public PdDebitore aggiornaDebitore(String idA2A, String idPosizioneDebitoria, String identificativoDebitore,
+            DatiAggiornamentoDebitore comando) {
+        PosizioneDebitoria posizione = trovaPosizione(idA2A, idPosizioneDebitoria);
+        PdDebitore pdDebitore = trovaDebitoreAttivo(posizione, idPosizioneDebitoria, identificativoDebitore);
+        it.govpay.pendenze.entity.Debitore debitore = pdDebitore.getDebitore();
+
+        if (comando.tipo().presente()) {
+            if (comando.tipo().valore() == null) {
+                throw new ValidazioneNonSuperataException("'tipo' del debitore non puo' essere azzerato");
+            }
+            debitore.setTipo(comando.tipo().valore());
+        }
+        if (comando.identificativo().presente()) {
+            String nuovo = comando.identificativo().valore();
+            if (nuovo == null || nuovo.isBlank() || nuovo.length() > 35) {
+                throw new ValidazioneNonSuperataException(
+                        "'identificativo' del debitore deve contenere da 1 a 35 caratteri");
+            }
+            debitore.setIdentificativo(nuovo);
+        }
+        if (comando.anagrafica().presente()) debitore.setAnagrafica(comando.anagrafica().valore());
+        if (comando.indirizzo().presente()) debitore.setIndirizzo(comando.indirizzo().valore());
+        if (comando.civico().presente()) debitore.setCivico(comando.civico().valore());
+        if (comando.cap().presente()) debitore.setCap(comando.cap().valore());
+        if (comando.localita().presente()) debitore.setLocalita(comando.localita().valore());
+        if (comando.provincia().presente()) debitore.setProvincia(comando.provincia().valore());
+        if (comando.nazione().presente()) debitore.setNazione(comando.nazione().valore());
+        if (comando.email().presente()) debitore.setEmail(comando.email().valore());
+        if (comando.cellulare().presente()) debitore.setCellulare(comando.cellulare().valore());
+        if (comando.notificaSend().presente()) {
+            if (comando.notificaSend().valore() == null) {
+                throw new ValidazioneNonSuperataException("'notificaSend' del debitore non puo' essere azzerato");
+            }
+            pdDebitore.setNotificaSendPayed(comando.notificaSend().valore());
+        }
+        if (comando.navNotifica().presente()) pdDebitore.setNotificaSendNav(comando.navNotifica().valore());
+
+        assegnaOValidaNavNotifica(pdDebitore);
+        ValidatorePosizioneDebitoria.valida(posizione);
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+        for (OpzionePagamento opzione : pdDebitore.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                pendenza.setDataUltimaModificaAca(adesso);
+            }
+        }
+        salvaDebitori(posizione, idPosizioneDebitoria);
+        return pdDebitore;
+    }
+
+    /**
+     * Rimozione logica di un debitore: le sue opzioni diventano {@code ANNULLATA}, le sue
+     * pendenze {@code ANNULLATO}, e il debitore e' marcato rimosso (ignorato da letture e
+     * ricerche). Nessuna eliminazione fisica: {@code idPendenza} e {@code numeroAvviso} delle sue
+     * pendenze restano occupati. La posizione e le pendenze sono marcate per ACA.
+     *
+     * @throws TransizioneStatoNonAmmessaException se e' l'unico debitore attivo, o se la
+     *         posizione ha un'opzione {@code ATTIVATA} o una pendenza eseguita
+     */
+    public void rimuoviDebitore(String idA2A, String idPosizioneDebitoria, String identificativoDebitore) {
+        PosizioneDebitoria posizione = trovaPosizione(idA2A, idPosizioneDebitoria);
+        PdDebitore pdDebitore = trovaDebitoreAttivo(posizione, idPosizioneDebitoria, identificativoDebitore);
+
+        if (posizione.getPdDebitori().size() < 2) {
+            throw new TransizioneStatoNonAmmessaException("il debitore [" + identificativoDebitore
+                    + "] e' l'unico della posizione debitoria [" + idPosizioneDebitoria + "]: non si puo' rimuovere");
+        }
+        boolean pagata = posizione.getOpzioniPagamento().stream()
+                .anyMatch(o -> o.getStato() == StatoOpzionePagamento.ATTIVATA
+                        || o.getPendenze().stream().anyMatch(PosizioneDebitoriaService::pendenzaEseguita));
+        if (pagata) {
+            throw new TransizioneStatoNonAmmessaException("la posizione debitoria [" + idPosizioneDebitoria
+                    + "] ha gia' un pagamento registrato (opzione ATTIVATA o pendenza eseguita): non si puo' "
+                    + "rimuovere un debitore");
+        }
+        entityManager.lock(posizione, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        for (OpzionePagamento opzione : pdDebitore.getOpzioniPagamento()) {
+            opzione.setStato(StatoOpzionePagamento.ANNULLATA);
+            opzione.setDataUltimoAggiornamento(adesso);
+            marcaModificaAca(opzione, adesso);
+            cascataStatoPendenze(opzione, StatoPendenza.ANNULLATO, adesso);
+        }
+        pdDebitore.setDataRimozione(adesso);
+
+        ValidatorePosizioneDebitoria.validaStati(posizione);
+
+        posizione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimaModificaAca(adesso);
+        salvaDebitori(posizione, idPosizioneDebitoria);
+    }
+
+    /** Valorizza id, stato, date e identificativi di una nuova opzione e delle sue pendenze. */
+    private void preparaNuovaOpzione(PosizioneDebitoria posizione, OpzionePagamento nuovaOpzione,
+            OffsetDateTime adesso) {
+        if (nuovaOpzione.getIdOpzionePagamento() == null) {
+            nuovaOpzione.setIdOpzionePagamento(UUID.randomUUID());
+        }
+        if (nuovaOpzione.getStato() == null) {
+            nuovaOpzione.setStato(StatoOpzionePagamento.DISPONIBILE);
+        }
+        nuovaOpzione.setDataCreazione(adesso);
+        nuovaOpzione.setDataUltimoAggiornamento(adesso);
+
+        int numeroRata = 1;
+        for (Pendenza pendenza : nuovaOpzione.getPendenze()) {
+            pendenza.setNumeroRata(numeroRata++);
+            pendenza.setDataCreazione(adesso);
+            pendenza.setDataUltimoAggiornamento(adesso);
+            pendenza.setDataUltimaModificaAca(adesso);
+            // Stesso principio di crea(): IUV/NAV sono univoci per dominio, la pendenza deve
+            // portare lo stesso dominio della posizione.
+            pendenza.setIdDominio(posizione.getIdDominio());
+            pendenza.setIdApplicazione(posizione.getIdApplicazione());
+
+            int indice = 1;
+            for (VocePendenza voce : pendenza.getVoci()) {
+                voce.setIndice(indice++);
+                if (voce.getIdDominio() == null) {
+                    voce.setIdDominio(posizione.getIdDominio());
+                }
+            }
+
+            // Ancora una pendenza autonoma, non collegata a "posizione" (entita' gestita):
+            // vedi Javadoc del metodo sul perche' l'ordine e' importante.
+            verificaIdPendenzaNonDuplicato(posizione, pendenza);
+            assegnaIdentificativiPagamento(posizione, pendenza);
+        }
     }
 
     /**
@@ -821,8 +995,8 @@ public class PosizioneDebitoriaService {
     /**
      * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3):
      * {@code idDebitore} e' l'unico criterio di ricerca ammesso, oltre a {@code idA2A}. Trova
-     * la posizione se l'identificativo corrisponde a qualunque soggetto in
-     * {@code soggettiDebitori}, non solo al primo.
+     * la posizione se l'identificativo corrisponde a qualunque debitore in
+     * {@code pdDebitori}, non solo al primo.
      *
      * @param idA2A      identificativo del gestionale responsabile
      * @param idDebitore identificativo (codice fiscale/partita IVA) di un soggetto debitore
@@ -836,7 +1010,7 @@ public class PosizioneDebitoriaService {
         if (idApplicazione.isEmpty()) {
             return new PaginaRisultati<>(List.of(), pageable.getOffset(), pageable.getPageSize(), 0);
         }
-        return paginaDa(posizioneDebitoriaRepository.findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(
+        return paginaDa(posizioneDebitoriaRepository.findDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(
                 idApplicazione.get(), idDebitore, pageable), pageable);
     }
 
@@ -901,7 +1075,7 @@ public class PosizioneDebitoriaService {
         Pageable pageablePiuUno = OffsetPageRequest.of(pageable.getOffset(), pageable.getPageSize() + 1,
                 pageable.getSort());
         List<PosizioneDebitoria> grezzi = posizioneDebitoriaRepository
-                .findAllDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(idApplicazione.get(), idDebitore,
+                .findAllDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(idApplicazione.get(), idDebitore,
                         pageablePiuUno);
         return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
     }
@@ -909,7 +1083,7 @@ public class PosizioneDebitoriaService {
     /**
      * Paginazione a cursore (keyset) per le posizioni debitorie di un debitore, ordinamento
      * fisso {@code dataCreazione DESC, id DESC} — vedi Javadoc di
-     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndSoggettiDebitori_IdentificativoDaCursore}.
+     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndPdDebitori_Debitore_IdentificativoDaCursore}.
      *
      * @param cursorDataCreazione {@code dataCreazione} dell'ultimo elemento della pagina
      *                            precedente, o {@code null} alla prima pagina
@@ -924,7 +1098,7 @@ public class PosizioneDebitoriaService {
             return new PaginaSenzaConteggio<>(List.of(), false);
         }
         List<PosizioneDebitoria> grezzi = posizioneDebitoriaRepository
-                .findByIdApplicazioneAndSoggettiDebitori_IdentificativoDaCursore(idApplicazione.get(), idDebitore,
+                .findByIdApplicazioneAndPdDebitori_Debitore_IdentificativoDaCursore(idApplicazione.get(), idDebitore,
                         cursorDataCreazione, cursorId, OffsetPageRequest.of(0, limit + 1));
         return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, limit);
     }
@@ -1221,6 +1395,12 @@ public class PosizioneDebitoriaService {
      */
     private OpzionePagamento ripristina(UUID idOpzionePagamento) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
+
+        if (opzione.getPdDebitore().isRimosso()) {
+            throw new TransizioneStatoNonAmmessaException(
+                    "l'opzione di pagamento [" + idOpzionePagamento + "] appartiene a un debitore rimosso: "
+                            + "non puo' essere ripristinata");
+        }
 
         if (opzione.getStato() == StatoOpzionePagamento.ATTIVATA) {
             throw new TransizioneStatoNonAmmessaException(
@@ -1662,6 +1842,10 @@ public class PosizioneDebitoriaService {
      */
     public Pendenza aggiornaPendenza(String idA2A, String idPendenza, AggiornamentoPendenza comando) {
         Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
+        if (pendenza.getOpzionePagamento().getPdDebitore().isRimosso()) {
+            throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza
+                    + "] appartiene a un debitore rimosso: non puo' essere aggiornata");
+        }
         if (pendenza.getStato() != StatoPendenza.NON_ESEGUITO && pendenza.getStato() != StatoPendenza.ANNULLATO) {
             throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza + "] e' " + pendenza.getStato()
                     + ": puo' essere aggiornata solo se NON_ESEGUITO o ANNULLATO");

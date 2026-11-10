@@ -34,8 +34,6 @@ ALTER TABLE documenti ADD COLUMN IF NOT EXISTS id_unita_operativa BIGINT;
 -- per le righe v2 esistenti (v2 non ha mai avuto questo concetto).
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_pubblicazione DATE;
 
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS notifica_send BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE documenti ADD COLUMN IF NOT EXISTS nav_notifica VARCHAR(18);
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_modifica_aca TIMESTAMP;
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_comunicazione_aca TIMESTAMP;
 

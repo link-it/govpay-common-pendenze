@@ -24,7 +24,8 @@ import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.Debitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoVocePendenza;
@@ -69,14 +70,16 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.setCodDocumento("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        SoggettoDebitore soggetto = new SoggettoDebitore();
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(idApplicazione);
@@ -115,14 +118,16 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.setCodDocumento("pos-2");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        SoggettoDebitore soggetto = new SoggettoDebitore();
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(idApplicazione);
@@ -162,14 +167,16 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.setCodDocumento("pos-3");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        SoggettoDebitore soggetto = new SoggettoDebitore();
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(idApplicazione);
@@ -200,8 +207,52 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso()).isEqualTo("222222222222222222");
     }
 
+    @Test
+    @DisplayName("crea rifiuta con una validazione (non un errore interno) un numeroAvviso non valido per il dominio")
+    void creaRifiutaNumeroAvvisoNonValido() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        Long idApplicazione = applicazionePersistita("A2A-4");
+        posizione.setIdApplicazione(idApplicazione);
+        posizione.setCodDocumento("pos-4");
+        posizione.setIdDominio(1L);
+        posizione.setDescrizione("test");
+        Debitore soggetto = new Debitore();
+        soggetto.setTipo(TipoSoggetto.F);
+        soggetto.setIdentificativo("RSSMRA80A01H501U");
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
+        OpzionePagamento opzione = new OpzionePagamento();
+        opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        pdDebitore.addOpzionePagamento(opzione);
+        Pendenza pendenza = new Pendenza();
+        pendenza.setIdApplicazione(idApplicazione);
+        pendenza.setIdPendenza("pendenza-4");
+        pendenza.setIdTipoPendenza(1L);
+        pendenza.setIdTipoVersamento(1L);
+        pendenza.setImporto(10.00);
+        pendenza.setStato(StatoPendenza.NON_ESEGUITO);
+        pendenza.setNumeroAvviso(Config.NUMERO_AVVISO_NON_VALIDO);
+        opzione.addPendenza(pendenza);
+        VocePendenza voce = new VocePendenza();
+        voce.setIdVocePendenza("voce-4");
+        voce.setImporto(10.00);
+        voce.setDescrizione("test");
+        voce.setIndice(1);
+        voce.setStato(StatoVocePendenza.NON_ESEGUITO);
+        voce.setIdTributo(42L);
+        pendenza.addVocePendenza(voce);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
+                .isInstanceOf(it.govpay.pendenze.exception.ValidazioneNonSuperataException.class)
+                .hasMessageContaining("non valido")
+                .hasMessageContaining("pendenza-4");
+    }
+
     @TestConfiguration
     static class Config {
+        static final String NUMERO_AVVISO_NON_VALIDO = "333333333333333333";
+
         /** Generatore fittizio, deterministico: solo per verificare che venga invocato e usato. */
         @Bean
         GeneratoreIuv generatoreIuv() {
@@ -214,6 +265,9 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
 
                 @Override
                 public IdentificativiPagamento convertiDaNumeroAvviso(Long idDominio, String numeroAvviso) {
+                    if (NUMERO_AVVISO_NON_VALIDO.equals(numeroAvviso)) {
+                        throw new IllegalArgumentException("numeroAvviso [" + numeroAvviso + "] ha check digit non coerente");
+                    }
                     return new IdentificativiPagamento("IUV-DA-" + numeroAvviso, numeroAvviso);
                 }
             };

@@ -14,8 +14,8 @@ import it.govpay.pendenze.model.StatoPendenza;
  *
  * @param idDominio                   dominio creditore, o {@code null}
  * @param idDebitore                  identificativo del debitore (confrontato case-insensitive
- *                                    contro QUALSIASI {@code SoggettoDebitore} della posizione,
- *                                    debitori "in solido" compresi), o {@code null}
+ *                                    contro il {@code Debitore} dell'opzione di pagamento della
+ *                                    pendenza), o {@code null}
  * @param direzione                   direzione interna all'ente creditore, o {@code null}
  * @param divisione                   divisione interna all'ente creditore, o {@code null}
  * @param dataDa                      inizio (incluso) della finestra su {@code dataCreazione},

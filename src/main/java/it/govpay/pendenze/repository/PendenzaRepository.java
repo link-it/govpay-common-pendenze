@@ -43,9 +43,9 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
      * v3-nativa (vedi {@code it.govpay.pendenze.v2.package-info}: "mai duplicare regole di
      * dominio").</p>
      *
-     * <p><b>{@code idDebitore}</b>: match su QUALSIASI {@code SoggettoDebitore} della
-     * {@code PosizioneDebitoria} (debitori "in solido"), non piu' sul placeholder legacy
-     * {@code Pendenza.srcDebitoreIdentificativo} (sempre {@code "VEDERE_SOGGETTI_DEBITORI"}
+     * <p><b>{@code idDebitore}</b>: match sul {@code Debitore} dell'opzione di pagamento
+     * della pendenza (ogni debitore ha le proprie pendenze), non sul placeholder legacy
+     * {@code Pendenza.srcDebitoreIdentificativo} (sempre {@code "VEDERE_DEBITORI"}
      * per le pendenze scritte dal percorso v3-nativo/wrapper — vedi Javadoc di
      * {@link Pendenza}: quella colonna non e' mai sincronizzata, un confronto diretto non
      * troverebbe mai nulla per le pendenze non migrate). Sottoquery {@code EXISTS} invece di un
@@ -76,9 +76,10 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
      */
     String FILTRI_RICERCA_PENDENZE = "from Pendenza p where p.idApplicazione = :idApplicazione "
             + "and (:idDominio is null or p.idDominio = :idDominio) "
-            + "and (:idDebitore is null or exists (select 1 from SoggettoDebitore sd "
-            + "     where sd.posizioneDebitoria = p.opzionePagamento.posizioneDebitoria "
-            + "     and upper(sd.identificativo) = upper(:idDebitore))) "
+            + "and (:idDebitore is null or exists (select 1 from OpzionePagamento o where o.id = p.opzionePagamento.id "
+            + "     and upper(o.pdDebitore.debitore.identificativo) = upper(:idDebitore))) "
+            + "and not exists (select 1 from OpzionePagamento r where r.id = p.opzionePagamento.id "
+            + "     and r.pdDebitore.dataRimozione is not null) "
             + "and (:direzione is null or p.direzione = :direzione) "
             + "and (:divisione is null or p.divisione = :divisione) "
             + "and (:dataDa is null or p.dataCreazione >= :dataDa) "
@@ -193,12 +194,12 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
     Optional<Pendenza> findByIdForUpdate(@Param("id") Long id);
 
     /**
-     * Come {@link #findById}, caricando nella stessa query le voci, l'opzione di pagamento e
-     * la sua posizione debitoria. I soggetti debitori della posizione restano fuori: sono
+     * Come {@link #findById}, caricando nella stessa query le voci, l'opzione di pagamento, il
+     * suo {@code pd_debitori} e la posizione debitoria. Gli altri debitori della posizione restano fuori: sono
      * anch'essi una {@code List}, e due collezioni {@code List} nello stesso fetch join fanno
      * fallire Hibernate ({@code MultipleBagFetchException}). Per avere il grafo completo
      * usare {@code PosizioneDebitoriaService#trovaPendenzaCompletaPerId}, che li carica con
-     * {@link PosizioneDebitoriaRepository#caricaSoggettiDebitori} nella stessa transazione.
+     * {@link PosizioneDebitoriaRepository#caricaDebitori} nella stessa transazione.
      *
      * <p>Solo {@code left join}: una pendenza v2 non migrata (senza opzione) viene restituita
      * comunque, con le sole voci.</p>
@@ -207,7 +208,8 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
      * @return la pendenza, se esiste
      */
     @Query("select p from Pendenza p left join fetch p.voci "
-            + "left join fetch p.opzionePagamento o left join fetch o.posizioneDebitoria "
+            + "left join fetch p.opzionePagamento o left join fetch o.pdDebitore d "
+            + "left join fetch d.posizioneDebitoria "
             + "where p.id = :id")
     Optional<Pendenza> findByIdConVociEOpzione(@Param("id") Long id);
 
@@ -266,7 +268,7 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
     /**
      * Come {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}, ma senza
      * {@code COUNT(*)}: usata per la paginazione a offset con {@code total=false} (vedi Javadoc
-     * di {@link PosizioneDebitoriaRepository#findAllDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo}
+     * di {@link PosizioneDebitoriaRepository#findAllDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo}
      * per il meccanismo — qui il {@code COUNT} sarebbe comunque economico per costruzione (M13),
      * ma la stessa modalita' e' offerta per uniformita' con {@code findPosizioniDebitorie} e con
      * lo standard di paginazione condiviso con govpay-console-api).
@@ -281,7 +283,7 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
     /**
      * Paginazione a cursore (keyset) per {@link #findByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull},
      * ordinamento fisso {@code dataCreazione DESC, id DESC} — vedi Javadoc di
-     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndSoggettiDebitori_IdentificativoDaCursore}
+     * {@link PosizioneDebitoriaRepository#findByIdApplicazioneAndPdDebitori_Debitore_IdentificativoDaCursore}
      * per il meccanismo del keyset e del cursore assente alla prima pagina.
      */
     @Query("select p from Pendenza p where p.idApplicazione = :idApplicazione "

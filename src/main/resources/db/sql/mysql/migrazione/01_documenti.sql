@@ -34,8 +34,6 @@ ALTER TABLE documenti ADD COLUMN id_unita_operativa BIGINT;
 -- per le righe v2 esistenti (v2 non ha mai avuto questo concetto).
 ALTER TABLE documenti ADD COLUMN data_pubblicazione DATE;
 
-ALTER TABLE documenti ADD COLUMN notifica_send BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE documenti ADD COLUMN nav_notifica VARCHAR(18);
 ALTER TABLE documenti ADD COLUMN data_ultima_modifica_aca DATETIME(3);
 ALTER TABLE documenti ADD COLUMN data_ultima_comunicazione_aca DATETIME(3);
 

@@ -37,8 +37,6 @@ ALTER TABLE documenti ADD data_pubblicazione DATE;
 
 -- Booleano rappresentato come NUMBER (0/1), come da convenzione del core per
 -- Oracle (vedi es. utenze.abilitato, tipi_versamento.autorizzazione_*_star).
-ALTER TABLE documenti ADD notifica_send NUMBER DEFAULT 0 NOT NULL;
-ALTER TABLE documenti ADD nav_notifica VARCHAR2(18);
 ALTER TABLE documenti ADD data_ultima_modifica_aca TIMESTAMP;
 ALTER TABLE documenti ADD data_ultima_comunicazione_aca TIMESTAMP;
 

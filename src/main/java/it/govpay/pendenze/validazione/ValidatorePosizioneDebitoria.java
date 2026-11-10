@@ -8,6 +8,7 @@ import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 
 import it.govpay.pendenze.entity.OpzionePagamento;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.VocePendenza;
@@ -34,17 +35,57 @@ public final class ValidatorePosizioneDebitoria {
     }
 
     /**
+     * Lunghezze delle colonne di {@code debitori}: un valore piu' lungo arriverebbe fino al
+     * database invece di essere rifiutato. Sono i soli vincoli sulla consistenza dei dati; i
+     * pattern e i limiti piu' stretti del contratto REST restano al livello API.
+     */
+    private static void validaAnagraficaDebitore(it.govpay.pendenze.entity.Debitore d) {
+        if (d.getTipo() == null) {
+            throw new ValidazioneNonSuperataException("'tipo' del debitore e' obbligatorio");
+        }
+        if (d.getIdentificativo() == null || d.getIdentificativo().isBlank()) {
+            throw new ValidazioneNonSuperataException("'identificativo' del debitore e' obbligatorio");
+        }
+        controllaLunghezza("identificativo", d.getIdentificativo(), 35);
+        controllaLunghezza("anagrafica", d.getAnagrafica(), 70);
+        controllaLunghezza("indirizzo", d.getIndirizzo(), 70);
+        controllaLunghezza("civico", d.getCivico(), 16);
+        controllaLunghezza("cap", d.getCap(), 16);
+        controllaLunghezza("localita", d.getLocalita(), 35);
+        controllaLunghezza("provincia", d.getProvincia(), 35);
+        controllaLunghezza("nazione", d.getNazione(), 2);
+        controllaLunghezza("email", d.getEmail(), 256);
+        controllaLunghezza("cellulare", d.getCellulare(), 35);
+    }
+
+    private static void controllaLunghezza(String campo, String valore, int massimo) {
+        if (valore != null && valore.length() > massimo) {
+            throw new ValidazioneNonSuperataException("'" + campo + "' del debitore non puo' superare "
+                    + massimo + " caratteri (" + valore.length() + " forniti)");
+        }
+    }
+
+    /**
      * @param posizione posizione da validare, con l'aggregato già collegato
      * @throws ValidazioneNonSuperataException se un vincolo semantico non è rispettato
      */
     public static void valida(PosizioneDebitoria posizione) {
-        if (posizione.getSoggettiDebitori().isEmpty()) {
+        if (posizione.getPdDebitori().isEmpty()) {
             throw new ValidazioneNonSuperataException(
-                    "la posizione debitoria deve avere almeno un soggetto debitore");
+                    "la posizione debitoria deve avere almeno un debitore");
         }
-        if (posizione.getOpzioniPagamento().isEmpty()) {
-            throw new ValidazioneNonSuperataException(
-                    "la posizione debitoria deve avere almeno un'opzione di pagamento");
+        Set<String> identificativiDebitori = new HashSet<>();
+        for (PdDebitore pdDebitore : posizione.getPdDebitori()) {
+            validaAnagraficaDebitore(pdDebitore.getDebitore());
+            String identificativo = pdDebitore.getDebitore().getIdentificativo();
+            if (!identificativiDebitori.add(identificativo)) {
+                throw new ValidazioneNonSuperataException(
+                        "piu' debitori della posizione hanno lo stesso identificativo [" + identificativo + "]");
+            }
+            if (pdDebitore.getOpzioniPagamento().isEmpty()) {
+                throw new ValidazioneNonSuperataException(
+                        "ogni debitore della posizione debitoria deve avere almeno un'opzione di pagamento");
+            }
         }
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
             validaOpzione(opzione);
@@ -332,22 +373,24 @@ public final class ValidatorePosizioneDebitoria {
     /**
      * {@code SPESE_NOTIFICA} va indicato solo se l'importo della voce include già le spese
      * di notifica SEND calcolate autonomamente dall'applicativo — in quel caso
-     * {@code notificaSend} non deve essere attivo sulla posizione, altrimenti le spese
+     * {@code notificaSend} non deve essere attivo sul debitore, altrimenti le spese
      * verrebbero applicate due volte (semantica esplicita dello YAML v3).
      */
     private static void validaSpeseNotificaEnotificaSend(PosizioneDebitoria posizione) {
-        if (!posizione.isNotificaSend()) {
-            return;
-        }
-        boolean presenteSpeseNotifica = posizione.getOpzioniPagamento().stream()
-                .flatMap(o -> o.getPendenze().stream())
-                .flatMap(p -> p.getVoci().stream())
-                .flatMap(v -> v.getDettaglioContabile().stream())
-                .anyMatch(DettaglioContabile.SpeseNotifica.class::isInstance);
-        if (presenteSpeseNotifica) {
-            throw new ValidazioneNonSuperataException(
-                    "notificaSend e' attivo ma una voce ha gia' un dettaglioContabile SPESE_NOTIFICA: le spese"
-                            + " verrebbero applicate due volte");
+        for (PdDebitore pdDebitore : posizione.getPdDebitori()) {
+            if (!pdDebitore.isNotificaSendPayed()) {
+                continue;
+            }
+            boolean presenteSpeseNotifica = pdDebitore.getOpzioniPagamento().stream()
+                    .flatMap(o -> o.getPendenze().stream())
+                    .flatMap(p -> p.getVoci().stream())
+                    .flatMap(v -> v.getDettaglioContabile().stream())
+                    .anyMatch(DettaglioContabile.SpeseNotifica.class::isInstance);
+            if (presenteSpeseNotifica) {
+                throw new ValidazioneNonSuperataException(
+                        "notificaSend e' attivo ma una voce ha gia' un dettaglioContabile SPESE_NOTIFICA: le spese"
+                                + " verrebbero applicate due volte");
+            }
         }
     }
 }

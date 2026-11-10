@@ -39,6 +39,8 @@ import it.govpay.pendenze.repository.PendenzaRepository;
 class OpzioneMigrataMappingTest {
 
     private static final long ID_DOCUMENTO = 9001L;
+    private static final long ID_DEBITORE = 9301L;
+    private static final long ID_PD_DEBITORE = 9401L;
 
     @Autowired
     private TestEntityManager em;
@@ -60,6 +62,7 @@ class OpzioneMigrataMappingTest {
         long idOpzione = 9101L;
         long idPendenza = 9201L;
         inserisciDocumento();
+        inserisciPdDebitore();
         inserisciOpzione(idOpzione, tipologia.name(), statoOpzione.name());
         inserisciVersamento(idPendenza, idOpzione, codRata, statoPendenza.name());
         em.clear();
@@ -82,22 +85,38 @@ class OpzioneMigrataMappingTest {
 
     private void inserisciDocumento() {
         em.getEntityManager().createNativeQuery("""
-                INSERT INTO documenti (id, cod_documento, descrizione, notifica_send, anomalo, data_creazione,
+                INSERT INTO documenti (id, cod_documento, descrizione, anomalo, data_creazione,
                         data_ultimo_aggiornamento, versione, id_dominio, id_applicazione)
-                VALUES (?, 'VERBALE-CDS-1', 'Verbale CdS', FALSE, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, 1)
+                VALUES (?, 'VERBALE-CDS-1', 'Verbale CdS', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, 1)
                 """).setParameter(1, ID_DOCUMENTO).executeUpdate();
+    }
+
+    /** Un debitore con il proprio {@code pd_debitori}, a cui si agganciano le opzioni migrate. */
+    private void inserisciPdDebitore() {
+        em.getEntityManager().createNativeQuery("""
+                INSERT INTO debitori (id, tipo, identificativo, anagrafica)
+                VALUES (?, 'F', 'RSSMRA80A01H501U', 'Mario Rossi')
+                """).setParameter(1, ID_DEBITORE).executeUpdate();
+        em.getEntityManager().createNativeQuery("""
+                INSERT INTO pd_debitori (id, id_documento, id_debitore, posizione, notifica_send_payed)
+                VALUES (?, ?, ?, 0, FALSE)
+                """)
+                .setParameter(1, ID_PD_DEBITORE)
+                .setParameter(2, ID_DOCUMENTO)
+                .setParameter(3, ID_DEBITORE)
+                .executeUpdate();
     }
 
     /** Stesse colonne e valori dell'{@code INSERT INTO opzioni_pagamento} del passo C della patch. */
     private void inserisciOpzione(long id, String tipologia, String stato) {
         em.getEntityManager().createNativeQuery("""
-                INSERT INTO opzioni_pagamento (id, id_opzione_pagamento, id_documento, tipologia, giorni, stato,
+                INSERT INTO opzioni_pagamento (id, id_opzione_pagamento, id_pd_debitore, tipologia, giorni, stato,
                         versione, data_creazione, data_ultimo_aggiornamento)
                 VALUES (?, ?, ?, ?, NULL, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """)
                 .setParameter(1, id)
                 .setParameter(2, UUID.randomUUID())
-                .setParameter(3, ID_DOCUMENTO)
+                .setParameter(3, ID_PD_DEBITORE)
                 .setParameter(4, tipologia)
                 .setParameter(5, stato)
                 .executeUpdate();

@@ -207,9 +207,10 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
             + "and (:iuv is null or upper(r.iuv) like concat('%', upper(:iuv), '%')) "
             + "and (:iur is null or upper(r.iur) like concat('%', upper(:iur), '%')) "
             + "and (:idPendenza is null or p.idPendenza = :idPendenza) "
-            + "and (:idDebitore is null or exists (select 1 from SoggettoDebitore sd "
-            + "     where sd.posizioneDebitoria = p.opzionePagamento.posizioneDebitoria "
-            + "     and upper(sd.identificativo) = upper(:idDebitore))) "
+            + "and (:idDebitore is null or exists (select 1 from OpzionePagamento o where o.id = p.opzionePagamento.id "
+            + "     and upper(o.pdDebitore.debitore.identificativo) = upper(:idDebitore))) "
+            + "and not exists (select 1 from OpzionePagamento r where r.id = p.opzionePagamento.id "
+            + "     and r.pdDebitore.dataRimozione is not null) "
             + "and (:codEsitoPagamento is null or r.codEsitoPagamento = :codEsitoPagamento) "
             + "and (:dataRichiestaDa is null or r.dataMsgRichiesta >= :dataRichiestaDa) "
             + "and (:dataRichiestaA is null or r.dataMsgRichiesta <= :dataRichiestaA) "
@@ -238,8 +239,7 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
      * l'operatore del legacy: {@code codDominio}/{@code idPendenza}/{@code codEsitoPagamento}
      * uguaglianza; {@code iuv}/{@code iur} case-insensitive "contiene" (legacy
      * {@code ilike(..., LikeMode.ANYWHERE)} su entrambi); {@code idDebitore} case-insensitive
-     * contro QUALSIASI {@code SoggettoDebitore} della posizione (debitori "in solido"
-     * compresi), stessa forma di {@link PendenzaRepository#cercaFiltrate}; date a estremi
+     * contro il {@code Debitore} dell'opzione di pagamento della pendenza, stessa forma di {@link PendenzaRepository#cercaFiltrate}; date a estremi
      * inclusi. La traduzione dei concetti v2 in questi parametri (es. l'enum {@code EsitoRpp}) e'
      * responsabilita' del chiamante, non di questa libreria.</p>
      *
