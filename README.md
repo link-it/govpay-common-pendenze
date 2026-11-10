@@ -154,6 +154,7 @@ Se la scansione non include `it.govpay.pendenze.iuv`, `GeneratoreIuvAutoConfigur
 | `crea(DatiPosizioneDebitoria)` | Crea una posizione debitoria con i suoi debitori, ciascuno con le proprie opzioni, pendenze e voci; assegna IUV e numero avviso dove mancano |
 | `aggiorna`, `aggiornaPendenza` | Aggiornamento parziale della posizione o di una pendenza (`ModificaCampo` distingue "non indicato" da "indicato a null") |
 | `aggiungiOpzionePagamento`, `aggiungiPendenza` | Aggiunta di un'opzione (una per ciascun debitore) o di una pendenza a una posizione esistente |
+| `aggiungiDebitore`, `aggiornaDebitore`, `rimuoviDebitore` | Aggiunta, modifica e rimozione logica di un debitore di una posizione esistente (vedi [opzioni di pagamento per debitore](docs/opzioni-di-pagamento-per-debitore.md)) |
 | `annulla`, `ripristina` | Annullamento e ripristino di un'opzione di pagamento |
 | `registraEsitoPendenza`, `registraImportoSend` | Esito di una pendenza; importo delle spese di notifica SEND |
 | `trovaPerId`, `trovaPerIdentificativo`, `trovaPendenzaPerIdentificativo` | Lettura per chiave interna o per identificativo pubblico (`idA2A` + `idPosizioneDebitoria` o `idPendenza`) |

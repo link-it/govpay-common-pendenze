@@ -17,6 +17,11 @@ import it.govpay.pendenze.entity.PosizioneDebitoria;
  */
 public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDebitoria, Long> {
 
+    /** {@code from}+{@code where} condivisi dalle ricerche per debitore: solo debitori attivi (non rimossi). */
+    String DA_DEBITORE_ATTIVO = "from PosizioneDebitoria p join p.pdDebitori d "
+            + "where p.idApplicazione = :idApplicazione and d.debitore.identificativo = :idDebitore "
+            + "and d.dataRimozione is null";
+
     /**
      * Cerca per la chiave logica reale a tre colonne (applicazione + dominio + business key).
      * {@code idA2A}/{@code idPosizioneDebitoria} (il pubblico IUPD) non sono colonne proprie di
@@ -57,7 +62,7 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3:
      * {@code idDebitore} e' l'unico criterio di ricerca ammesso, oltre a {@code idA2A}).
      * Trova la posizione se l'identificativo corrisponde a <b>qualunque</b> debitore in
-     * {@code pdDebitori}, non solo al primo. {@code distinct} evita duplicati se piu' debitori
+     * {@code pdDebitori} attivi (i debitori rimossi logicamente non contano), non solo al primo. {@code distinct} evita duplicati se piu' debitori
      * della stessa posizione avessero — per un dato scorretto — lo stesso identificativo.
      *
      * <p>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()} — vedi Javadoc di
@@ -68,8 +73,11 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * @param pageable       paginazione e ordinamento richiesti
      * @return la pagina di posizioni debitorie che rispettano il filtro
      */
-    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(Long idApplicazione,
-            String idDebitore, Pageable pageable);
+    @Query(value = "select distinct p " + DA_DEBITORE_ATTIVO,
+            countQuery = "select count(distinct p) " + DA_DEBITORE_ATTIVO)
+    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(
+            @Param("idApplicazione") Long idApplicazione, @Param("idDebitore") String idDebitore,
+            Pageable pageable);
 
     /**
      * Come {@link #findDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo}, ma senza
@@ -79,8 +87,10 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * per determinare l'esistenza di una pagina successiva (vedi
      * {@link it.govpay.pendenze.criteri.PaginaSenzaConteggio}).
      */
-    List<PosizioneDebitoria> findAllDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(Long idApplicazione,
-            String idDebitore, Pageable pageable);
+    @Query("select distinct p " + DA_DEBITORE_ATTIVO)
+    List<PosizioneDebitoria> findAllDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(
+            @Param("idApplicazione") Long idApplicazione, @Param("idDebitore") String idDebitore,
+            Pageable pageable);
 
     /**
      * Paginazione a cursore (keyset), ordinamento fisso {@code dataCreazione DESC, id DESC}
@@ -96,6 +106,7 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      */
     @Query("select distinct p from PosizioneDebitoria p join p.pdDebitori d "
             + "where p.idApplicazione = :idApplicazione and d.debitore.identificativo = :idDebitore "
+            + "and d.dataRimozione is null "
             + "and (:cursorDataCreazione is null or p.dataCreazione < :cursorDataCreazione "
             + "or (p.dataCreazione = :cursorDataCreazione and p.id < :cursorId)) "
             + "order by p.dataCreazione desc, p.id desc")

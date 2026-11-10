@@ -12,6 +12,8 @@
 -- le pendenze e i NAV) si agganciano a questa coppia, non alla posizione:
 -- ogni debitore ha il proprio piano di pagamento. posizione e' l'ordine di
 -- presentazione dei debitori nella posizione.
+-- data_rimozione: valorizzata dalla rimozione logica del debitore (le sue opzioni e
+-- pendenze sono annullate); un debitore rimosso e' ignorato da letture e ricerche.
 --
 -- L'id usa AUTO_INCREMENT: l'entity JPA dichiara GenerationType.IDENTITY,
 -- stessa convenzione gia' in uso dal core per questo dialetto sulle tabelle
@@ -44,6 +46,7 @@ CREATE TABLE pd_debitori
 	posizione INT NOT NULL,
 	notifica_send_payed BOOLEAN NOT NULL DEFAULT false,
 	notifica_send_nav VARCHAR(18),
+	data_rimozione DATETIME(3),
 	-- fk/pk columns
 	id BIGINT NOT NULL AUTO_INCREMENT,
 	id_documento BIGINT NOT NULL,

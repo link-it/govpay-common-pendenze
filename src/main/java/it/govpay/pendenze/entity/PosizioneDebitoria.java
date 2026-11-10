@@ -182,7 +182,7 @@ public class PosizioneDebitoria {
      * cui vale la mutua esclusione. Vista di sola lettura, calcolata a ogni chiamata.
      */
     public List<OpzionePagamento> getOpzioniPagamento() {
-        return pdDebitori.stream().flatMap(d -> d.getOpzioniPagamento().stream()).toList();
+        return getPdDebitori().stream().flatMap(d -> d.getOpzioniPagamento().stream()).toList();
     }
 
     // ── Accessori ────────────────────────────────────────────────────────────
@@ -295,7 +295,16 @@ public class PosizioneDebitoria {
         this.dataUltimoAggiornamento = dataUltimoAggiornamento;
     }
 
+    /**
+     * I debitori attivi della posizione, in ordine di presentazione. Vista di sola lettura,
+     * calcolata a ogni chiamata: i debitori rimossi logicamente non compaiono.
+     */
     public List<PdDebitore> getPdDebitori() {
+        return pdDebitori.stream().filter(d -> !d.isRimosso()).toList();
+    }
+
+    /** Tutti i debitori, inclusi quelli rimossi logicamente. Collezione mappata, modificabile. */
+    public List<PdDebitore> getPdDebitoriInclusiRimossi() {
         return pdDebitori;
     }
 }

@@ -59,7 +59,7 @@ debitore condiviso da posizioni già comunicate; non serve al requisito.
 
 **Notifica SEND per debitore.** `notifica_send_payed` e `notifica_send_nav` stanno su `pd_debitori`
 perché il NAV su cui si notifica è un NAV del debitore, non della posizione. La validazione sulle
-spese di notifica (`SPESE_NOTIFICA` incompatibile con notifica attiva) si applica per debitore.
+spese di notifica (`SPESE_NOTIFICA` incompatibile con notifica attiva) si applica per debitore. Con la notifica attiva il `navNotifica` del debitore è obbligatorio e deve essere il `numeroAvviso` di una sua pendenza: non viene assegnato in automatico.
 
 **PATCH della posizione limitato a `descrizione` e `dataPubblicazione`.** `notificaSend`,
 `navNotifica` e la sostituzione dell'elenco dei soggetti escono dall'aggiornamento della posizione:
@@ -67,6 +67,8 @@ le prime due sono ora per debitore, la terza non ha più un significato definito
 debitore comporterebbe decidere cosa accade alle sue opzioni e pendenze. La modifica e l'eventuale
 rimozione di un `pd_debitori` sono una funzione dedicata, con regole proprie (per esempio rimozione
 ammessa solo se nessuna sua opzione è stata pagata), da definire a parte.
+
+**Aggiunta, modifica e rimozione di un debitore.** Sono operazioni dedicate sul singolo `pd_debitori`, indicato dal suo `identificativo`. L'aggiunta ha le stesse validazioni della creazione ed è rifiutata se la posizione ha già un'opzione `ATTIVATA`. La modifica riguarda anagrafica, `tipo`, `identificativo` (univoco tra i debitori attivi), `notificaSend` e `navNotifica`. La rimozione è **logica**: la colonna `pd_debitori.data_rimozione` viene valorizzata, le opzioni del debitore passano ad `ANNULLATA` e le sue pendenze ad `ANNULLATO`, e posizione e pendenze sono marcate per ACA. È ammessa solo se il debitore non è l'unico attivo e se nella posizione non c'è un'opzione `ATTIVATA` né una pendenza eseguita; una rimozione non è mai fisica, quindi `idPendenza` e `numeroAvviso` delle pendenze restano occupati. Un debitore rimosso è ignorato da `getPdDebitori()`, `getOpzioniPagamento()`, dal controllo di unicità dell'identificativo, dalla mutua esclusione, da `aggiungiOpzionePagamento` e dalle ricerche per debitore, e le pendenze restano leggibili per `idPendenza` con stato `ANNULLATO`; non compaiono invece nelle ricerche di pendenze e ricevute. Si può aggiungere un nuovo debitore con lo stesso identificativo di uno rimosso.
 
 **Nuova opzione su posizione esistente.** L'alternativa si aggiunge a ogni debitore della
 posizione: il comando porta un'opzione per debitore, abbinata tramite l'identificativo fiscale, e
@@ -119,6 +121,7 @@ Dettagli di `06_opzioni_pagamento_documenti_esistenti.sql`:
 
 ## 5. Questioni aperte
 
+- Eliminazione fisica dei debitori rimossi e rilascio di `idPendenza`/`numeroAvviso`: da decidere con `govpay-aca-batch`, che deve aver comunicato l'annullamento.
 - Sincronizzazione di `Pendenza.sendAbilitato` con la notifica SEND del debitore dell'opzione: la
   libreria non la esegue (il campo resta `false` salvo valorizzazione del chiamante); va stabilito
   dove deve avvenire.
@@ -126,7 +129,6 @@ Dettagli di `06_opzioni_pagamento_documenti_esistenti.sql`:
   eseguite contro un'istanza reale; il routing ACA v1/v3 sui dati già comunicati (vedi sotto) è
   rimandato.
 
-- Modifica e rimozione di un debitore di una posizione esistente.
 - Routing tra il percorso ACA/GPD v1 e v3 per i dati già comunicati prima della migrazione
   (precedentemente risolto con un flag persistito, da rivalutare nel nuovo modello): si riprende
   quando `govpay-aca-batch` viene allineato alla nuova struttura, dove il debitore va letto da

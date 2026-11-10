@@ -171,15 +171,15 @@ public class Pendenza {
 
     /** Placeholder fisso — vedi nota di classe. */
     @Column(name = "debitore_identificativo", nullable = false, length = 35)
-    private String debitoreIdentificativo = "VEDERE_SOGGETTI_DEBITORI";
+    private String debitoreIdentificativo = "VEDERE_DEBITORI";
 
     /** Placeholder fisso — vedi nota di classe. */
     @Column(name = "debitore_anagrafica", nullable = false, length = 70)
-    private String debitoreAnagrafica = "Vedere tabella soggetti_debitori";
+    private String debitoreAnagrafica = "Vedere tabella debitori";
 
     /** Placeholder fisso (gia' in maiuscolo) — vedi nota di classe. */
     @Column(name = "src_debitore_identificativo", nullable = false, length = 35)
-    private String srcDebitoreIdentificativo = "VEDERE_SOGGETTI_DEBITORI";
+    private String srcDebitoreIdentificativo = "VEDERE_DEBITORI";
 
     @Column(name = "stato_versamento", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)

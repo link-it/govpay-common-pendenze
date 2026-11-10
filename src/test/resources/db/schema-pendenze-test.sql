@@ -74,8 +74,7 @@
 --     fine transizione v3 — fino ad allora resta un gap noto e accettato, non
 --     qualcosa che questa libreria compensa fingendo un dato disallineabile.
 --     Pendenza.java li valorizza con placeholder fissi ed esplicativi
---     ("VEDERE_SOGGETTI_DEBITORI"/"Vedere tabella soggetti_debitori" — testo
---     dei placeholder invariato, da riallineare con l'entity Pendenza); il
+--     ("VEDERE_DEBITORI"/"Vedere tabella debitori"); il
 --     nullable debitore_tipo resta indefinito.
 --
 -- tipi_versamento/tipi_vers_domini/uo/iban_accredito/tributi/tipi_tributo:
@@ -370,6 +369,7 @@ CREATE TABLE IF NOT EXISTS pd_debitori
 	posizione INT NOT NULL,
 	notifica_send_payed BOOLEAN NOT NULL DEFAULT false,
 	notifica_send_nav VARCHAR(18),
+	data_rimozione TIMESTAMP,
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_pd_debitori') NOT NULL,
 	id_documento BIGINT NOT NULL,

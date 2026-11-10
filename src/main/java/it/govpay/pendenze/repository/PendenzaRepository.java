@@ -45,7 +45,7 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
      *
      * <p><b>{@code idDebitore}</b>: match sul {@code Debitore} dell'opzione di pagamento
      * della pendenza (ogni debitore ha le proprie pendenze), non sul placeholder legacy
-     * {@code Pendenza.srcDebitoreIdentificativo} (sempre {@code "VEDERE_SOGGETTI_DEBITORI"}
+     * {@code Pendenza.srcDebitoreIdentificativo} (sempre {@code "VEDERE_DEBITORI"}
      * per le pendenze scritte dal percorso v3-nativo/wrapper — vedi Javadoc di
      * {@link Pendenza}: quella colonna non e' mai sincronizzata, un confronto diretto non
      * troverebbe mai nulla per le pendenze non migrate). Sottoquery {@code EXISTS} invece di un
@@ -78,6 +78,8 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
             + "and (:idDominio is null or p.idDominio = :idDominio) "
             + "and (:idDebitore is null or exists (select 1 from OpzionePagamento o where o.id = p.opzionePagamento.id "
             + "     and upper(o.pdDebitore.debitore.identificativo) = upper(:idDebitore))) "
+            + "and not exists (select 1 from OpzionePagamento r where r.id = p.opzionePagamento.id "
+            + "     and r.pdDebitore.dataRimozione is not null) "
             + "and (:direzione is null or p.direzione = :direzione) "
             + "and (:divisione is null or p.divisione = :divisione) "
             + "and (:dataDa is null or p.dataCreazione >= :dataDa) "

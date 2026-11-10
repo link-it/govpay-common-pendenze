@@ -97,7 +97,7 @@ class ValidatorePosizioneDebitoriaTest {
     @DisplayName("rifiuta una posizione senza debitori")
     void senzaDebitori() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
-        posizione.getPdDebitori().clear();
+        posizione.getPdDebitoriInclusiRimossi().clear();
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class)

@@ -1,5 +1,6 @@
 package it.govpay.pendenze.entity;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -56,6 +57,14 @@ public class PdDebitore {
 
     @Column(name = "notifica_send_nav", length = 18)
     private String notificaSendNav;
+
+    /**
+     * Istante della rimozione logica del debitore, {@code null} se attivo. Un debitore rimosso
+     * conserva le sue opzioni (tutte ANNULLATE) e pendenze (tutte ANNULLATO) ma non e' piu'
+     * visibile come debitore della posizione.
+     */
+    @Column(name = "data_rimozione")
+    private OffsetDateTime dataRimozione;
 
     @OneToMany(mappedBy = "pdDebitore", cascade = CascadeType.ALL)
     @OrderBy("id ASC")
@@ -120,6 +129,19 @@ public class PdDebitore {
 
     public void setNotificaSendNav(String notificaSendNav) {
         this.notificaSendNav = notificaSendNav;
+    }
+
+    public OffsetDateTime getDataRimozione() {
+        return dataRimozione;
+    }
+
+    public void setDataRimozione(OffsetDateTime dataRimozione) {
+        this.dataRimozione = dataRimozione;
+    }
+
+    /** {@code true} se il debitore e' stato rimosso (rimozione logica). */
+    public boolean isRimosso() {
+        return dataRimozione != null;
     }
 
     public List<OpzionePagamento> getOpzioniPagamento() {

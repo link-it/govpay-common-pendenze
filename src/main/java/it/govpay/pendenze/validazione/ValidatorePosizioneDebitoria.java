@@ -35,6 +35,37 @@ public final class ValidatorePosizioneDebitoria {
     }
 
     /**
+     * Lunghezze delle colonne di {@code debitori}: un valore piu' lungo arriverebbe fino al
+     * database invece di essere rifiutato. Sono i soli vincoli sulla consistenza dei dati; i
+     * pattern e i limiti piu' stretti del contratto REST restano al livello API.
+     */
+    private static void validaAnagraficaDebitore(it.govpay.pendenze.entity.Debitore d) {
+        if (d.getTipo() == null) {
+            throw new ValidazioneNonSuperataException("'tipo' del debitore e' obbligatorio");
+        }
+        if (d.getIdentificativo() == null || d.getIdentificativo().isBlank()) {
+            throw new ValidazioneNonSuperataException("'identificativo' del debitore e' obbligatorio");
+        }
+        controllaLunghezza("identificativo", d.getIdentificativo(), 35);
+        controllaLunghezza("anagrafica", d.getAnagrafica(), 70);
+        controllaLunghezza("indirizzo", d.getIndirizzo(), 70);
+        controllaLunghezza("civico", d.getCivico(), 16);
+        controllaLunghezza("cap", d.getCap(), 16);
+        controllaLunghezza("localita", d.getLocalita(), 35);
+        controllaLunghezza("provincia", d.getProvincia(), 35);
+        controllaLunghezza("nazione", d.getNazione(), 2);
+        controllaLunghezza("email", d.getEmail(), 256);
+        controllaLunghezza("cellulare", d.getCellulare(), 35);
+    }
+
+    private static void controllaLunghezza(String campo, String valore, int massimo) {
+        if (valore != null && valore.length() > massimo) {
+            throw new ValidazioneNonSuperataException("'" + campo + "' del debitore non puo' superare "
+                    + massimo + " caratteri (" + valore.length() + " forniti)");
+        }
+    }
+
+    /**
      * @param posizione posizione da validare, con l'aggregato già collegato
      * @throws ValidazioneNonSuperataException se un vincolo semantico non è rispettato
      */
@@ -45,6 +76,7 @@ public final class ValidatorePosizioneDebitoria {
         }
         Set<String> identificativiDebitori = new HashSet<>();
         for (PdDebitore pdDebitore : posizione.getPdDebitori()) {
+            validaAnagraficaDebitore(pdDebitore.getDebitore());
             String identificativo = pdDebitore.getDebitore().getIdentificativo();
             if (!identificativiDebitori.add(identificativo)) {
                 throw new ValidazioneNonSuperataException(

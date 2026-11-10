@@ -12,6 +12,8 @@
 -- le pendenze e i NAV) si agganciano a questa coppia, non alla posizione:
 -- ogni debitore ha il proprio piano di pagamento. posizione e' l'ordine di
 -- presentazione dei debitori nella posizione.
+-- data_rimozione: valorizzata dalla rimozione logica del debitore (le sue opzioni e
+-- pendenze sono annullate); un debitore rimosso e' ignorato da letture e ricerche.
 --
 -- id/sequenza/trigger seguono lo stesso pattern gia' in uso nei patch del
 -- core per una nuova tabella con chiave generata (vedi
@@ -60,6 +62,7 @@ CREATE TABLE pd_debitori
 	posizione NUMBER NOT NULL,
 	notifica_send_payed NUMBER DEFAULT 0 NOT NULL,
 	notifica_send_nav VARCHAR2(18),
+	data_rimozione TIMESTAMP,
 	-- fk/pk columns
 	id NUMBER NOT NULL,
 	id_documento NUMBER NOT NULL,

@@ -105,8 +105,31 @@ class RicercaFiltrataDebitoreTest {
                 .containsExactly("giovanna");
     }
 
+    @Test
+    @DisplayName("le pendenze e le ricevute di un debitore rimosso non compaiono nelle ricerche, nemmeno senza filtro")
+    void debitoreRimossoEscluso() {
+        scenario(true);
+
+        var pendenze = pendenzaRepository.cercaFiltrate(1L, null, null, null, null, null, null, null, null, null,
+                null, ADESSO, null, PageRequest.of(0, 10));
+        assertThat(pendenze.getContent()).extracting(Pendenza::getIdPendenza)
+                .containsExactlyInAnyOrder("legacy", "mario");
+        var perDebitore = pendenzaRepository.cercaFiltrate(1L, null, GIOVANNA, null, null, null, null, null, null,
+                null, null, ADESSO, null, PageRequest.of(0, 10));
+        assertThat(perDebitore.getContent()).isEmpty();
+
+        var ricevute = rptRepository.cercaFiltrate(1L, null, null, null, null, null, null, null, null, null, null,
+                PageRequest.of(0, 10));
+        assertThat(ricevute.getContent()).extracting(r -> r.pendenza().getIdPendenza())
+                .containsExactlyInAnyOrder("legacy", "mario");
+    }
+
     /** Una pendenza v2 senza opzione e una posizione con due debitori, ciascuno con la propria pendenza. */
     private void scenario() {
+        scenario(false);
+    }
+
+    private void scenario(boolean giovannaRimossa) {
         pendenza("legacy", "300000000000000001");
 
         PosizioneDebitoria posizione = new PosizioneDebitoria();
@@ -119,6 +142,9 @@ class RicercaFiltrataDebitoreTest {
         posizione.setDataUltimoAggiornamento(ADESSO);
         aggiungi(posizione, 0, MARIO, "mario", "300000000000000002");
         aggiungi(posizione, 1, GIOVANNA, "giovanna", "300000000000000003");
+        if (giovannaRimossa) {
+            posizione.getPdDebitoriInclusiRimossi().get(1).setDataRimozione(ADESSO);
+        }
         em.persist(posizione);
         em.flush();
 

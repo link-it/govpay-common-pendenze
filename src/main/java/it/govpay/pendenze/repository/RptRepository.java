@@ -209,6 +209,8 @@ public interface RptRepository extends JpaRepository<Rpt, Long> {
             + "and (:idPendenza is null or p.idPendenza = :idPendenza) "
             + "and (:idDebitore is null or exists (select 1 from OpzionePagamento o where o.id = p.opzionePagamento.id "
             + "     and upper(o.pdDebitore.debitore.identificativo) = upper(:idDebitore))) "
+            + "and not exists (select 1 from OpzionePagamento r where r.id = p.opzionePagamento.id "
+            + "     and r.pdDebitore.dataRimozione is not null) "
             + "and (:codEsitoPagamento is null or r.codEsitoPagamento = :codEsitoPagamento) "
             + "and (:dataRichiestaDa is null or r.dataMsgRichiesta >= :dataRichiestaDa) "
             + "and (:dataRichiestaA is null or r.dataMsgRichiesta <= :dataRichiestaA) "
