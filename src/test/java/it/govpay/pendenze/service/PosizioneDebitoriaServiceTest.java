@@ -5,7 +5,7 @@ import it.govpay.pendenze.comando.AggiornamentoPosizioneDebitoria;
 import it.govpay.pendenze.comando.DatiOpzionePagamento;
 import it.govpay.pendenze.comando.DatiPendenza;
 import it.govpay.pendenze.comando.DatiPosizioneDebitoria;
-import it.govpay.pendenze.comando.DatiSoggettoDebitore;
+import it.govpay.pendenze.comando.DatiOpzionePagamentoDebitore;
 import it.govpay.pendenze.comando.ModificaCampo;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +43,8 @@ import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.Rendicontazione;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.Debitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.RisorsaGiaEsistenteException;
 import it.govpay.pendenze.exception.RisorsaNonTrovataException;
@@ -152,7 +153,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-1");
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
 
         OpzionePagamento scelta = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "2");
@@ -236,15 +237,18 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-indici");
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
-        posizione.addSoggettoDebitore(soggettoDiProva2());
+        PdDebitore primo = pdDiProva();
+        PdDebitore secondo = pdDiProva2();
+        posizione.addPdDebitore(primo);
+        posizione.addPdDebitore(secondo);
 
-        OpzionePagamento opzione = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "1");
+        OpzionePagamento opzione = opzioneConPendenza(primo, TipologiaOpzionePagamento.PIANO_RATEALE, "1");
         opzioneConPendenza(opzione, "2");
+        opzioneConPendenza(secondo, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "3");
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
-        assertThat(salvata.getSoggettiDebitori()).extracting(SoggettoDebitore::getOrdine)
+        assertThat(salvata.getPdDebitori()).extracting(PdDebitore::getPosizione)
                 .containsExactly(0, 1);
         assertThat(salvata.getOpzioniPagamento().get(0).getPendenze()).extracting(Pendenza::getNumeroRata)
                 .containsExactly(1, 2);
@@ -295,15 +299,16 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("crea rifiuta notificaSend attivo senza navNotifica se non c'e' SOLUZIONE_UNICA ne' PIANO_RATEALE")
+    @DisplayName("crea rifiuta la notifica SEND del debitore senza nav se non c'e' SOLUZIONE_UNICA ne' PIANO_RATEALE")
     void creaRifiutaNotificaSendSenzaCandidatoPerNavNotifica() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(idApplicazionePer("A2A-entro"));
         posizione.setCodDocumento("pos-entro");
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.setNotificaSend(true);
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        PdDebitore pdDebitore = pdDiProva();
+        pdDebitore.setNotificaSendPayed(true);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA_ENTRO, "1");
         opzione.setGiorni(5);
@@ -314,10 +319,10 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("crea rifiuta navNotifica che non corrisponde al numeroAvviso di alcuna pendenza")
+    @DisplayName("crea rifiuta il nav di notifica che non corrisponde al numeroAvviso di alcuna pendenza del debitore")
     void creaRifiutaNavNotificaNonCorrispondente() {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.setNavNotifica("999999999999999999");
+        posizione.getPdDebitori().get(0).setNotificaSendNav("999999999999999999");
 
         assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
                 .isInstanceOf(ValidazioneNonSuperataException.class)
@@ -325,15 +330,198 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("crea assegna automaticamente navNotifica se notificaSend e' attivo e la posizione ha una sola pendenza")
+    @DisplayName("crea assegna automaticamente il nav di notifica se la notifica SEND del debitore e' attiva e ha una sola pendenza")
     void creaAssegnaNavNotificaAutomaticamente() {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.setNotificaSend(true);
+        posizione.getPdDebitori().get(0).setNotificaSendPayed(true);
         String numeroAvviso = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso();
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
-        assertThat(salvata.getNavNotifica()).isEqualTo(numeroAvviso);
+        assertThat(salvata.getPdDebitori().get(0).getNotificaSendNav()).isEqualTo(numeroAvviso);
+    }
+
+    @Test
+    @DisplayName("crea assegna il nav di notifica per debitore: ognuno sul numeroAvviso delle proprie pendenze")
+    void creaAssegnaNavNotificaPerDebitore() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        posizione.setIdApplicazione(idApplicazionePer("A2A-nav-debitori"));
+        posizione.setCodDocumento("pos-nav-debitori");
+        posizione.setIdDominio(idDominioPer(DOMINIO_1));
+        posizione.setDescrizione("test");
+        PdDebitore primo = pdDiProva();
+        PdDebitore secondo = pdDiProva2();
+        primo.setNotificaSendPayed(true);
+        secondo.setNotificaSendPayed(true);
+        posizione.addPdDebitore(primo);
+        posizione.addPdDebitore(secondo);
+        String navPrimo = opzioneConPendenza(primo, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1")
+                .getPendenze().get(0).getNumeroAvviso();
+        String navSecondo = opzioneConPendenza(secondo, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2")
+                .getPendenze().get(0).getNumeroAvviso();
+
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+
+        assertThat(salvata.getPdDebitori()).extracting(PdDebitore::getNotificaSendNav)
+                .containsExactly(navPrimo, navSecondo);
+    }
+
+    // ── Opzioni di pagamento per debitore ────────────────────────────────────
+
+    private static final String MARIO = "RSSMRA80A01H501U";
+    private static final String GIOVANNA = "VRDGNN80A01H501W";
+
+    /** Due debitori, ciascuno con la propria soluzione unica ({@code pendenza-1} a Mario, {@code pendenza-2} a Giovanna). */
+    private PosizioneDebitoria posizioneConDueDebitori() {
+        PosizioneDebitoria posizione = new PosizioneDebitoria();
+        String suffisso = UUID.randomUUID().toString().substring(0, 8);
+        posizione.setIdApplicazione(idApplicazionePer("A2A-" + suffisso));
+        posizione.setCodDocumento("pos-" + suffisso);
+        posizione.setIdDominio(idDominioPer(DOMINIO_1));
+        posizione.setDescrizione("test");
+        PdDebitore mario = pdDiProva();
+        PdDebitore giovanna = pdDiProva2();
+        posizione.addPdDebitore(mario);
+        posizione.addPdDebitore(giovanna);
+        opzioneConPendenza(mario, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        opzioneConPendenza(giovanna, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+        return posizione;
+    }
+
+    private OpzionePagamento opzioneDaAggiungere(String suffisso, String numeroAvviso) {
+        OpzionePagamento opzione = nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, suffisso);
+        opzione.getPendenze().get(0).setNumeroAvviso(numeroAvviso);
+        opzione.getPendenze().get(0).setIuv(numeroAvviso);
+        opzione.getPendenze().get(0).setSrcIuv(numeroAvviso);
+        return opzione;
+    }
+
+    @Test
+    @DisplayName("crea con due debitori: ciascuno ha le proprie opzioni, pendenze e NAV")
+    void creaConDueDebitoriOpzioniIndipendenti() {
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+        em.flush();
+        em.clear();
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, salvata.getId());
+        assertThat(riletta.getPdDebitori()).hasSize(2);
+        assertThat(riletta.getPdDebitori()).extracting(pd -> pd.getDebitore().getIdentificativo())
+                .containsExactly(MARIO, GIOVANNA);
+        assertThat(riletta.getPdDebitori()).allSatisfy(pd -> assertThat(pd.getOpzioniPagamento()).hasSize(1));
+        assertThat(riletta.getPdDebitori().get(0).getOpzioniPagamento().get(0).getPendenze())
+                .extracting(Pendenza::getIdPendenza).containsExactly("pendenza-1");
+        assertThat(riletta.getPdDebitori().get(1).getOpzioniPagamento().get(0).getPendenze())
+                .extracting(Pendenza::getIdPendenza).containsExactly("pendenza-2");
+        assertThat(riletta.getOpzioniPagamento()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("l'attivazione di un'opzione annulla le alternative di tutti i debitori della posizione")
+    void attivazioneAnnullaLeOpzioniDegliAltriDebitori() {
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+        em.flush();
+        em.clear();
+
+        service.registraEsitoPendenza(codApplicazioneDi(salvata), "pendenza-1", StatoPendenza.ESEGUITO);
+        em.flush();
+        em.clear();
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, salvata.getId());
+        assertThat(riletta.getPdDebitori().get(0).getOpzioniPagamento().get(0).getStato())
+                .isEqualTo(StatoOpzionePagamento.ATTIVATA);
+        OpzionePagamento altroDebitore = riletta.getPdDebitori().get(1).getOpzioniPagamento().get(0);
+        assertThat(altroDebitore.getStato()).isEqualTo(StatoOpzionePagamento.ANNULLATA);
+        assertThat(altroDebitore.getPendenze().get(0).getStato()).isEqualTo(StatoPendenza.ANNULLATO);
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento aggiunge un'opzione a ciascun debitore, abbinata per identificativo")
+    void aggiungiOpzionePagamentoUnaPerDebitore() {
+        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+
+        java.util.List<OpzionePagamento> nuove = service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                service.idPosizioneDebitoriaPubblica(posizione), java.util.List.of(
+                        new DatiOpzionePagamentoDebitore(GIOVANNA,
+                                DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-g", "400000000000000002"))),
+                        new DatiOpzionePagamentoDebitore(MARIO,
+                                DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-m", "400000000000000001")))));
+        em.flush();
+        em.clear();
+
+        assertThat(nuove).hasSize(2);
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
+        assertThat(riletta.getPdDebitori().get(0).getOpzioniPagamento()).hasSize(2)
+                .flatExtracting(OpzionePagamento::getPendenze).extracting(Pendenza::getIdPendenza)
+                .containsExactlyInAnyOrder("pendenza-1", "pendenza-nuova-m");
+        assertThat(riletta.getPdDebitori().get(1).getOpzioniPagamento()).hasSize(2)
+                .flatExtracting(OpzionePagamento::getPendenze).extracting(Pendenza::getIdPendenza)
+                .containsExactlyInAnyOrder("pendenza-2", "pendenza-nuova-g");
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento rifiuta un comando che non copre tutti i debitori")
+    void aggiungiOpzionePagamentoRifiutaDebitoreMancante() {
+        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                service.idPosizioneDebitoriaPubblica(posizione),
+                java.util.List.of(new DatiOpzionePagamentoDebitore(MARIO,
+                        DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-m", "400000000000000001"))))))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("ciascun debitore");
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento rifiuta un identificativo che non e' un debitore della posizione")
+    void aggiungiOpzionePagamentoRifiutaDebitoreSconosciuto() {
+        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                service.idPosizioneDebitoriaPubblica(posizione), java.util.List.of(
+                        new DatiOpzionePagamentoDebitore(MARIO,
+                                DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-m", "400000000000000001"))),
+                        new DatiOpzionePagamentoDebitore("BNCLRA85M41F205Z",
+                                DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-x", "400000000000000003"))))))
+                .isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento rifiuta due opzioni indicate per lo stesso debitore")
+    void aggiungiOpzionePagamentoRifiutaDebitoreRipetuto() {
+        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                service.idPosizioneDebitoriaPubblica(posizione), java.util.List.of(
+                        new DatiOpzionePagamentoDebitore(MARIO,
+                                DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-m", "400000000000000001"))),
+                        new DatiOpzionePagamentoDebitore(MARIO,
+                                DatiOpzionePagamento.da(opzioneDaAggiungere("nuova-x", "400000000000000003"))))))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("piu' opzioni");
+    }
+
+    @Test
+    @DisplayName("crea rifiuta due debitori con lo stesso identificativo nella stessa posizione")
+    void creaRifiutaDebitoriConStessoIdentificativo() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        PdDebitore doppione = pdDiProva();
+        posizione.addPdDebitore(doppione);
+        opzioneConPendenza(doppione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
+
+        assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("stesso identificativo");
+    }
+
+    @Test
+    @DisplayName("crea rifiuta un debitore senza opzioni di pagamento")
+    void creaRifiutaDebitoreSenzaOpzioni() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.addPdDebitore(pdDiProva2());
+
+        assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("ogni debitore");
     }
 
     @Test
@@ -393,7 +581,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneB.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
         posizioneB.setIdDominio(idDominioPer(DOMINIO_2));
         posizioneB.setDescrizione("test");
-        posizioneB.addSoggettoDebitore(soggettoDiProva());
+        posizioneB.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizioneB, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "b");
         posizioneB = service.crea(DatiPosizioneDebitoria.da(posizioneB));
         UUID idOpzioneB = posizioneB.getOpzioniPagamento().get(0).getIdOpzionePagamento();
@@ -512,7 +700,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneB.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
         posizioneB.setIdDominio(idDominioPer(DOMINIO_2));
         posizioneB.setDescrizione("test");
-        posizioneB.addSoggettoDebitore(soggettoDiProva());
+        posizioneB.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizioneB, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "b");
         posizioneB = service.crea(DatiPosizioneDebitoria.da(posizioneB));
         UUID idOpzioneB = posizioneB.getOpzioniPagamento().get(0).getIdOpzionePagamento();
@@ -666,7 +854,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
         OpzionePagamento b = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
         opzioneConPendenza(b, "b2"); // seconda rata, per un piano rateale realistico
@@ -707,7 +895,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
         opzioneConPendenza(alternativa, "b2"); // seconda rata, per un piano rateale realistico
@@ -740,7 +928,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "b1");
         opzioneConPendenza(alternativa, "b2");
@@ -783,7 +971,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "a");
         OpzionePagamento alternativa = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "b");
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
@@ -922,7 +1110,7 @@ class PosizioneDebitoriaServiceTest {
         em.clear();
 
         PosizioneDebitoria aggiornata = service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
-                new AggiornamentoPosizioneDebitoria(ModificaCampo.imposta("nuova descrizione"), ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato()));
+                new AggiornamentoPosizioneDebitoria(ModificaCampo.imposta("nuova descrizione"), ModificaCampo.invariato()));
 
         assertThat(aggiornata.getDescrizione()).isEqualTo("nuova descrizione");
         assertThat(aggiornata.getDataUltimoAggiornamento()).isNotNull();
@@ -938,59 +1126,24 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("aggiorna rivalida l'aggregato: rifiuta uno svuotamento di soggettiDebitori")
-    void aggiornaRifiutaSoggettiDebitoriVuoti() {
+    @DisplayName("aggiorna non tocca i debitori e le loro opzioni")
+    void aggiornaNonTocaDebitori() {
         PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
-
-        assertThatThrownBy(() -> service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
-                conSoggetti(java.util.List.of())))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("soggetto debitore");
-    }
-
-    @Test
-    @DisplayName("aggiorna sostituisce soggettiDebitori: il vecchio soggetto e' rimosso (orphanRemoval), "
-            + "il nuovo ha ordine assegnato in base alla posizione nella lista")
-    void aggiornaSostituisceSoggettiDebitori() {
-        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
+        Long idPdDebitore = posizione.getPdDebitori().get(0).getId();
+        Long idDebitore = posizione.getPdDebitori().get(0).getDebitore().getId();
         em.flush();
         em.clear();
 
         service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
-                conSoggetti(java.util.List.of(soggettoDiProva2(), soggettoDiProva())));
+                new AggiornamentoPosizioneDebitoria(ModificaCampo.imposta("nuova descrizione"), ModificaCampo.invariato()));
         em.flush();
         em.clear();
 
         PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
-        assertThat(riletta.getSoggettiDebitori()).hasSize(2);
-        assertThat(riletta.getSoggettiDebitori().get(0).getIdentificativo())
-                .isEqualTo(soggettoDiProva2().getIdentificativo());
-        assertThat(riletta.getSoggettiDebitori().get(1).getIdentificativo())
-                .isEqualTo(soggettoDiProva().getIdentificativo());
-    }
-
-    @Test
-    @DisplayName("aggiorna assegna automaticamente navNotifica se il patch attiva notificaSend "
-            + "senza specificarlo esplicitamente (stessa regola di crea)")
-    void aggiornaAssegnaNavNotificaAutomaticamente() {
-        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
-        String numeroAvviso = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getNumeroAvviso();
-
-        PosizioneDebitoria aggiornata = service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
-                new AggiornamentoPosizioneDebitoria(ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.imposta(true), ModificaCampo.invariato(), ModificaCampo.invariato()));
-
-        assertThat(aggiornata.getNavNotifica()).isEqualTo(numeroAvviso);
-    }
-
-    @Test
-    @DisplayName("aggiorna rifiuta un navNotifica che non corrisponde al numeroAvviso di alcuna pendenza")
-    void aggiornaRifiutaNavNotificaNonCorrispondente() {
-        PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA)));
-
-        assertThatThrownBy(() -> service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
-                new AggiornamentoPosizioneDebitoria(ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.imposta("999999999999999999"), ModificaCampo.invariato())))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("navNotifica");
+        assertThat(riletta.getPdDebitori()).hasSize(1);
+        assertThat(riletta.getPdDebitori().get(0).getId()).isEqualTo(idPdDebitore);
+        assertThat(riletta.getPdDebitori().get(0).getDebitore().getId()).isEqualTo(idDebitore);
+        assertThat(riletta.getOpzioniPagamento()).hasSize(1);
     }
 
     @Test
@@ -1005,7 +1158,7 @@ class PosizioneDebitoriaServiceTest {
 
         OpzionePagamento nuova = service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
                 service.idPosizioneDebitoriaPubblica(posizione),
-                DatiOpzionePagamento.da(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "nuova")));
+                perMario(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "nuova"))).get(0);
 
         assertThat(nuova.getIdOpzionePagamento()).isNotNull();
         assertThat(nuova.getStato()).isEqualTo(StatoOpzionePagamento.DISPONIBILE);
@@ -1033,7 +1186,7 @@ class PosizioneDebitoriaServiceTest {
 
         OpzionePagamento nuova = service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
                 service.idPosizioneDebitoriaPubblica(posizione),
-                DatiOpzionePagamento.da(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "nuova")));
+                perMario(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "nuova"))).get(0);
 
         assertThat(nuova.getPendenze().get(0).getNumeroRata()).isEqualTo(1);
         assertThat(nuova.getPendenze().get(0).getVoci().get(0).getIndice()).isEqualTo(1);
@@ -1044,7 +1197,7 @@ class PosizioneDebitoriaServiceTest {
     @DisplayName("aggiungiOpzionePagamento solleva RisorsaNonTrovataException per una posizione inesistente")
     void aggiungiOpzionePagamentoRisorsaInesistente() {
         assertThatThrownBy(() -> service.aggiungiOpzionePagamento("A2A-INESISTENTE", "pos-inesistente",
-                DatiOpzionePagamento.da(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "x"))))
+                perMario(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "x"))))
                 .isInstanceOf(RisorsaNonTrovataException.class);
     }
 
@@ -1058,7 +1211,7 @@ class PosizioneDebitoriaServiceTest {
 
         assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
                 service.idPosizioneDebitoriaPubblica(posizione),
-                DatiOpzionePagamento.da(((java.util.function.Supplier<OpzionePagamento>) () -> {
+                perMario(((java.util.function.Supplier<OpzionePagamento>) () -> {
                     OpzionePagamento opzione = nuovaOpzioneStandalone(1L,
                             TipologiaOpzionePagamento.SOLUZIONE_UNICA, "duplicata");
                     opzione.getPendenze().get(0).setNumeroAvviso(numeroAvvisoEsistente);
@@ -1079,7 +1232,7 @@ class PosizioneDebitoriaServiceTest {
 
         assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
                 service.idPosizioneDebitoriaPubblica(posizione),
-                DatiOpzionePagamento.da(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA,
+                perMario(nuovaOpzioneStandalone(1L, TipologiaOpzionePagamento.SOLUZIONE_UNICA,
                         "dopo-attivazione"))))
                 .isInstanceOf(TransizioneStatoNonAmmessaException.class)
                 .hasMessageContaining("ATTIVATA");
@@ -1095,7 +1248,7 @@ class PosizioneDebitoriaServiceTest {
 
         assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
                 service.idPosizioneDebitoriaPubblica(posizione),
-                DatiOpzionePagamento.da(((java.util.function.Supplier<OpzionePagamento>) () -> {
+                perMario(((java.util.function.Supplier<OpzionePagamento>) () -> {
                     OpzionePagamento opzione = nuovaOpzioneStandalone(1L,
                             TipologiaOpzionePagamento.SOLUZIONE_UNICA, "id-duplicato");
                     opzione.getPendenze().get(0).setIdPendenza(idPendenzaEsistente);
@@ -1199,7 +1352,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneBDaCreare.setCodDocumento("pos-" + suffissoB);
         posizioneBDaCreare.setIdDominio(idDominioPer(DOMINIO_1));
         posizioneBDaCreare.setDescrizione("test");
-        posizioneBDaCreare.addSoggettoDebitore(soggettoDiProva());
+        posizioneBDaCreare.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizioneBDaCreare, TipologiaOpzionePagamento.SOLUZIONE_UNICA, suffissoB);
         PosizioneDebitoria posizioneB = service.crea(DatiPosizioneDebitoria.da(posizioneBDaCreare));
         UUID idOpzioneDiB = posizioneB.getOpzioniPagamento().get(0).getIdOpzionePagamento();
@@ -1222,7 +1375,7 @@ class PosizioneDebitoriaServiceTest {
         seconda.setCodDocumento("pos-id-pendenza-duplicato");
         seconda.setIdDominio(idDominioPer(DOMINIO_1));
         seconda.setDescrizione("test");
-        seconda.addSoggettoDebitore(soggettoDiProva());
+        seconda.addPdDebitore(pdDiProva());
         OpzionePagamento opzione = opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "altra");
         opzione.getPendenze().get(0).setIdPendenza(idPendenzaEsistente);
 
@@ -1313,9 +1466,12 @@ class PosizioneDebitoriaServiceTest {
         posizioneA.setCodDocumento("pos-cerca-1");
         posizioneA.setIdDominio(idDominioPer(DOMINIO_1));
         posizioneA.setDescrizione("test");
-        posizioneA.addSoggettoDebitore(soggettoDiProva2()); // primo debitore diverso
-        posizioneA.addSoggettoDebitore(soggettoDiProva()); // debitore cercato, non il primo
-        opzioneConPendenza(posizioneA, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        PdDebitore primoDiverso = pdDiProva2();
+        PdDebitore cercato = pdDiProva();
+        posizioneA.addPdDebitore(primoDiverso); // primo debitore diverso
+        posizioneA.addPdDebitore(cercato); // debitore cercato, non il primo
+        opzioneConPendenza(primoDiverso, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
+        opzioneConPendenza(cercato, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "4");
         service.crea(DatiPosizioneDebitoria.da(posizioneA));
 
         PosizioneDebitoria posizioneB = new PosizioneDebitoria();
@@ -1323,7 +1479,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneB.setCodDocumento("pos-cerca-2");
         posizioneB.setIdDominio(idDominioPer(DOMINIO_1));
         posizioneB.setDescrizione("test");
-        posizioneB.addSoggettoDebitore(soggettoDiProva());
+        posizioneB.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizioneB, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
         service.crea(DatiPosizioneDebitoria.da(posizioneB));
 
@@ -1332,7 +1488,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneAltroDebitore.setCodDocumento("pos-cerca-3");
         posizioneAltroDebitore.setIdDominio(idDominioPer(DOMINIO_1));
         posizioneAltroDebitore.setDescrizione("test");
-        posizioneAltroDebitore.addSoggettoDebitore(soggettoDiProva2());
+        posizioneAltroDebitore.addPdDebitore(pdDiProva2());
         opzioneConPendenza(posizioneAltroDebitore, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "3");
         service.crea(DatiPosizioneDebitoria.da(posizioneAltroDebitore));
 
@@ -1353,7 +1509,7 @@ class PosizioneDebitoriaServiceTest {
             posizione.setCodDocumento("pos-pag-" + i);
             posizione.setIdDominio(idDominioPer(DOMINIO_1));
             posizione.setDescrizione("test");
-            posizione.addSoggettoDebitore(soggettoDiProva());
+            posizione.addPdDebitore(pdDiProva());
             opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, String.valueOf(i));
             service.crea(DatiPosizioneDebitoria.da(posizione));
         }
@@ -1380,7 +1536,7 @@ class PosizioneDebitoriaServiceTest {
             posizione.setCodDocumento("pos-off-" + i);
             posizione.setIdDominio(idDominioPer(DOMINIO_1));
             posizione.setDescrizione("test");
-            posizione.addSoggettoDebitore(soggettoDiProva());
+            posizione.addPdDebitore(pdDiProva());
             opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, String.valueOf(i));
             service.crea(DatiPosizioneDebitoria.da(posizione));
         }
@@ -1401,7 +1557,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneDominio1.setCodDocumento("pos-nav-dominio1");
         posizioneDominio1.setIdDominio(idDominioPer(DOMINIO_1));
         posizioneDominio1.setDescrizione("test");
-        posizioneDominio1.addSoggettoDebitore(soggettoDiProva());
+        posizioneDominio1.addPdDebitore(pdDiProva());
         Pendenza pendenzaDominio1 = opzioneConPendenza(posizioneDominio1, TipologiaOpzionePagamento.SOLUZIONE_UNICA,
                 "nav-1").getPendenze().get(0);
         pendenzaDominio1.setNumeroAvviso("300000000000000001");
@@ -1413,7 +1569,7 @@ class PosizioneDebitoriaServiceTest {
         posizioneDominio2.setCodDocumento("pos-nav-dominio2");
         posizioneDominio2.setIdDominio(idDominioPer(DOMINIO_2));
         posizioneDominio2.setDescrizione("test");
-        posizioneDominio2.addSoggettoDebitore(soggettoDiProva());
+        posizioneDominio2.addPdDebitore(pdDiProva());
         Pendenza pendenzaDominio2 = opzioneConPendenza(posizioneDominio2, TipologiaOpzionePagamento.SOLUZIONE_UNICA,
                 "nav-2").getPendenze().get(0);
         pendenzaDominio2.setNumeroAvviso("300000000000000001"); // stesso NAV, dominio diverso: M13
@@ -1446,7 +1602,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
         posizione.setDataPubblicazione(LocalDate.now().plusDays(30));
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
@@ -1488,7 +1644,7 @@ class PosizioneDebitoriaServiceTest {
         nonPubblicata.setIdDominio(idDominioPer(DOMINIO_1));
         nonPubblicata.setDescrizione("test");
         nonPubblicata.setDataPubblicazione(LocalDate.now().plusDays(30));
-        nonPubblicata.addSoggettoDebitore(soggettoDiProva());
+        nonPubblicata.addPdDebitore(pdDiProva());
         opzioneConPendenza(nonPubblicata, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         service.crea(DatiPosizioneDebitoria.da(nonPubblicata));
 
@@ -1510,7 +1666,7 @@ class PosizioneDebitoriaServiceTest {
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
         posizione.setDataPubblicazione(LocalDate.now().plusDays(30));
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         OpzionePagamento opzione = opzioneConPendenza(posizione, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         String numeroAvviso = opzione.getPendenze().get(0).getNumeroAvviso();
         service.crea(DatiPosizioneDebitoria.da(posizione));
@@ -1582,7 +1738,7 @@ class PosizioneDebitoriaServiceTest {
         prima.setCodDocumento("pos-nav-dup-1");
         prima.setIdDominio(idDominioPer(DOMINIO_1));
         prima.setDescrizione("test");
-        prima.addSoggettoDebitore(soggettoDiProva());
+        prima.addPdDebitore(pdDiProva());
         Pendenza pendenzaPrima = opzioneConPendenza(prima, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1")
                 .getPendenze().get(0);
         pendenzaPrima.setNumeroAvviso("300000000000000042");
@@ -1594,7 +1750,7 @@ class PosizioneDebitoriaServiceTest {
         seconda.setCodDocumento("pos-nav-dup-2");
         seconda.setIdDominio(idDominioPer(DOMINIO_1)); // stesso dominio della prima
         seconda.setDescrizione("test");
-        seconda.addSoggettoDebitore(soggettoDiProva());
+        seconda.addPdDebitore(pdDiProva());
         Pendenza pendenzaSeconda = opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2")
                 .getPendenze().get(0);
         pendenzaSeconda.setNumeroAvviso("300000000000000042"); // stesso NAV, stesso dominio: rifiutato
@@ -1640,7 +1796,7 @@ class PosizioneDebitoriaServiceTest {
         terza.setCodDocumento("pos-nav-condiviso-terza");
         terza.setIdDominio(idDominio); // stesso dominio delle due pendenze migrate
         terza.setDescrizione("test");
-        terza.addSoggettoDebitore(soggettoDiProva());
+        terza.addPdDebitore(pdDiProva());
         Pendenza pendenzaTerza = opzioneConPendenza(terza, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "3")
                 .getPendenze().get(0);
         pendenzaTerza.setNumeroAvviso(numeroAvvisoCondiviso); // gia' usato da 2 pendenze, non da 1
@@ -1664,7 +1820,7 @@ class PosizioneDebitoriaServiceTest {
         prima.setCodDocumento("pos-duplicata");
         prima.setIdDominio(idDominioPer(DOMINIO_1));
         prima.setDescrizione("test");
-        prima.addSoggettoDebitore(soggettoDiProva());
+        prima.addPdDebitore(pdDiProva());
         opzioneConPendenza(prima, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         service.crea(DatiPosizioneDebitoria.da(prima));
 
@@ -1673,7 +1829,7 @@ class PosizioneDebitoriaServiceTest {
         seconda.setCodDocumento("pos-duplicata"); // stesso codDocumento+idApplicazione, dominio diverso
         seconda.setIdDominio(idDominioPer(DOMINIO_2));
         seconda.setDescrizione("test");
-        seconda.addSoggettoDebitore(soggettoDiProva());
+        seconda.addPdDebitore(pdDiProva());
         opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(seconda));
@@ -1707,7 +1863,7 @@ class PosizioneDebitoriaServiceTest {
         prima.setCodDocumento("pos-race-stesso-dominio");
         prima.setIdDominio(idDominioPer(DOMINIO_1));
         prima.setDescrizione("test");
-        prima.addSoggettoDebitore(soggettoDiProva());
+        prima.addPdDebitore(pdDiProva());
         opzioneConPendenza(prima, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
         service.crea(DatiPosizioneDebitoria.da(prima));
 
@@ -1716,7 +1872,7 @@ class PosizioneDebitoriaServiceTest {
         seconda.setCodDocumento("pos-race-stesso-dominio"); // stesso idA2A+idPosizioneDebitoria
         seconda.setIdDominio(idDominioPer(DOMINIO_1)); // stesso dominio della prima: viola anche unique_documenti_1
         seconda.setDescrizione("test");
-        seconda.addSoggettoDebitore(soggettoDiProva());
+        seconda.addPdDebitore(pdDiProva());
         opzioneConPendenza(seconda, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2");
 
         // Forza il controllo preliminare a non vedere il duplicato gia' presente, simulando
@@ -1740,15 +1896,15 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-senza-campi-debitore");
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        posizione.getPdDebitori().get(0).addOpzionePagamento(opzione);
 
         // Costruita come farebbe il bean converter del livello API: nessun setDebitoreXxx/
         // setSrcDebitoreIdentificativo, quelli non fanno parte dello schema Pendenza dello
-        // YAML v3 (il debitore vero sta su soggettiDebitori).
+        // YAML v3 (il debitore vero sta su pdDebitori).
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(posizione.getIdApplicazione());
         pendenza.setIdPendenza("pendenza-senza-campi-debitore");
@@ -1972,7 +2128,7 @@ class PosizioneDebitoriaServiceTest {
         conNav.setCodDocumento("pos-nav-prima-assegnazione-1");
         conNav.setIdDominio(idDominioPer(DOMINIO_1));
         conNav.setDescrizione("test");
-        conNav.addSoggettoDebitore(soggettoDiProva());
+        conNav.addPdDebitore(pdDiProva());
         opzioneConPendenza(conNav, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1")
                 .getPendenze().get(0).setNumeroAvviso(numeroAvvisoEsistente);
         service.crea(DatiPosizioneDebitoria.da(conNav));
@@ -1982,7 +2138,7 @@ class PosizioneDebitoriaServiceTest {
         senzaNav.setCodDocumento("pos-nav-prima-assegnazione-2");
         senzaNav.setIdDominio(idDominioPer(DOMINIO_1)); // stesso dominio della prima
         senzaNav.setDescrizione("test");
-        senzaNav.addSoggettoDebitore(soggettoDiProva());
+        senzaNav.addPdDebitore(pdDiProva());
         opzioneConPendenza(senzaNav, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2"); // NAV iniziale diverso
         PosizioneDebitoria creata = service.crea(DatiPosizioneDebitoria.da(senzaNav));
         Pendenza pendenzaSenzaNav = creata.getOpzioniPagamento().get(0).getPendenze().get(0);
@@ -2094,32 +2250,39 @@ class PosizioneDebitoriaServiceTest {
         posizione.setCodDocumento("pos-" + suffisso);
         posizione.setIdDominio(idDominioPer(DOMINIO_1));
         posizione.setDescrizione("test");
-        posizione.addSoggettoDebitore(soggettoDiProva());
+        posizione.addPdDebitore(pdDiProva());
         opzioneConPendenza(posizione, tipologia, "1");
         return posizione;
     }
 
-    private SoggettoDebitore soggettoDiProva() {
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setTipo(TipoSoggetto.F);
-        soggetto.setIdentificativo("RSSMRA80A01H501U");
-        soggetto.setAnagrafica("Mario Rossi");
-        return soggetto;
+    private PdDebitore pdDiProva() {
+        return pdDebitore(TipoSoggetto.F, "RSSMRA80A01H501U", "Mario Rossi");
     }
 
-    private SoggettoDebitore soggettoDiProva2() {
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setTipo(TipoSoggetto.F);
-        soggetto.setIdentificativo("VRDGNN80A01H501W");
-        soggetto.setAnagrafica("Giovanna Verdi");
-        return soggetto;
+    private PdDebitore pdDiProva2() {
+        return pdDebitore(TipoSoggetto.F, "VRDGNN80A01H501W", "Giovanna Verdi");
+    }
+
+    private PdDebitore pdDebitore(TipoSoggetto tipo, String identificativo, String anagrafica) {
+        Debitore debitore = new Debitore();
+        debitore.setTipo(tipo);
+        debitore.setIdentificativo(identificativo);
+        debitore.setAnagrafica(anagrafica);
+        PdDebitore pd = new PdDebitore();
+        pd.setDebitore(debitore);
+        return pd;
     }
 
     private OpzionePagamento opzioneConPendenza(PosizioneDebitoria posizione, TipologiaOpzionePagamento tipologia,
             String suffisso) {
+        return opzioneConPendenza(posizione.getPdDebitori().get(0), tipologia, suffisso);
+    }
+
+    private OpzionePagamento opzioneConPendenza(PdDebitore pdDebitore, TipologiaOpzionePagamento tipologia,
+            String suffisso) {
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(tipologia);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
         opzioneConPendenza(opzione, suffisso);
         return opzione;
     }
@@ -2186,7 +2349,7 @@ class PosizioneDebitoriaServiceTest {
         datiOpzione.setStato(StatoOpzionePagamento.ANNULLATA);
         datiOpzione.getPendenze().get(0).setStato(StatoPendenza.ANNULLATO);
         OpzionePagamento aggiunta = service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
-                service.idPosizioneDebitoriaPubblica(posizione), DatiOpzionePagamento.da(datiOpzione));
+                service.idPosizioneDebitoriaPubblica(posizione), perMario(datiOpzione)).get(0);
         Pendenza datiPendenza = nuovaPendenzaStandalone(999L, "seconda");
         datiPendenza.setStato(StatoPendenza.ESEGUITO);
         Pendenza pendenza = service.aggiungiPendenza(codApplicazioneDi(posizione),
@@ -2207,12 +2370,10 @@ class PosizioneDebitoriaServiceTest {
         PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(sorgente));
         service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
                 new AggiornamentoPosizioneDebitoria(ModificaCampo.imposta("nuova descrizione"),
-                        ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
                         ModificaCampo.invariato()));
         assertThat(posizione.getDataPubblicazione()).isEqualTo(data);
         service.aggiorna(codApplicazioneDi(posizione), service.idPosizioneDebitoriaPubblica(posizione),
-                new AggiornamentoPosizioneDebitoria(ModificaCampo.invariato(), ModificaCampo.imposta(null),
-                        ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato()));
+                new AggiornamentoPosizioneDebitoria(ModificaCampo.invariato(), ModificaCampo.imposta(null)));
         assertThat(posizione.getDataPubblicazione()).isNull();
         assertThat(posizione.getDescrizione()).isEqualTo("nuova descrizione");
     }
@@ -2256,10 +2417,8 @@ class PosizioneDebitoriaServiceTest {
         assertThat(aggiornata.getVoci().get(0).getDescrizione()).isEqualTo("aggiornata");
     }
 
-    private static AggiornamentoPosizioneDebitoria conSoggetti(java.util.List<SoggettoDebitore> soggetti) {
-        return new AggiornamentoPosizioneDebitoria(ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.imposta(soggetti.stream().map(DatiSoggettoDebitore::da).toList()));
+    private static java.util.List<DatiOpzionePagamentoDebitore> perMario(OpzionePagamento opzione) {
+        return java.util.List.of(new DatiOpzionePagamentoDebitore("RSSMRA80A01H501U", DatiOpzionePagamento.da(opzione)));
     }
 
     /** Prepara un comando da una COPIA non gestita: il service non riceve callback o entity. */

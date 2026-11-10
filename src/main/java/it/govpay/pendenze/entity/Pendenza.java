@@ -64,7 +64,7 @@ import it.govpay.pendenze.model.StatoPendenza;
  * pagamento legacy (attivazione RPT verso il Nodo, {@code CtPaymentPABuilder.buildSoggettoPagatore};
  * stampa dell'avviso PDF, {@code AvvisoPagamentoUtils.impostaAnagraficaDebitore}) legge
  * queste colonne direttamente — ma quella pipeline e' essa stessa parte di cio' che verra'
- * sostituito/adattato a fine transizione v3 (quando leggera' {@code soggetti_debitori}
+ * sostituito/adattato a fine transizione v3 (quando leggera' {@code debitori}
  * direttamente, non piu' queste colonne): fino ad allora resta un gap noto e accettato per
  * l'attivazione di un pagamento reale su una pendenza v3 attraverso l'endpoint non ancora
  * adattato, non qualcosa che questa libreria deve compensare fingendo un dato che potrebbe
@@ -86,8 +86,8 @@ import it.govpay.pendenze.model.StatoPendenza;
  * <p><b>Altri default legacy alla creazione</b> (colonne operative senza uso proprio in
  * v3): {@code tipo="DOVUTO"} (coerente con la decisione che v3 carica solo pendenze
  * DOVUTO), {@code ack=true}, {@code anomalo=false}, {@code aggiornabile=false},
- * {@code importoPagato}/{@code importoIncassato=0}, {@code sendAbilitato} sincronizzato
- * con {@link PosizioneDebitoria#isNotificaSend()} della posizione.</p>
+ * {@code importoPagato}/{@code importoIncassato=0}, {@code sendAbilitato=false}
+ * (nessun codice della libreria lo imposta: lo valorizza il chiamante).</p>
  */
 @Entity
 @Table(name = "versamenti", uniqueConstraints = @UniqueConstraint(
@@ -280,7 +280,7 @@ public class Pendenza {
     @Column(name = "importo_incassato", nullable = false)
     private double importoIncassato = 0d;
 
-    /** Sincronizzato con {@link PosizioneDebitoria#isNotificaSend()} dal servizio di caricamento. */
+    /** Sincronizzato con {@link PdDebitore#isNotificaSendPayed()} dal servizio di caricamento. */
     @Column(name = "send_abilitato", nullable = false)
     private boolean sendAbilitato = false;
 

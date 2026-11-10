@@ -24,7 +24,8 @@ import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.Debitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.StatoVocePendenza;
@@ -69,14 +70,16 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.setCodDocumento("pos-1");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        SoggettoDebitore soggetto = new SoggettoDebitore();
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(idApplicazione);
@@ -115,14 +118,16 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.setCodDocumento("pos-2");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        SoggettoDebitore soggetto = new SoggettoDebitore();
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(idApplicazione);
@@ -162,14 +167,16 @@ class PosizioneDebitoriaServiceConGeneratoreIuvTest {
         posizione.setCodDocumento("pos-3");
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        SoggettoDebitore soggetto = new SoggettoDebitore();
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdApplicazione(idApplicazione);

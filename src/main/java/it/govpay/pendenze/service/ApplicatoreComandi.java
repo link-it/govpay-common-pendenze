@@ -1,15 +1,17 @@
 package it.govpay.pendenze.service;
 
 import java.util.ArrayList;
+import it.govpay.pendenze.comando.DatiDebitore;
 import it.govpay.pendenze.comando.DatiOpzionePagamento;
+import it.govpay.pendenze.comando.DatiPdDebitore;
 import it.govpay.pendenze.comando.DatiPendenza;
 import it.govpay.pendenze.comando.DatiPosizioneDebitoria;
-import it.govpay.pendenze.comando.DatiSoggettoDebitore;
 import it.govpay.pendenze.comando.DatiVocePendenza;
+import it.govpay.pendenze.entity.Debitore;
 import it.govpay.pendenze.entity.OpzionePagamento;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
@@ -17,8 +19,8 @@ import it.govpay.pendenze.model.StatoPendenza;
 /** Materializza nuove entita dai comandi. Mai esposto ai consumatori del servizio. */
 final class ApplicatoreComandi {
     private ApplicatoreComandi() { }
-    static SoggettoDebitore soggettoDebitore(DatiSoggettoDebitore dati) {
-        SoggettoDebitore e = new SoggettoDebitore();
+    static Debitore debitore(DatiDebitore dati) {
+        Debitore e = new Debitore();
         e.setTipo(dati.tipo());
         e.setIdentificativo(dati.identificativo());
         e.setAnagrafica(dati.anagrafica());
@@ -79,6 +81,15 @@ final class ApplicatoreComandi {
         return e;
     }
 
+    static PdDebitore pdDebitore(DatiPdDebitore dati) {
+        PdDebitore e = new PdDebitore();
+        e.setDebitore(debitore(dati.debitore()));
+        e.setNotificaSendPayed(dati.notificaSendPayed());
+        e.setNotificaSendNav(dati.notificaSendNav());
+        dati.opzioniPagamento().forEach(v -> e.addOpzionePagamento(opzionePagamento(v)));
+        return e;
+    }
+
     static PosizioneDebitoria posizioneDebitoria(DatiPosizioneDebitoria dati) {
         PosizioneDebitoria e = new PosizioneDebitoria();
         e.setCodDocumento(dati.codDocumento());
@@ -87,10 +98,7 @@ final class ApplicatoreComandi {
         e.setIdUnitaOperativa(dati.idUnitaOperativa());
         e.setDescrizione(dati.descrizione());
         e.setDataPubblicazione(dati.dataPubblicazione());
-        e.setNotificaSend(dati.notificaSend());
-        e.setNavNotifica(dati.navNotifica());
-        dati.soggettiDebitori().forEach(v -> e.addSoggettoDebitore(soggettoDebitore(v)));
-        dati.opzioniPagamento().forEach(v -> e.addOpzionePagamento(opzionePagamento(v)));
+        dati.debitori().forEach(v -> e.addPdDebitore(pdDebitore(v)));
         return e;
     }
 

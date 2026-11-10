@@ -28,7 +28,8 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
 
 /**
  * Opzione di pagamento: modalita' alternativa con cui puo' essere estinta una
- * {@link PosizioneDebitoria}, mappata sulla tabella nuova {@code opzioni_pagamento}: la
+ * {@link PosizioneDebitoria} a un suo {@link PdDebitore}, mappata sulla tabella nuova
+ * {@code opzioni_pagamento}: la
  * mutua esclusione tra opzioni alternative non esiste in v2 in nessuna forma — nemmeno
  * manuale: l'unico annullamento legacy e' un'operazione esplicita per singolo
  * versamento, senza cascata sui versamenti "fratelli" — quindi va tracciata da una
@@ -75,8 +76,8 @@ public class OpzionePagamento {
     private UUID idOpzionePagamento;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_documento", nullable = false)
-    private PosizioneDebitoria posizioneDebitoria;
+    @JoinColumn(name = "id_pd_debitore", nullable = false)
+    private PdDebitore pdDebitore;
 
     @Column(name = "tipologia", nullable = false, length = 35)
     @Enumerated(EnumType.STRING)
@@ -141,12 +142,17 @@ public class OpzionePagamento {
         this.idOpzionePagamento = idOpzionePagamento;
     }
 
-    public PosizioneDebitoria getPosizioneDebitoria() {
-        return posizioneDebitoria;
+    public PdDebitore getPdDebitore() {
+        return pdDebitore;
     }
 
-    public void setPosizioneDebitoria(PosizioneDebitoria posizioneDebitoria) {
-        this.posizioneDebitoria = posizioneDebitoria;
+    public void setPdDebitore(PdDebitore pdDebitore) {
+        this.pdDebitore = pdDebitore;
+    }
+
+    /** La posizione dell'opzione, risalendo dal suo debitore. */
+    public PosizioneDebitoria getPosizioneDebitoria() {
+        return pdDebitore.getPosizioneDebitoria();
     }
 
     public TipologiaOpzionePagamento getTipologia() {

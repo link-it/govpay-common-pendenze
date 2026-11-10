@@ -1,5 +1,7 @@
 # Proposta di disegno — modello nativo v3
 
+> **Superato in parte.** Le opzioni di pagamento si agganciano ora al singolo debitore (`pd_debitori`) e `soggetti_debitori` è sostituita da `debitori`: dove questo documento parla di `SoggettoDebitore`, `soggettiDebitori`, `notificaSend`/`navNotifica` sulla posizione o `soggetti_debitori`, vale `opzioni-di-pagamento-per-debitore.md`.
+
 Documento di proposta per il modello dati/entità JPA dell'evolutiva api-pendenze
 v3, dopo l'abbandono del porting del modello legacy (issue #8, PR #9). Sostituisce
 concettualmente `proposta-libreria-pendenze.md`/`f1-modello-e-entita.md` (che

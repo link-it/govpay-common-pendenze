@@ -19,8 +19,8 @@ import java.time.OffsetDateTime;
  *                            confrontato case-insensitive "contiene", o {@code null}
  * @param idPendenza          {@code Pendenza.idPendenza} esatto, o {@code null}
  * @param idDebitore          identificativo del debitore (confrontato case-insensitive contro
- *                            QUALSIASI {@code SoggettoDebitore} della posizione, debitori "in
- *                            solido" compresi), o {@code null}
+ *                            il {@code Debitore} dell'opzione di pagamento della pendenza), o
+ *                            {@code null}
  * @param codEsitoPagamento   valore esatto di {@code Rpt.codEsitoPagamento}, o {@code null}
  * @param dataRichiestaDa     inizio (incluso) della finestra su {@code Rpt.dataMsgRichiesta}, o
  *                            {@code null}

@@ -32,21 +32,18 @@ import jakarta.persistence.Version;
  * e' compito del chiamante (repository/service), non di questa entita'.</p>
  *
  * <p><b>Colonne aggiunte a {@code documenti}</b> (assenti nel legacy, dove il concetto non
- * esiste affatto): {@link #idUnitaOperativa}, {@link #dataPubblicazione}, {@link #notificaSend},
- * {@link #navNotifica}, {@link #dataUltimaModificaAca}, {@link #dataUltimaComunicazioneAca},
- * {@link #dataCreazione}, {@link #dataUltimoAggiornamento} — 8 colonne additive, non le 3
- * inizialmente stimate (mancava di considerare unita' operativa/nav-notifica/ACA, propri
- * solo di questa libreria). {@link #dataPubblicazione} era gia' nel primissimo disegno
+ * esiste affatto): {@link #idUnitaOperativa}, {@link #dataPubblicazione},
+ * {@link #dataUltimaModificaAca}, {@link #dataUltimaComunicazioneAca},
+ * {@link #dataCreazione}, {@link #dataUltimoAggiornamento} — colonne additive, proprie
+ * solo di questa libreria. {@link #dataPubblicazione} era gia' nel primissimo disegno
  * (§3.1 di {@code proposta-modello-nativo-v3.md}), persa durante il pivot al riuso delle
  * tabelle legacy (§17) e ripristinata successivamente.</p>
  *
- * <p><b>{@link #soggettiDebitori} punta a {@code soggetti_debitori}</b>, tabella nuova che
- * contiene TUTTI i debitori, incluso il primo: il
- * debitore appartiene logicamente al documento, non al singolo versamento. Il primo soggetto
- * (ordine 0) NON viene sincronizzato su {@code versamenti.debitore_*} (quella
- * lista resta modificabile dopo la creazione, tenerli allineati nel tempo sarebbe complessita'
- * pura) — quelle colonne restano {@code NOT NULL} in produzione ma valorizzate con placeholder
- * fissi, vedi Javadoc di {@link Pendenza}.</p>
+ * <p><b>{@link #pdDebitori} punta a {@code pd_debitori}</b>, tabella nuova con i debitori
+ * della posizione: ciascuno ha le proprie {@link OpzionePagamento}, quindi il proprio piano di
+ * pagamento e i propri NAV. L'anagrafica del debitore NON viene sincronizzata su
+ * {@code versamenti.debitore_*}: quelle colonne restano {@code NOT NULL} in produzione ma
+ * valorizzate con placeholder fissi, vedi Javadoc di {@link Pendenza}.</p>
  *
  * <p><b>{@code idPosizioneDebitoria} dello YAML v3 non e' una colonna</b>: e' l'IUPD (standard
  * pagoPA GPD, {@code gpd-4-aca.json}) e si deriva al volo concatenando, senza separatore,
@@ -138,10 +135,6 @@ public class PosizioneDebitoria {
     @Column(name = "data_pubblicazione")
     private LocalDate dataPubblicazione;
 
-    /** Colonna aggiunta: concetto assente in {@code documenti} legacy. */
-    @Column(name = "notifica_send", nullable = false)
-    private boolean notificaSend;
-
     /** Colonna aggiunta: analoga a {@link Pendenza#isAnomalo()}, a livello di posizione. */
     @Column(name = "anomalo", nullable = false)
     private boolean anomalo = false;
@@ -149,10 +142,6 @@ public class PosizioneDebitoria {
     /** Colonna aggiunta: analoga a {@link Pendenza#getDescrizioneStato()}, a livello di posizione. */
     @Column(name = "descrizione_stato", length = 255)
     private String descrizioneStato;
-
-    /** Colonna aggiunta. Deve corrispondere al {@code numeroAvviso} di una pendenza della posizione. */
-    @Column(name = "nav_notifica", length = 18)
-    private String navNotifica;
 
     /** Colonna aggiunta. Valorizzata da questa libreria: fa prendere in carico la posizione dal batch ACA. */
     @Column(name = "data_ultima_modifica_aca")
@@ -170,79 +159,30 @@ public class PosizioneDebitoria {
     @Column(name = "data_ultimo_aggiornamento", nullable = false)
     private OffsetDateTime dataUltimoAggiornamento;
 
-    /**
-     * Elenco dei soggetti obbligati al pagamento, in ordine: il primo (ordine 0) e' per
-     * convenzione il soggetto pagatore usato in RPT e nelle comunicazioni che richiedono un
-     * unico destinatario (Nodo dei Pagamenti, ACA/GPD) — vedi nota di classe sulla
-     * sincronizzazione verso {@code versamenti.debitore_*}.
-     */
+    /** I debitori della posizione, ciascuno con le proprie opzioni di pagamento. */
     @OneToMany(mappedBy = "posizioneDebitoria", cascade = CascadeType.ALL, orphanRemoval = true)
-    @OrderBy("ordine ASC")
-    private List<SoggettoDebitore> soggettiDebitori = new ArrayList<>();
-
-    @OneToMany(mappedBy = "posizioneDebitoria", cascade = CascadeType.ALL)
-    @OrderBy("id ASC")
-    private List<OpzionePagamento> opzioniPagamento = new ArrayList<>();
+    @OrderBy("posizione ASC")
+    private List<PdDebitore> pdDebitori = new ArrayList<>();
 
     /**
-     * Aggiunge un soggetto debitore mantenendo coerente il lato inverso della relazione.
-     * L'assegnazione di {@code ordine} resta a carico del chiamante (servizio di
+     * Aggiunge un debitore mantenendo coerente il lato inverso della relazione.
+     * L'assegnazione di {@code posizione} resta a carico del chiamante (servizio di
      * caricamento): l'entita' non decide da sola la posizione nell'elenco.
      *
-     * @param soggetto soggetto da aggiungere, non nullo
+     * @param pdDebitore debitore da aggiungere, non nullo
      */
-    public void addSoggettoDebitore(SoggettoDebitore soggetto) {
-        Objects.requireNonNull(soggetto, "il soggetto da aggiungere non puo' essere nullo");
-        soggettiDebitori.add(soggetto);
-        soggetto.setPosizioneDebitoria(this);
+    public void addPdDebitore(PdDebitore pdDebitore) {
+        Objects.requireNonNull(pdDebitore, "il debitore da aggiungere non puo' essere nullo");
+        pdDebitori.add(pdDebitore);
+        pdDebitore.setPosizioneDebitoria(this);
     }
 
     /**
-     * Sostituisce l'intero elenco dei soggetti debitori (PATCH), mantenendo coerente il
-     * lato inverso della relazione.
-     *
-     * <p><b>Aggiunge prima i nuovi, rimuove dopo i vecchi</b> — mai il contrario. {@code ordine}
-     * ha un vincolo {@code UNIQUE(id_documento, ordine)}: se si rimuovessero prima i vecchi
-     * (es. via {@code clear()}) e poi si aggiungessero i nuovi con lo stesso {@code ordine}
-     * (0-based, quindi tipicamente sovrapposto), Hibernate potrebbe eseguire l'{@code INSERT}
-     * dei nuovi prima del {@code DELETE} (orphan removal) dei vecchi nello stesso flush —
-     * viola il vincolo anche se lo stato finale sarebbe valido (riprodotto: sostituire un
-     * solo soggetto con un altro, stesso {@code ordine=0}, senza un flush intermedio fra le
-     * due fasi). Aggiungendo prima i nuovi con {@code ordine} strettamente maggiore del
-     * massimo attuale (mai collidente con le righe esistenti), ne' l'{@code INSERT} ne' la
-     * successiva {@code DELETE} possono mai violare il vincolo, qualunque sia l'ordine con
-     * cui Hibernate le esegue nel flush — non serve alcun flush intermedio.</p>
-     *
-     * <p>Conseguenza: {@code ordine} cresce monotonicamente nel tempo, non torna a
-     * azzerarsi a ogni sostituzione (dopo una PATCH, i soggetti sopravvissuti non hanno piu'
-     * necessariamente {@code ordine} 0-based). Non e' un problema: l'unico uso di questo
-     * campo e' come chiave di ordinamento ({@code @OrderBy("ordine ASC")} sopra) — nessun
-     * codice ne legge il valore assoluto, solo l'ordine relativo fra i soggetti conta.</p>
-     *
-     * @param nuovi nuovo elenco di soggetti debitori, non nullo (puo' essere vuoto: la
-     *              validazione "almeno un soggetto" e' a carico del chiamante)
+     * Tutte le opzioni di pagamento della posizione, di tutti i suoi debitori: e' l'insieme su
+     * cui vale la mutua esclusione. Vista di sola lettura, calcolata a ogni chiamata.
      */
-    public void sostituisciSoggettiDebitori(List<SoggettoDebitore> nuovi) {
-        Objects.requireNonNull(nuovi, "i soggetti debitori non possono essere null");
-        List<SoggettoDebitore> vecchi = new ArrayList<>(soggettiDebitori);
-        int ordine = vecchi.stream().mapToInt(SoggettoDebitore::getOrdine).max().orElse(-1) + 1;
-        for (SoggettoDebitore soggetto : nuovi) {
-            soggetto.setOrdine(ordine++);
-            addSoggettoDebitore(soggetto);
-        }
-        soggettiDebitori.removeAll(vecchi);
-    }
-
-    /**
-     * Aggiunge un'opzione di pagamento mantenendo coerente il lato inverso della
-     * relazione.
-     *
-     * @param opzione opzione da aggiungere, non nulla
-     */
-    public void addOpzionePagamento(OpzionePagamento opzione) {
-        Objects.requireNonNull(opzione, "l'opzione da aggiungere non puo' essere nulla");
-        opzioniPagamento.add(opzione);
-        opzione.setPosizioneDebitoria(this);
+    public List<OpzionePagamento> getOpzioniPagamento() {
+        return pdDebitori.stream().flatMap(d -> d.getOpzioniPagamento().stream()).toList();
     }
 
     // ── Accessori ────────────────────────────────────────────────────────────
@@ -307,14 +247,6 @@ public class PosizioneDebitoria {
         this.dataPubblicazione = dataPubblicazione;
     }
 
-    public boolean isNotificaSend() {
-        return notificaSend;
-    }
-
-    public void setNotificaSend(boolean notificaSend) {
-        this.notificaSend = notificaSend;
-    }
-
     public boolean isAnomalo() {
         return anomalo;
     }
@@ -329,14 +261,6 @@ public class PosizioneDebitoria {
 
     public void setDescrizioneStato(String descrizioneStato) {
         this.descrizioneStato = descrizioneStato;
-    }
-
-    public String getNavNotifica() {
-        return navNotifica;
-    }
-
-    public void setNavNotifica(String navNotifica) {
-        this.navNotifica = navNotifica;
     }
 
     public OffsetDateTime getDataUltimaModificaAca() {
@@ -371,11 +295,7 @@ public class PosizioneDebitoria {
         this.dataUltimoAggiornamento = dataUltimoAggiornamento;
     }
 
-    public List<SoggettoDebitore> getSoggettiDebitori() {
-        return soggettiDebitori;
-    }
-
-    public List<OpzionePagamento> getOpzioniPagamento() {
-        return opzioniPagamento;
+    public List<PdDebitore> getPdDebitori() {
+        return pdDebitori;
     }
 }

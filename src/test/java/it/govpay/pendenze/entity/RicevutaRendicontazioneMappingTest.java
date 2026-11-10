@@ -271,15 +271,15 @@ class RicevutaRendicontazioneMappingTest {
         posizione.setCodDocumento("pos-ric-rend-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
-        posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
         posizione.setDataUltimoAggiornamento(ADESSO);
 
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setOrdine(0);
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setIdOpzionePagamento(UUID.randomUUID());
@@ -287,7 +287,7 @@ class RicevutaRendicontazioneMappingTest {
         opzione.setStato(StatoOpzionePagamento.DISPONIBILE);
         opzione.setDataCreazione(ADESSO);
         opzione.setDataUltimoAggiornamento(ADESSO);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdDominio(1L);

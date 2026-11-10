@@ -33,7 +33,8 @@ import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.Debitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
@@ -45,7 +46,7 @@ import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
 
 /**
  * Verifica {@link PosizioneDebitoriaService#trovaPendenzaCompletaPerId}: la pendenza torna con
- * voci, opzione, posizione e soggetti debitori gia' caricati, in due sole query, e il grafo
+ * voci, opzione, posizione e debitori gia' caricati, in due sole query, e il grafo
  * resta navigabile dopo la chiusura della sessione (issue #13, lettura per
  * govpay-notify-batch).
  *
@@ -90,9 +91,9 @@ class LetturaPendenzaCompletaTest {
     }
 
     @Test
-    @DisplayName("voci, opzione, posizione e soggetti sono caricati in due query, nell'ordine dichiarato")
+    @DisplayName("voci, opzione, posizione e debitori sono caricati in due query, nell'ordine dichiarato")
     void grafoCaricatoInDueQuery() {
-        PosizioneDebitoria posizione = posizioneConDueSoggettiEDueVoci("DOC-GRAFO", "PND-GRAFO");
+        PosizioneDebitoria posizione = posizioneConDueDebitoriEDueVoci("DOC-GRAFO", "PND-GRAFO");
         em.persistAndFlush(posizione);
         Long idPendenza = posizione.getOpzioniPagamento().get(0).getPendenze().get(0).getId();
         em.clear();
@@ -105,7 +106,7 @@ class LetturaPendenzaCompletaTest {
         assertThat(Hibernate.isInitialized(pendenza.getVoci())).isTrue();
         assertThat(Hibernate.isInitialized(opzione)).isTrue();
         assertThat(Hibernate.isInitialized(opzione.getPosizioneDebitoria())).isTrue();
-        assertThat(Hibernate.isInitialized(opzione.getPosizioneDebitoria().getSoggettiDebitori())).isTrue();
+        assertThat(Hibernate.isInitialized(opzione.getPosizioneDebitoria().getPdDebitori())).isTrue();
 
         // Dopo il detach un accesso a una collezione non caricata solleverebbe
         // LazyInitializationException.
@@ -119,7 +120,7 @@ class LetturaPendenzaCompletaTest {
     void grafoNavigabileFuoriTransazione() {
         TransactionTemplate transazione = new TransactionTemplate(transactionManager);
         Long idPosizione = transazione.execute(stato -> posizioneDebitoriaRepository
-                .save(posizioneConDueSoggettiEDueVoci("DOC-FUORI-TX", "PND-FUORI-TX")).getId());
+                .save(posizioneConDueDebitoriEDueVoci("DOC-FUORI-TX", "PND-FUORI-TX")).getId());
         try {
             Long idPendenza = transazione.execute(stato -> posizioneDebitoriaRepository.findById(idPosizione)
                     .orElseThrow().getOpzioniPagamento().get(0).getPendenze().get(0).getId());
@@ -162,25 +163,25 @@ class LetturaPendenzaCompletaTest {
         assertThat(opzione.getTipologia()).isEqualTo(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
         PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
         assertThat(posizione.getCodDocumento()).startsWith("DOC-");
-        assertThat(posizione.getSoggettiDebitori())
-                .extracting(SoggettoDebitore::getOrdine, SoggettoDebitore::getIdentificativo)
+        assertThat(posizione.getPdDebitori())
+                .extracting(PdDebitore::getPosizione, pd -> pd.getDebitore().getIdentificativo())
                 .containsExactly(
                         tuple(0, "RSSMRA80A01H501U"),
                         tuple(1, "VRDLGU75B02F205X"));
     }
 
-    /** Voci e soggetti aggiunti in ordine inverso, per verificare l'{@code @OrderBy} delle collezioni. */
-    private static PosizioneDebitoria posizioneConDueSoggettiEDueVoci(String codDocumento, String idPendenza) {
+    /** Voci e debitori aggiunti in ordine inverso, per verificare l'{@code @OrderBy} delle collezioni. */
+    private static PosizioneDebitoria posizioneConDueDebitoriEDueVoci(String codDocumento, String idPendenza) {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(1L);
         posizione.setIdDominio(1L);
         posizione.setCodDocumento(codDocumento);
         posizione.setDescrizione("Posizione con due debitori");
-        posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
         posizione.setDataUltimoAggiornamento(ADESSO);
-        posizione.addSoggettoDebitore(soggetto(1, "VRDLGU75B02F205X", "Luigi Verdi"));
-        posizione.addSoggettoDebitore(soggetto(0, "RSSMRA80A01H501U", "Mario Rossi"));
+        posizione.addPdDebitore(pdDebitore(1, "VRDLGU75B02F205X", "Luigi Verdi"));
+        PdDebitore mario = pdDebitore(0, "RSSMRA80A01H501U", "Mario Rossi");
+        posizione.addPdDebitore(mario);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setIdOpzionePagamento(UUID.randomUUID());
@@ -188,7 +189,7 @@ class LetturaPendenzaCompletaTest {
         opzione.setStato(StatoOpzionePagamento.DISPONIBILE);
         opzione.setDataCreazione(ADESSO);
         opzione.setDataUltimoAggiornamento(ADESSO);
-        posizione.addOpzionePagamento(opzione);
+        mario.addOpzionePagamento(opzione);
 
         Pendenza pendenza = pendenza(idPendenza);
         pendenza.addVocePendenza(voce(2));
@@ -197,13 +198,15 @@ class LetturaPendenzaCompletaTest {
         return posizione;
     }
 
-    private static SoggettoDebitore soggetto(int ordine, String identificativo, String anagrafica) {
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setOrdine(ordine);
-        soggetto.setTipo(TipoSoggetto.F);
-        soggetto.setIdentificativo(identificativo);
-        soggetto.setAnagrafica(anagrafica);
-        return soggetto;
+    private static PdDebitore pdDebitore(int posizione, String identificativo, String anagrafica) {
+        Debitore debitore = new Debitore();
+        debitore.setTipo(TipoSoggetto.F);
+        debitore.setIdentificativo(identificativo);
+        debitore.setAnagrafica(anagrafica);
+        PdDebitore pd = new PdDebitore();
+        pd.setPosizione(posizione);
+        pd.setDebitore(debitore);
+        return pd;
     }
 
     private static Pendenza pendenza(String idPendenza) {

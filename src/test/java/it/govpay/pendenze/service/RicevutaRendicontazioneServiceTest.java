@@ -36,7 +36,8 @@ import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.Rendicontazione;
 import it.govpay.pendenze.entity.Rpt;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.Debitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.model.StatoFlussoRendicontazione;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
@@ -413,15 +414,15 @@ class RicevutaRendicontazioneServiceTest {
         posizione.setCodDocumento("pos-" + idPendenza + "-" + UUID.randomUUID().toString().substring(0, 8));
         posizione.setIdDominio(idDominio);
         posizione.setDescrizione("test");
-        posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
         posizione.setDataUltimoAggiornamento(ADESSO);
 
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setOrdine(0);
+        Debitore soggetto = new Debitore();
         soggetto.setTipo(TipoSoggetto.F);
         soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setIdOpzionePagamento(UUID.randomUUID());
@@ -429,7 +430,7 @@ class RicevutaRendicontazioneServiceTest {
         opzione.setStato(StatoOpzionePagamento.DISPONIBILE);
         opzione.setDataCreazione(ADESSO);
         opzione.setDataUltimoAggiornamento(ADESSO);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
         pendenza.setIdDominio(idDominio);

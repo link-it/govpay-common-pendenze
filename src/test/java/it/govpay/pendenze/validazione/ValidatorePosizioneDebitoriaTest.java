@@ -1,5 +1,6 @@
 package it.govpay.pendenze.validazione;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -13,7 +14,8 @@ import it.govpay.common.entity.TipoContabilita;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
+import it.govpay.pendenze.entity.Debitore;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.VocePendenza;
 import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.DettaglioContabile;
@@ -71,7 +73,7 @@ class ValidatorePosizioneDebitoriaTest {
         attiva.getPendenze().get(0).setStato(StatoPendenza.ESEGUITO);
         OpzionePagamento alternativa = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1)
                 .getOpzioniPagamento().get(0);
-        posizione.addOpzionePagamento(alternativa);
+        posizione.getPdDebitori().get(0).addOpzionePagamento(alternativa);
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.validaStati(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class).hasMessageContaining("alternative");
         alternativa.setStato(StatoOpzionePagamento.ATTIVATA);
@@ -92,21 +94,55 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
-    @DisplayName("rifiuta una posizione senza soggetti debitori")
-    void senzaSoggetti() {
+    @DisplayName("rifiuta una posizione senza debitori")
+    void senzaDebitori() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
-        posizione.getSoggettiDebitori().clear();
+        posizione.getPdDebitori().clear();
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("soggetto debitore");
+                .hasMessageContaining("almeno un debitore");
+    }
+
+    @Test
+    @DisplayName("accetta una posizione con piu' debitori, ciascuno con le proprie opzioni")
+    void piuDebitoriConOpzioniProprie() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        posizione.addPdDebitore(pdDebitoreValido("VRDGNN80A01H501W", TipologiaOpzionePagamento.PIANO_RATEALE, 2));
+
+        assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
+        assertThat(posizione.getOpzioniPagamento()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("rifiuta due debitori con lo stesso identificativo nella stessa posizione")
+    void debitoriConStessoIdentificativo() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        posizione.addPdDebitore(pdDebitoreValido("RSSMRA80A01H501U", TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1));
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("stesso identificativo");
+    }
+
+    @Test
+    @DisplayName("rifiuta un debitore senza opzioni di pagamento anche se un altro debitore ne ha")
+    void debitoreSenzaOpzioni() {
+        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        PdDebitore senzaOpzioni = pdDebitoreValido("VRDGNN80A01H501W", TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
+        senzaOpzioni.getOpzioniPagamento().clear();
+        posizione.addPdDebitore(senzaOpzioni);
+
+        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("ogni debitore");
     }
 
     @Test
     @DisplayName("rifiuta una posizione senza opzioni di pagamento")
     void senzaOpzioni() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
-        posizione.getOpzioniPagamento().clear();
+        posizione.getPdDebitori().get(0).getOpzioniPagamento().clear();
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
                 .isInstanceOf(ValidazioneNonSuperataException.class)
@@ -382,10 +418,10 @@ class ValidatorePosizioneDebitoriaTest {
     }
 
     @Test
-    @DisplayName("notificaSend attivo con una voce che ha gia' SPESE_NOTIFICA e' rifiutato (doppio addebito)")
+    @DisplayName("notifica SEND attiva sul debitore con una voce che ha gia' SPESE_NOTIFICA e' rifiutata (doppio addebito)")
     void notificaSendConSpeseNotificaGiaPresente() {
         PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
-        posizione.setNotificaSend(true);
+        posizione.getPdDebitori().get(0).setNotificaSendPayed(true);
         primaVoce(posizione).setDettaglioContabile(List.of(new DettaglioContabile.SpeseNotifica(BigDecimal.ONE)));
 
         assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
@@ -406,18 +442,26 @@ class ValidatorePosizioneDebitoriaTest {
         posizione.setIdDominio(1L);
         posizione.setDescrizione("test");
 
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setTipo(TipoSoggetto.F);
-        soggetto.setIdentificativo("RSSMRA80A01H501U");
-        posizione.addSoggettoDebitore(soggetto);
+        posizione.addPdDebitore(pdDebitoreValido("RSSMRA80A01H501U", tipologia, numeroPendenze));
+        return posizione;
+    }
+
+    /** Debitore con una sola opzione; gli {@code idPendenza} portano l'identificativo, univoci tra debitori. */
+    private PdDebitore pdDebitoreValido(String identificativo, TipologiaOpzionePagamento tipologia,
+            int numeroPendenze) {
+        Debitore debitore = new Debitore();
+        debitore.setTipo(TipoSoggetto.F);
+        debitore.setIdentificativo(identificativo);
+        PdDebitore pdDebitore = new PdDebitore();
+        pdDebitore.setDebitore(debitore);
 
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setTipologia(tipologia);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         for (int i = 1; i <= numeroPendenze; i++) {
             Pendenza pendenza = new Pendenza();
-            pendenza.setIdPendenza("pendenza-" + i);
+            pendenza.setIdPendenza("pendenza-" + identificativo + "-" + i);
             pendenza.setImporto(10.00);
             opzione.addPendenza(pendenza);
 
@@ -430,7 +474,6 @@ class ValidatorePosizioneDebitoriaTest {
             voce.setIdTributo(42L);
             pendenza.addVocePendenza(voce);
         }
-
-        return posizione;
+        return pdDebitore;
     }
 }

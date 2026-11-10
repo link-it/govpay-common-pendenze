@@ -56,31 +56,30 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
     /**
      * Ricerca per debitore ({@code GET /posizioni-debitorie/{idA2A}} dello YAML v3:
      * {@code idDebitore} e' l'unico criterio di ricerca ammesso, oltre a {@code idA2A}).
-     * Trova la posizione se l'identificativo corrisponde a <b>qualunque</b> soggetto in
-     * {@code soggettiDebitori}, non solo al primo (semantica esplicita dello YAML per i
-     * debitori in solido). {@code distinct} evita duplicati se piu' soggetti della stessa
-     * posizione avessero — per un dato scorretto — lo stesso identificativo.
+     * Trova la posizione se l'identificativo corrisponde a <b>qualunque</b> debitore in
+     * {@code pdDebitori}, non solo al primo. {@code distinct} evita duplicati se piu' debitori
+     * della stessa posizione avessero — per un dato scorretto — lo stesso identificativo.
      *
      * <p>Non filtra per {@link PosizioneDebitoria#getDataPubblicazione()} — vedi Javadoc di
      * {@link #findByIdApplicazioneAndIdDominioAndCodDocumento}.</p>
      *
      * @param idApplicazione FK verso l'anagrafica esterna del gestionale responsabile
-     * @param idDebitore     identificativo (codice fiscale/partita IVA) di un soggetto debitore
+     * @param idDebitore     identificativo (codice fiscale/partita IVA) di un debitore
      * @param pageable       paginazione e ordinamento richiesti
      * @return la pagina di posizioni debitorie che rispettano il filtro
      */
-    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(Long idApplicazione,
+    Page<PosizioneDebitoria> findDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(Long idApplicazione,
             String idDebitore, Pageable pageable);
 
     /**
-     * Come {@link #findDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo}, ma senza
+     * Come {@link #findDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo}, ma senza
      * {@code COUNT(*)}: usata per la paginazione a offset con {@code total=false}. Un
      * {@code List} (invece di {@code Page}) con {@link Pageable} non fa eseguire a Spring Data
      * la query di conteggio — il chiamante passa {@code limit + 1} come dimensione di pagina
      * per determinare l'esistenza di una pagina successiva (vedi
      * {@link it.govpay.pendenze.criteri.PaginaSenzaConteggio}).
      */
-    List<PosizioneDebitoria> findAllDistinctByIdApplicazioneAndSoggettiDebitori_Identificativo(Long idApplicazione,
+    List<PosizioneDebitoria> findAllDistinctByIdApplicazioneAndPdDebitori_Debitore_Identificativo(Long idApplicazione,
             String idDebitore, Pageable pageable);
 
     /**
@@ -95,26 +94,26 @@ public interface PosizioneDebitoriaRepository extends JpaRepository<PosizioneDeb
      * @param cursorId            {@code id} dell'ultimo elemento della pagina precedente, o
      *                            {@code null} alla prima pagina
      */
-    @Query("select distinct p from PosizioneDebitoria p join p.soggettiDebitori s "
-            + "where p.idApplicazione = :idApplicazione and s.identificativo = :idDebitore "
+    @Query("select distinct p from PosizioneDebitoria p join p.pdDebitori d "
+            + "where p.idApplicazione = :idApplicazione and d.debitore.identificativo = :idDebitore "
             + "and (:cursorDataCreazione is null or p.dataCreazione < :cursorDataCreazione "
             + "or (p.dataCreazione = :cursorDataCreazione and p.id < :cursorId)) "
             + "order by p.dataCreazione desc, p.id desc")
-    List<PosizioneDebitoria> findByIdApplicazioneAndSoggettiDebitori_IdentificativoDaCursore(
+    List<PosizioneDebitoria> findByIdApplicazioneAndPdDebitori_Debitore_IdentificativoDaCursore(
             @Param("idApplicazione") Long idApplicazione, @Param("idDebitore") String idDebitore,
             @Param("cursorDataCreazione") OffsetDateTime cursorDataCreazione, @Param("cursorId") Long cursorId,
             Pageable pageable);
 
     /**
-     * Inizializza i soggetti debitori di una posizione gia' caricata. Ha effetto solo se
+     * Inizializza i debitori (e la loro anagrafica) di una posizione gia' caricata. Ha effetto solo se
      * chiamata nella stessa transazione in cui la posizione e' stata letta: la query
      * restituisce la stessa istanza gestita e ne riempie la collezione. Usata da
      * {@code PosizioneDebitoriaService#trovaPendenzaCompletaPerId}, dopo
      * {@link PendenzaRepository#findByIdConVociEOpzione}.
      *
      * @param posizione posizione gestita dal persistence context corrente
-     * @return la stessa posizione, con i soggetti debitori caricati
+     * @return la stessa posizione, con i debitori caricati
      */
-    @Query("select p from PosizioneDebitoria p left join fetch p.soggettiDebitori where p = :posizione")
-    PosizioneDebitoria caricaSoggettiDebitori(@Param("posizione") PosizioneDebitoria posizione);
+    @Query("select p from PosizioneDebitoria p left join fetch p.pdDebitori d left join fetch d.debitore where p = :posizione")
+    PosizioneDebitoria caricaDebitori(@Param("posizione") PosizioneDebitoria posizione);
 }

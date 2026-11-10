@@ -37,7 +37,7 @@ Il modello è una posizione debitoria (`documenti`) con una o più opzioni di pa
 |------------|--------------|--------------|-------|
 | [govpay-bom](https://github.com/link-it/govpay-bom) | build | sì | Parent Maven (`2.0.5-SNAPSHOT`): versioni delle dipendenze e dei plugin, compreso Spring Boot |
 | [govpay-common](https://github.com/link-it/govpay-common) | build e runtime | sì | Dipendenza diretta (`govpay-common.version`, oggi `2.0.4-SNAPSHOT`): `ApplicazioneRepository` e `DominioRepository` per risolvere `idA2A` e dominio, `IuvUtils` e `RisolutoreSegnaposto` per gli IUV, `DateTimePatterns` per il fuso orario di default, `TipoContabilita` per le voci |
-| Database di GovPay, schema 3.11.0 o successivo | runtime | sì | Tabelle scritte: `documenti`, `opzioni_pagamento`, `soggetti_debitori`, `versamenti`, `singoli_versamenti`, `id_messaggio_relativo` (progressivi IUV). Tabelle lette: `rpt`, `pagamenti`, `fr`, `rendicontazioni`, `notifiche` (i repository permettono anche di scriverle) e l'anagrafica `domini`, `applicazioni`. Lo schema è creato e aggiornato dagli script del core: vedi [Schema del database](#schema-del-database) |
+| Database di GovPay, schema 3.11.0 o successivo | runtime | sì | Tabelle scritte: `documenti`, `debitori`, `pd_debitori`, `opzioni_pagamento`, `versamenti`, `singoli_versamenti`, `id_messaggio_relativo` (progressivi IUV). Tabelle lette: `rpt`, `pagamenti`, `fr`, `rendicontazioni`, `notifiche` (i repository permettono anche di scriverle) e l'anagrafica `domini`, `applicazioni`. Lo schema è creato e aggiornato dagli script del core: vedi [Schema del database](#schema-del-database) |
 | Progetti che usano la libreria | build | - | Dipendenza diretta nel `pom.xml` (proprietà `govpay-common-pendenze.version`): [govpay-pendenze-api](https://github.com/link-it/govpay-pendenze-api), [govpay-pafornode-api](https://github.com/link-it/govpay-pafornode-api), [govpay-console-api](https://github.com/link-it/govpay-console-api) sul ramo `3.11`; [govpay-notify-batch](https://github.com/link-it/govpay-notify-batch) sul ramo `30-modello-dati-v3` |
 
 ## Compilazione
@@ -151,9 +151,9 @@ Se la scansione non include `it.govpay.pendenze.iuv`, `GeneratoreIuvAutoConfigur
 
 | Metodo | Operazione |
 |--------|------------|
-| `crea(DatiPosizioneDebitoria)` | Crea una posizione debitoria con opzioni, pendenze, voci e soggetti debitori; assegna IUV e numero avviso dove mancano |
+| `crea(DatiPosizioneDebitoria)` | Crea una posizione debitoria con i suoi debitori, ciascuno con le proprie opzioni, pendenze e voci; assegna IUV e numero avviso dove mancano |
 | `aggiorna`, `aggiornaPendenza` | Aggiornamento parziale della posizione o di una pendenza (`ModificaCampo` distingue "non indicato" da "indicato a null") |
-| `aggiungiOpzionePagamento`, `aggiungiPendenza` | Aggiunta di un'opzione o di una pendenza a una posizione esistente |
+| `aggiungiOpzionePagamento`, `aggiungiPendenza` | Aggiunta di un'opzione (una per ciascun debitore) o di una pendenza a una posizione esistente |
 | `annulla`, `ripristina` | Annullamento e ripristino di un'opzione di pagamento |
 | `registraEsitoPendenza`, `registraImportoSend` | Esito di una pendenza; importo delle spese di notifica SEND |
 | `trovaPerId`, `trovaPerIdentificativo`, `trovaPendenzaPerIdentificativo` | Lettura per chiave interna o per identificativo pubblico (`idA2A` + `idPosizioneDebitoria` o `idPendenza`) |
@@ -170,7 +170,8 @@ Tutti gli istanti scritti dalla libreria vengono dal bean `Clock`: un test o un'
 |--------|---------|------------|
 | `PosizioneDebitoria` | `documenti` | `PosizioneDebitoriaRepository` |
 | `OpzionePagamento` | `opzioni_pagamento` | `OpzionePagamentoRepository` |
-| `SoggettoDebitore` | `soggetti_debitori` | (tramite `PosizioneDebitoria`) |
+| `PdDebitore` | `pd_debitori` | (tramite `PosizioneDebitoria`) |
+| `Debitore` | `debitori` | (tramite `PdDebitore`) |
 | `Pendenza` | `versamenti` | `PendenzaRepository` |
 | `VocePendenza` | `singoli_versamenti` | (tramite `Pendenza`) |
 | `Rpt`, `RptXmlRptEntity` | `rpt` | `RptRepository`, `RptXmlRptRepository` |
@@ -216,14 +217,14 @@ Le eccezioni sono tutte runtime; il livello REST le traduce (la colonna "Traduzi
 
 ### Documenti di disegno
 
-In [docs](docs) ci sono i documenti di analisi e disegno del modello v3: [proposta-modello-nativo-v3.md](docs/proposta-modello-nativo-v3.md) e [riconciliazione-legacy-v3.md](docs/riconciliazione-legacy-v3.md) sono quelli di riferimento; gli altri sono archiviati e lo dichiarano in testa.
+In [docs](docs) ci sono i documenti di analisi e disegno del modello v3: [proposta-modello-nativo-v3.md](docs/proposta-modello-nativo-v3.md), [riconciliazione-legacy-v3.md](docs/riconciliazione-legacy-v3.md) e [opzioni-di-pagamento-per-debitore.md](docs/opzioni-di-pagamento-per-debitore.md) (debitori e opzioni di pagamento) sono quelli di riferimento; gli altri sono archiviati e lo dichiarano in testa.
 
 ## Schema del database
 
 La libreria non crea né modifica lo schema: richiede il database di GovPay alla versione **3.11.0** o successiva, quella che introduce il modello v3 delle posizioni debitorie ([Issue #901](https://github.com/link-it/govpay/issues/901) del core, ramo `3.11.x`). Lo schema è definito dagli script del core in [`src/main/resources/db/sql`](https://github.com/link-it/govpay/tree/3.11.x/src/main/resources/db/sql), per PostgreSQL, MySQL/MariaDB, Oracle, SQL Server e HSQLDB:
 
 - `gov_pay.sql`: installazione nuova;
-- `patch/3.11.0.sql`: aggiornamento di un database esistente. Aggiunge a `documenti` le colonne `id_unita_operativa`, `data_pubblicazione`, `notifica_send`, `nav_notifica`, `data_ultima_modifica_aca`, `data_ultima_comunicazione_aca`, `data_creazione`, `data_ultimo_aggiornamento`, `versione` e porta `descrizione` a 1024 caratteri; aggiunge a `versamenti` le colonne `numero_rata` e `id_opzione_pagamento`; crea `opzioni_pagamento` e `soggetti_debitori`; migra i dati esistenti al modello v3;
+- `patch/3.11.0.sql`: aggiornamento di un database esistente. Aggiunge a `documenti` le colonne `id_unita_operativa`, `data_pubblicazione`, `data_ultima_modifica_aca`, `data_ultima_comunicazione_aca`, `data_creazione`, `data_ultimo_aggiornamento`, `versione` e porta `descrizione` a 1024 caratteri; aggiunge a `versamenti` le colonne `numero_rata` e `id_opzione_pagamento`; crea `debitori`, `pd_debitori` e `opzioni_pagamento`; migra i dati esistenti al modello v3;
 - `migrazione/riallineamento-v3.sql`: da eseguire una volta, al passaggio all'API v3, su un database già aggiornato alla 3.11.0 su cui il core v2 ha continuato a scrivere.
 
 Lo schema SQL del core è la fonte: il mapping delle entità si adegua alle colonne del core (nomi, tipi, nullabilità), non il contrario.

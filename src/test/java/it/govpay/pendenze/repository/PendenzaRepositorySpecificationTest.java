@@ -8,8 +8,6 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
-import jakarta.persistence.criteria.Subquery;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,10 +22,11 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.ActiveProfiles;
 
+import it.govpay.pendenze.entity.Debitore;
 import it.govpay.pendenze.entity.OpzionePagamento;
+import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
-import it.govpay.pendenze.entity.SoggettoDebitore;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 import it.govpay.pendenze.model.TipoSoggetto;
@@ -59,25 +58,33 @@ class PendenzaRepositorySpecificationTest {
     private PendenzaRepository pendenzaRepository;
 
     @Test
-    @DisplayName("una Specification su idDominio e su un soggetto debitore della posizione filtra le pendenze")
+    @DisplayName("una Specification su idDominio e sul debitore dell'opzione filtra le pendenze")
     void specificationSuDominioEDebitore() {
-        // Posizione del dominio A con Mario come co-obbligato (ordine 1): deve essere trovata.
-        persisti(posizione(DOMINIO_A, "doc-a1", GIOVANNA, MARIO), "pend-a1", "300000000000000001");
+        // Posizione del dominio A con due debitori, ciascuno con la propria pendenza:
+        // il filtro su Mario trova solo la pendenza di Mario.
+        PosizioneDebitoria a1 = posizione(DOMINIO_A, "doc-a1", GIOVANNA, MARIO);
+        aggiungiPendenza(a1.getPdDebitori().get(0), "pend-a1-giovanna", "300000000000000001");
+        aggiungiPendenza(a1.getPdDebitori().get(1), "pend-a1-mario", "300000000000000002");
+        em.persist(a1);
         // Stesso dominio, altro debitore: esclusa dal filtro sul debitore.
-        persisti(posizione(DOMINIO_A, "doc-a2", GIOVANNA), "pend-a2", "300000000000000002");
+        PosizioneDebitoria a2 = posizione(DOMINIO_A, "doc-a2", GIOVANNA);
+        aggiungiPendenza(a2.getPdDebitori().get(0), "pend-a2", "300000000000000003");
+        em.persist(a2);
         // Stesso debitore, altro dominio: esclusa dal filtro sul dominio.
-        persisti(posizione(DOMINIO_B, "doc-b1", MARIO), "pend-b1", "300000000000000003");
+        PosizioneDebitoria b1 = posizione(DOMINIO_B, "doc-b1", MARIO);
+        aggiungiPendenza(b1.getPdDebitori().get(0), "pend-b1", "300000000000000004");
+        em.persist(b1);
         em.flush();
         em.clear();
 
         Specification<Pendenza> spec = dominio(DOMINIO_A).and(debitore(MARIO));
 
         List<Pendenza> trovate = pendenzaRepository.findAll(spec);
-        assertThat(trovate).extracting(Pendenza::getIdPendenza).containsExactly("pend-a1");
+        assertThat(trovate).extracting(Pendenza::getIdPendenza).containsExactly("pend-a1-mario");
 
         Page<Pendenza> pagina = pendenzaRepository.findAll(dominio(DOMINIO_A),
                 PageRequest.of(0, 10, Sort.by(Sort.Order.desc("dataCreazione"), Sort.Order.desc("id"))));
-        assertThat(pagina.getTotalElements()).isEqualTo(2);
+        assertThat(pagina.getTotalElements()).isEqualTo(3);
         assertThat(pendenzaRepository.count(spec)).isEqualTo(1);
     }
 
@@ -85,30 +92,24 @@ class PendenzaRepositorySpecificationTest {
         return (root, query, cb) -> cb.equal(root.get("idDominio"), idDominio);
     }
 
-    /** Come il filtro {@code idDebitore} di {@code cercaFiltrate}: qualsiasi soggetto della posizione. */
+    /** Come il filtro {@code idDebitore} di {@code cercaFiltrate}: il debitore dell'opzione della pendenza. */
     private static Specification<Pendenza> debitore(String identificativo) {
-        return (root, query, cb) -> {
-            Subquery<Long> sq = query.subquery(Long.class);
-            var sd = sq.from(SoggettoDebitore.class);
-            sq.select(sd.get("id")).where(
-                    cb.equal(sd.get("posizioneDebitoria"),
-                            root.get("opzionePagamento").get("posizioneDebitoria")),
-                    cb.equal(sd.get("identificativo"), identificativo));
-            return cb.exists(sq);
-        };
+        return (root, query, cb) -> cb.equal(
+                root.get("opzionePagamento").get("pdDebitore").get("debitore").get("identificativo"),
+                identificativo);
     }
 
-    private void persisti(PosizioneDebitoria posizione, String idPendenza, String numeroAvviso) {
+    private void aggiungiPendenza(PdDebitore pdDebitore, String idPendenza, String numeroAvviso) {
         OpzionePagamento opzione = new OpzionePagamento();
         opzione.setIdOpzionePagamento(UUID.randomUUID());
         opzione.setTipologia(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
         opzione.setStato(StatoOpzionePagamento.DISPONIBILE);
         opzione.setDataCreazione(ADESSO);
         opzione.setDataUltimoAggiornamento(ADESSO);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = new Pendenza();
-        pendenza.setIdDominio(posizione.getIdDominio());
+        pendenza.setIdDominio(pdDebitore.getPosizioneDebitoria().getIdDominio());
         pendenza.setIdApplicazione(1L);
         pendenza.setIdPendenza(idPendenza);
         pendenza.setIdTipoPendenza(1L);
@@ -122,8 +123,6 @@ class PendenzaRepositorySpecificationTest {
         pendenza.setDataCreazione(ADESSO);
         pendenza.setDataUltimoAggiornamento(ADESSO);
         opzione.addPendenza(pendenza);
-
-        em.persist(posizione);
     }
 
     private static PosizioneDebitoria posizione(long idDominio, String codDocumento, String... debitori) {
@@ -133,16 +132,17 @@ class PendenzaRepositorySpecificationTest {
         posizione.setIdDominio(idDominio);
         posizione.setDescrizione("Posizione " + codDocumento);
         posizione.setDataPubblicazione(LocalDate.of(2026, 11, 8));
-        posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
         posizione.setDataUltimoAggiornamento(ADESSO);
         for (int i = 0; i < debitori.length; i++) {
-            SoggettoDebitore soggetto = new SoggettoDebitore();
-            soggetto.setOrdine(i);
-            soggetto.setTipo(TipoSoggetto.F);
-            soggetto.setIdentificativo(debitori[i]);
-            soggetto.setAnagrafica("Debitore " + i);
-            posizione.addSoggettoDebitore(soggetto);
+            Debitore debitore = new Debitore();
+            debitore.setTipo(TipoSoggetto.F);
+            debitore.setIdentificativo(debitori[i]);
+            debitore.setAnagrafica("Debitore " + i);
+            PdDebitore pd = new PdDebitore();
+            pd.setPosizione(i);
+            pd.setDebitore(debitore);
+            posizione.addPdDebitore(pd);
         }
         return posizione;
     }

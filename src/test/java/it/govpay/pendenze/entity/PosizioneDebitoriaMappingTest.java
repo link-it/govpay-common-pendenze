@@ -51,11 +51,11 @@ class PosizioneDebitoriaMappingTest {
     @DisplayName("una posizione con l'aggregato minimo viene salvata e riletta")
     void aggregatoMinimo() {
         PosizioneDebitoria posizione = posizioneMinima();
-        SoggettoDebitore soggetto = soggetto(0, "RSSMRA80A01H501U", "Mario Rossi");
-        posizione.addSoggettoDebitore(soggetto);
+        PdDebitore pdDebitore = pdDebitore(0, "RSSMRA80A01H501U", "Mario Rossi");
+        posizione.addPdDebitore(pdDebitore);
 
         OpzionePagamento opzione = opzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
 
         Pendenza pendenza = pendenza(posizione.getIdDominio(), "10000000001", "300000000000000001");
         opzione.addPendenza(pendenza);
@@ -73,15 +73,18 @@ class PosizioneDebitoriaMappingTest {
         assertThat(riletta.getCodDocumento()).isEqualTo("abcdef12345");
         assertThat(riletta.getDataCreazione().toInstant()).isEqualTo(ADESSO.toInstant());
         assertThat(riletta.getDataPubblicazione()).isEqualTo(LocalDate.of(2026, 8, 1));
-        assertThat(riletta.isNotificaSend()).isFalse();
         assertThat(riletta.isAnomalo()).isFalse();
         assertThat(riletta.getDescrizioneStato()).isNull();
 
-        assertThat(riletta.getSoggettiDebitori()).hasSize(1);
-        SoggettoDebitore soggettoLetto = riletta.getSoggettiDebitori().get(0);
-        assertThat(soggettoLetto.getTipo()).isEqualTo(TipoSoggetto.F);
-        assertThat(soggettoLetto.getIdentificativo()).isEqualTo("RSSMRA80A01H501U");
-        assertThat(soggettoLetto.getPosizioneDebitoria().getId()).isEqualTo(riletta.getId());
+        assertThat(riletta.getPdDebitori()).hasSize(1);
+        PdDebitore pdLetto = riletta.getPdDebitori().get(0);
+        assertThat(pdLetto.getPosizioneDebitoria().getId()).isEqualTo(riletta.getId());
+        assertThat(pdLetto.isNotificaSendPayed()).isFalse();
+        assertThat(pdLetto.getNotificaSendNav()).isNull();
+        Debitore debitoreLetto = pdLetto.getDebitore();
+        assertThat(debitoreLetto.getTipo()).isEqualTo(TipoSoggetto.F);
+        assertThat(debitoreLetto.getIdentificativo()).isEqualTo("RSSMRA80A01H501U");
+        assertThat(pdLetto.getOpzioniPagamento()).hasSize(1);
 
         assertThat(riletta.getOpzioniPagamento()).hasSize(1);
         OpzionePagamento opzioneLetta = riletta.getOpzioniPagamento().get(0);
@@ -111,7 +114,7 @@ class PosizioneDebitoriaMappingTest {
         PosizioneDebitoria posizione = posizioneMinima();
         posizione.setAnomalo(true);
         posizione.setDescrizioneStato("Ricevuta acquisita su un'opzione di pagamento gia' annullata");
-        posizione.addSoggettoDebitore(soggetto(0, "RSSMRA80A01H501U", "Mario Rossi"));
+        posizione.addPdDebitore(pdDebitore(0, "RSSMRA80A01H501U", "Mario Rossi"));
 
         em.persistAndFlush(posizione);
         em.clear();
@@ -127,9 +130,10 @@ class PosizioneDebitoriaMappingTest {
     @DisplayName("dettaglioContabile sopravvive alla rilettura tramite il converter JPA")
     void dettaglioContabileSopravviveAllaRilettura() {
         PosizioneDebitoria posizione = posizioneMinima();
-        posizione.addSoggettoDebitore(soggetto(0, "RSSMRA80A01H501U", "Mario Rossi"));
+        PdDebitore pdDebitore = pdDebitore(0, "RSSMRA80A01H501U", "Mario Rossi");
+        posizione.addPdDebitore(pdDebitore);
         OpzionePagamento opzione = opzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.addOpzionePagamento(opzione);
+        pdDebitore.addOpzionePagamento(opzione);
         Pendenza pendenza = pendenza(posizione.getIdDominio(), "10000000001", "300000000000000001");
         opzione.addPendenza(pendenza);
 
@@ -151,14 +155,17 @@ class PosizioneDebitoriaMappingTest {
     }
 
     @Test
-    @DisplayName("l'ordine di soggetti, pendenze e voci sopravvive alla rilettura")
+    @DisplayName("l'ordine di debitori, pendenze e voci sopravvive alla rilettura")
     void ordineMantenuto() {
         PosizioneDebitoria posizione = posizioneMinima();
-        posizione.addSoggettoDebitore(soggetto(1, "VRDGNN80A01H501W", "Giovanna Verdi"));
-        posizione.addSoggettoDebitore(soggetto(0, "RSSMRA80A01H501U", "Mario Rossi"));
+        PdDebitore giovanna = pdDebitore(1, "VRDGNN80A01H501W", "Giovanna Verdi");
+        posizione.addPdDebitore(giovanna);
+        PdDebitore mario = pdDebitore(0, "RSSMRA80A01H501U", "Mario Rossi");
+        posizione.addPdDebitore(mario);
 
         OpzionePagamento opzione = opzione(TipologiaOpzionePagamento.PIANO_RATEALE);
-        posizione.addOpzionePagamento(opzione);
+        mario.addOpzionePagamento(opzione);
+        giovanna.addOpzionePagamento(opzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA));
 
         Pendenza rata2 = pendenza(posizione.getIdDominio(), "rata-2", "300000000000000002");
         rata2.setNumeroRata(2);
@@ -175,12 +182,13 @@ class PosizioneDebitoriaMappingTest {
 
         PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
 
-        assertThat(riletta.getSoggettiDebitori()).extracting(SoggettoDebitore::getOrdine)
+        assertThat(riletta.getPdDebitori()).extracting(PdDebitore::getPosizione)
                 .containsExactly(0, 1);
-        assertThat(riletta.getOpzioniPagamento().get(0).getPendenze())
+        OpzionePagamento rateale = riletta.getPdDebitori().get(0).getOpzioniPagamento().get(0);
+        assertThat(rateale.getPendenze())
                 .extracting(Pendenza::getNumeroRata)
                 .containsExactly(1, 2);
-        assertThat(riletta.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci())
+        assertThat(rateale.getPendenze().get(0).getVoci())
                 .extracting(VocePendenza::getIndice)
                 .containsExactly(1, 2);
     }
@@ -198,19 +206,20 @@ class PosizioneDebitoriaMappingTest {
         posizione.setIdDominio(1L);
         posizione.setDescrizione("Sanzione CdS n. abc00000");
         posizione.setDataPubblicazione(LocalDate.of(2026, 8, 1));
-        posizione.setNotificaSend(false);
         posizione.setDataCreazione(ADESSO);
         posizione.setDataUltimoAggiornamento(ADESSO);
         return posizione;
     }
 
-    private SoggettoDebitore soggetto(int ordine, String identificativo, String anagrafica) {
-        SoggettoDebitore soggetto = new SoggettoDebitore();
-        soggetto.setOrdine(ordine);
-        soggetto.setTipo(TipoSoggetto.F);
-        soggetto.setIdentificativo(identificativo);
-        soggetto.setAnagrafica(anagrafica);
-        return soggetto;
+    private PdDebitore pdDebitore(int posizione, String identificativo, String anagrafica) {
+        Debitore debitore = new Debitore();
+        debitore.setTipo(TipoSoggetto.F);
+        debitore.setIdentificativo(identificativo);
+        debitore.setAnagrafica(anagrafica);
+        PdDebitore pd = new PdDebitore();
+        pd.setPosizione(posizione);
+        pd.setDebitore(debitore);
+        return pd;
     }
 
     private OpzionePagamento opzione(TipologiaOpzionePagamento tipologia) {

@@ -12,13 +12,9 @@ public record DatiPosizioneDebitoria(
         Long idUnitaOperativa,
         String descrizione,
         LocalDate dataPubblicazione,
-        boolean notificaSend,
-        String navNotifica,
-        List<DatiSoggettoDebitore> soggettiDebitori,
-        List<DatiOpzionePagamento> opzioniPagamento) {
+        List<DatiPdDebitore> debitori) {
     public DatiPosizioneDebitoria {
-        soggettiDebitori = List.copyOf(soggettiDebitori);
-        opzioniPagamento = List.copyOf(opzioniPagamento);
+        debitori = List.copyOf(debitori);
     }
 
     /** Copia i soli campi ammessi; successive modifiche all'entita non modificano il comando. */
@@ -29,9 +25,6 @@ public record DatiPosizioneDebitoria(
                 e.getIdUnitaOperativa(),
                 e.getDescrizione(),
                 e.getDataPubblicazione(),
-                e.isNotificaSend(),
-                e.getNavNotifica(),
-                e.getSoggettiDebitori().stream().map(DatiSoggettoDebitore::da).toList(),
-                e.getOpzioniPagamento().stream().map(DatiOpzionePagamento::da).toList());
+                e.getPdDebitori().stream().map(DatiPdDebitore::da).toList());
     }
 }

@@ -7,50 +7,30 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 
 import it.govpay.pendenze.model.TipoSoggetto;
 
 /**
- * Soggetto obbligato al pagamento di una {@link PosizioneDebitoria} ("debitore in
- * solido"), mappato sulla tabella nuova {@code soggetti_debitori}: TUTTI i debitori
- * vivono qui, incluso il primo — il debitore appartiene logicamente al documento, non
- * al singolo versamento legacy.
+ * Anagrafica di un debitore, mappata sulla tabella nuova {@code debitori}. E' un'anagrafica
+ * per occorrenza: ogni {@link PdDebitore} ha la propria riga, nessun vincolo di unicita' su
+ * {@link #identificativo} e nessun riuso tra posizioni.
  *
- * <p>{@link #ordine} e' la sola fonte di verita' su "chi e' il soggetto pagatore": il
- * primo (ordine 0), per convenzione dello YAML v3 (righe 1484-1494), essendo il Nodo dei
- * Pagamenti vincolato a un solo soggetto pagatore per avviso. <b>Non</b> viene sincronizzato
- * su {@code versamenti.debitore_*}: questa lista resta modificabile dopo
- * la creazione (aggiornamento via PATCH, sviluppo successivo), e tenere allineate quelle
- * colonne a ogni modifica sarebbe complessita' pura — {@code soggetti_debitori} e' l'unica
- * fonte di verita' per v3, quelle colonne restano un placeholder per la sola compatibilita'
- * con la pipeline di pagamento legacy non ancora adattata a v3 — vedi Javadoc di
- * {@link Pendenza}.</p>
+ * <p>Non viene sincronizzata su {@code versamenti.debitore_*}: quelle colonne restano un
+ * placeholder per la sola compatibilita' con la pipeline di pagamento legacy non ancora
+ * adattata a v3 — vedi Javadoc di {@link Pendenza}.</p>
  */
 @Entity
-@Table(name = "soggetti_debitori", uniqueConstraints = @UniqueConstraint(
-        name = "unique_soggetti_debitori_1", columnNames = {"id_documento", "ordine"}))
-public class SoggettoDebitore {
+@Table(name = "debitori")
+public class Debitore {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_documento", nullable = false)
-    private PosizioneDebitoria posizioneDebitoria;
-
-    /** 0-based: 0 e' sempre il soggetto pagatore per convenzione. */
-    @Column(name = "ordine", nullable = false)
-    private int ordine;
 
     /**
      * {@code @JdbcTypeCode(SqlTypes.VARCHAR)}: senza, Hibernate per un enum-stringa di
@@ -103,22 +83,6 @@ public class SoggettoDebitore {
 
     public void setId(Long id) {
         this.id = id;
-    }
-
-    public PosizioneDebitoria getPosizioneDebitoria() {
-        return posizioneDebitoria;
-    }
-
-    public void setPosizioneDebitoria(PosizioneDebitoria posizioneDebitoria) {
-        this.posizioneDebitoria = posizioneDebitoria;
-    }
-
-    public int getOrdine() {
-        return ordine;
-    }
-
-    public void setOrdine(int ordine) {
-        this.ordine = ordine;
     }
 
     public TipoSoggetto getTipo() {

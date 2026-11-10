@@ -34,7 +34,7 @@
 --
 -- documenti/versamenti/singoli_versamenti sono le tabelle legacy REALI (stessa
 -- DDL di gov_pay.sql, colonna per colonna) con SOLO aggiunte additive:
---   - documenti: +notifica_send, +data_creazione, +data_ultimo_aggiornamento
+--   - documenti: +data_creazione, +data_ultimo_aggiornamento
 --   - versamenti: +id_opzione_pagamento (FK nullable verso la tabella nuova
 --     opzioni_pagamento) — cod_rata resta intatto, v2 lo ignora del tutto
 --   - singoli_versamenti: nessuna aggiunta. contabilita/metadata sono RIUSATE
@@ -49,18 +49,20 @@
 -- le variazioni al DB" sul principio project-wide di usare sempre NUMERIC. Le
 -- entity mappano questi campi come Double/double, non BigDecimal, per
 -- combaciare col tipo di colonna reale. Le tabelle NUOVE (opzioni_pagamento,
--- soggetti_debitori) restano NUMERIC dove serve, non essendo un riuso.
+-- debitori, pd_debitori) restano NUMERIC dove serve, non essendo un riuso.
 --
--- opzioni_pagamento e soggetti_debitori sono le UNICHE tabelle nuove:
+-- opzioni_pagamento, debitori e pd_debitori sono le UNICHE tabelle nuove:
 --   - opzioni_pagamento: la macchina a stati (DISPONIBILE/ATTIVATA/ANNULLATA)
 --     non esiste in v2 in nessuna forma, nemmeno manuale (verificato: l'unico
 --     annullamento legacy e' un'operazione esplicita per singolo versamento,
 --     nessuna cascata automatica sui versamenti "fratelli" alternativi) — va
---     tracciata ed eseguita da qualche parte.
---   - soggetti_debitori: TUTTI i debitori, incluso il primo (decisione del
+--     tracciata ed eseguita da qualche parte. Ogni opzione appartiene a un
+--     debitore della posizione (pd_debitori); la mutua esclusione resta a
+--     livello di intera posizione.
+--   - debitori/pd_debitori: TUTTI i debitori, incluso il primo (decisione del
 --     lead, 2026-09-25, corregge una proposta precedente che teneva il primo
---     solo su versamenti.debitore_*): il debitore appartiene logicamente al
---     documento, non al singolo versamento, ed e' l'unica fonte di verita' per
+--     solo su versamenti.debitore_*): il debitore appartiene logicamente alla
+--     posizione, non al singolo versamento, ed e' l'unica fonte di verita' per
 --     v3. versamenti.debitore_identificativo/debitore_anagrafica/
 --     src_debitore_identificativo restano comunque NOT NULL in produzione ma
 --     NON vengono sincronizzati col soggetto di ordine 0 (decisione del lead,
@@ -72,7 +74,8 @@
 --     fine transizione v3 — fino ad allora resta un gap noto e accettato, non
 --     qualcosa che questa libreria compensa fingendo un dato disallineabile.
 --     Pendenza.java li valorizza con placeholder fissi ed esplicativi
---     ("VEDERE_SOGGETTI_DEBITORI"/"Vedere tabella soggetti_debitori"); il
+--     ("VEDERE_SOGGETTI_DEBITORI"/"Vedere tabella soggetti_debitori" — testo
+--     dei placeholder invariato, da riallineare con l'entity Pendenza); il
 --     nullable debitore_tipo resta indefinito.
 --
 -- tipi_versamento/tipi_vers_domini/uo/iban_accredito/tributi/tipi_tributo:
@@ -93,7 +96,8 @@ CREATE SEQUENCE IF NOT EXISTS seq_documenti start 1 increment 1 maxvalue 9223372
 CREATE SEQUENCE IF NOT EXISTS seq_versamenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS seq_singoli_versamenti start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS seq_opzioni_pagamento start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
-CREATE SEQUENCE IF NOT EXISTS seq_soggetti_debitori start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE IF NOT EXISTS seq_debitori start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
+CREATE SEQUENCE IF NOT EXISTS seq_pd_debitori start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS seq_tipi_versamento start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS seq_tipi_vers_domini start 1 increment 1 maxvalue 9223372036854775807 minvalue 1 cache 1 NO CYCLE;
 
@@ -317,8 +321,6 @@ CREATE TABLE IF NOT EXISTS documenti
 	descrizione VARCHAR(1024) NOT NULL,
 	-- aggiunte additive per PosizioneDebitoria (assenti nel legacy)
 	data_pubblicazione DATE,
-	notifica_send BOOLEAN NOT NULL,
-	nav_notifica VARCHAR(18),
 	data_ultima_modifica_aca TIMESTAMP,
 	data_ultima_comunicazione_aca TIMESTAMP,
 	data_creazione TIMESTAMP NOT NULL,
@@ -340,6 +342,46 @@ CREATE TABLE IF NOT EXISTS documenti
 	CONSTRAINT pk_documenti PRIMARY KEY (id)
 );
 
+-- Anagrafica del debitore, una riga per ogni legame con una posizione (nessuna
+-- UK su identificativo). Unica fonte di verita' per v3. Vedi nota di testata
+-- sulla sincronizzazione verso versamenti.debitore_*.
+CREATE TABLE IF NOT EXISTS debitori
+(
+	tipo VARCHAR(1) NOT NULL,
+	identificativo VARCHAR(35) NOT NULL,
+	anagrafica VARCHAR(70),
+	indirizzo VARCHAR(70),
+	civico VARCHAR(16),
+	cap VARCHAR(16),
+	localita VARCHAR(35),
+	provincia VARCHAR(35),
+	nazione VARCHAR(2),
+	email VARCHAR(256),
+	cellulare VARCHAR(35),
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_debitori') NOT NULL,
+	CONSTRAINT pk_debitori PRIMARY KEY (id)
+);
+
+-- Il debitore di una posizione: le opzioni di pagamento si agganciano a questa
+-- coppia. posizione e' l'ordine di presentazione dei debitori.
+CREATE TABLE IF NOT EXISTS pd_debitori
+(
+	posizione INT NOT NULL,
+	notifica_send_payed BOOLEAN NOT NULL DEFAULT false,
+	notifica_send_nav VARCHAR(18),
+	-- fk/pk columns
+	id BIGINT DEFAULT nextval('seq_pd_debitori') NOT NULL,
+	id_documento BIGINT NOT NULL,
+	id_debitore BIGINT NOT NULL,
+	-- unique constraints
+	CONSTRAINT unique_pd_debitori_1 UNIQUE (id_documento, id_debitore),
+	-- fk/pk keys constraints
+	CONSTRAINT fk_pdd_id_documento FOREIGN KEY (id_documento) REFERENCES documenti(id),
+	CONSTRAINT fk_pdd_id_debitore FOREIGN KEY (id_debitore) REFERENCES debitori(id),
+	CONSTRAINT pk_pd_debitori PRIMARY KEY (id)
+);
+
 CREATE TABLE IF NOT EXISTS opzioni_pagamento
 (
 	id_opzione_pagamento UUID NOT NULL,
@@ -353,39 +395,12 @@ CREATE TABLE IF NOT EXISTS opzioni_pagamento
 	data_ultimo_aggiornamento TIMESTAMP NOT NULL,
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_opzioni_pagamento') NOT NULL,
-	id_documento BIGINT NOT NULL,
+	id_pd_debitore BIGINT NOT NULL,
 	-- unique constraints
 	CONSTRAINT unique_opzioni_pagamento_id_opzione UNIQUE (id_opzione_pagamento),
 	-- fk/pk keys constraints
-	CONSTRAINT fk_opz_id_documento FOREIGN KEY (id_documento) REFERENCES documenti(id),
+	CONSTRAINT fk_opz_id_pd_debitore FOREIGN KEY (id_pd_debitore) REFERENCES pd_debitori(id),
 	CONSTRAINT pk_opzioni_pagamento PRIMARY KEY (id)
-);
-
--- Tutti i debitori della posizione, incluso il primo (ordine 0) — unica fonte
--- di verita' per v3. Vedi nota di testata sulla sincronizzazione verso
--- versamenti.debitore_*.
-CREATE TABLE IF NOT EXISTS soggetti_debitori
-(
-	ordine INT NOT NULL,
-	tipo VARCHAR(1) NOT NULL,
-	identificativo VARCHAR(35) NOT NULL,
-	anagrafica VARCHAR(70),
-	indirizzo VARCHAR(70),
-	civico VARCHAR(16),
-	cap VARCHAR(16),
-	localita VARCHAR(35),
-	provincia VARCHAR(35),
-	nazione VARCHAR(2),
-	email VARCHAR(256),
-	cellulare VARCHAR(35),
-	-- fk/pk columns
-	id BIGINT DEFAULT nextval('seq_soggetti_debitori') NOT NULL,
-	id_documento BIGINT NOT NULL,
-	-- unique constraints
-	CONSTRAINT unique_soggetti_debitori_1 UNIQUE (id_documento, ordine),
-	-- fk/pk keys constraints
-	CONSTRAINT fk_sgd_id_documento FOREIGN KEY (id_documento) REFERENCES documenti(id),
-	CONSTRAINT pk_soggetti_debitori PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS versamenti
