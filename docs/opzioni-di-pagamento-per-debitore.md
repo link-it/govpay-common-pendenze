@@ -28,7 +28,7 @@ documenti (posizione) 1 ── N pd_debitori N ── 1 debitori
 | Tabella | Contenuto |
 |---|---|
 | `debitori` | Anagrafica: `tipo`, `identificativo`, `anagrafica`, indirizzo, `email`, `cellulare`. Nessun legame diretto con la posizione. |
-| `pd_debitori` | Il debitore di una posizione: `id_documento`, `id_debitore`, `posizione` (ordine di presentazione), `notifica_send_payed`, `notifica_send_nav`. Unique su `(id_documento, id_debitore)`. |
+| `pd_debitori` | Il debitore di una posizione: `id_documento`, `id_debitore`, `posizione` (ordine di presentazione), `notifica_send`, `notifica_send_payed`, `notifica_send_nav`, `data_rimozione`. Unique su `(id_documento, id_debitore)`. |
 | `opzioni_pagamento` | La FK è `id_pd_debitore`, non più `id_documento`. |
 | `documenti` | Perde `notifica_send` e `nav_notifica`, che passano a `pd_debitori`. |
 | `versamenti` | Invariata. |
@@ -57,9 +57,24 @@ riuso della riga tra posizioni: ogni `pd_debitori` ha la propria riga `debitori`
 dell'unicità (per dominio, per applicazione) e cosa significhi modificare l'anagrafica di un
 debitore condiviso da posizioni già comunicate; non serve al requisito.
 
-**Notifica SEND per debitore.** `notifica_send_payed` e `notifica_send_nav` stanno su `pd_debitori`
-perché il NAV su cui si notifica è un NAV del debitore, non della posizione. La validazione sulle
-spese di notifica (`SPESE_NOTIFICA` incompatibile con notifica attiva) si applica per debitore. Con la notifica attiva il `navNotifica` del debitore è obbligatorio e deve essere il `numeroAvviso` di una sua pendenza: non viene assegnato in automatico.
+**Notifica SEND per debitore.** `notifica_send`, `notifica_send_payed` e `notifica_send_nav` stanno su `pd_debitori`
+perché il NAV su cui si notifica è un NAV del debitore, non della posizione.
+
+L'Ente guida le spese di notifica: `notifica_send` indica che SEND è previsto per il debitore e
+`notifica_send_nav` il NAV da interrogare, sotto la sua responsabilità. SEND si interroga solo
+quando il `numeroAvviso` della pendenza in pagamento coincide con `notifica_send_nav` del suo debitore,
+e `notifica_send` è attivo: la pendenza con quel NAV porta le spese, le altre pendenze del debitore
+no. `Pendenza.sendAbilitato`, campo della v2, non entra nella decisione. `notifica_send_payed` è lo
+stato "spese già registrate sul debitore": `false` alla creazione, impostato dalla libreria, mai in
+ingresso.
+
+`registraEsitoPendenza`, quando la pendenza pagata ha `sendImportoTotale` maggiore di zero, marca il
+debitore con `notifica_send_payed`; non modifica le altre pendenze. Un importo assente o pari a 0 non
+marca il debitore.
+`registraEsitoPendenzaSuOpzioneAnnullataDaCanaleConcorrente` non registra le spese, perché le altre
+pendenze sono già annullate. Le due vie dell'importo (quota SEND e `SPESE_NOTIFICA` della voce)
+non sono legate da alcun vincolo: non è verificato che siano incompatibili. Nessun controllo sul
+`navNotifica`: la libreria non lo assegna né lo verifica.
 
 **PATCH della posizione limitato a `descrizione` e `dataPubblicazione`.** `notificaSend`,
 `navNotifica` e la sostituzione dell'elenco dei soggetti escono dall'aggiornamento della posizione:
@@ -68,7 +83,7 @@ debitore comporterebbe decidere cosa accade alle sue opzioni e pendenze. La modi
 rimozione di un `pd_debitori` sono una funzione dedicata, con regole proprie (per esempio rimozione
 ammessa solo se nessuna sua opzione è stata pagata), da definire a parte.
 
-**Aggiunta, modifica e rimozione di un debitore.** Sono operazioni dedicate sul singolo `pd_debitori`, indicato dal suo `identificativo`. L'aggiunta ha le stesse validazioni della creazione ed è rifiutata se la posizione ha già un'opzione `ATTIVATA`. La modifica riguarda anagrafica, `tipo`, `identificativo` (univoco tra i debitori attivi), `notificaSend` e `navNotifica`. La rimozione è **logica**: la colonna `pd_debitori.data_rimozione` viene valorizzata, le opzioni del debitore passano ad `ANNULLATA` e le sue pendenze ad `ANNULLATO`, e posizione e pendenze sono marcate per ACA. È ammessa solo se il debitore non è l'unico attivo e se nella posizione non c'è un'opzione `ATTIVATA` né una pendenza eseguita; una rimozione non è mai fisica, quindi `idPendenza` e `numeroAvviso` delle pendenze restano occupati. Un debitore rimosso è ignorato da `getPdDebitori()`, `getOpzioniPagamento()`, dal controllo di unicità dell'identificativo, dalla mutua esclusione, da `aggiungiOpzionePagamento` e dalle ricerche per debitore, e le pendenze restano leggibili per `idPendenza` con stato `ANNULLATO`; non compaiono invece nelle ricerche di pendenze e ricevute. Si può aggiungere un nuovo debitore con lo stesso identificativo di uno rimosso.
+**Aggiunta, modifica e rimozione di un debitore.** Sono operazioni dedicate sul singolo `pd_debitori`, indicato dal suo `identificativo`. L'aggiunta ha le stesse validazioni della creazione ed è rifiutata se la posizione ha già un'opzione `ATTIVATA`. La modifica riguarda anagrafica, `tipo`, `identificativo` (univoco tra i debitori attivi), `notificaSend` e `navNotifica`: `notifica_send_payed` non si indica mai in ingresso. La rimozione è **logica**: la colonna `pd_debitori.data_rimozione` viene valorizzata, le opzioni del debitore passano ad `ANNULLATA` e le sue pendenze ad `ANNULLATO`, e posizione e pendenze sono marcate per ACA. È ammessa solo se il debitore non è l'unico attivo e se nella posizione non c'è un'opzione `ATTIVATA` né una pendenza eseguita; una rimozione non è mai fisica, quindi `idPendenza` e `numeroAvviso` delle pendenze restano occupati. Un debitore rimosso è ignorato da `getPdDebitori()`, `getOpzioniPagamento()`, dal controllo di unicità dell'identificativo, dalla mutua esclusione, da `aggiungiOpzionePagamento` e dalle ricerche per debitore, e le pendenze restano leggibili per `idPendenza` con stato `ANNULLATO`; non compaiono invece nelle ricerche di pendenze e ricevute. Si può aggiungere un nuovo debitore con lo stesso identificativo di uno rimosso.
 
 **Nuova opzione su posizione esistente.** L'alternativa si aggiunge a ogni debitore della
 posizione: il comando porta un'opzione per debitore, abbinata tramite l'identificativo fiscale, e
@@ -110,6 +125,12 @@ Dettagli di `06_opzioni_pagamento_documenti_esistenti.sql`:
   migrati;
 - la cascata finale applica la mutua esclusione a tutta la posizione: un'opzione `DISPONIBILE` di
   qualunque debitore diventa `ANNULLATA` se un'altra opzione della posizione è `ATTIVATA`;
+- la notifica SEND della v2 (`versamenti.send_abilitato`) diventa un dato del debitore: un debitore con
+  almeno un versamento flaggato è migrato con `notifica_send = true` e `notifica_send_nav` uguale al
+  `numero_avviso` della pendenza di `numero_rata` più basso (soluzione unica o piano rateale) oppure,
+  per i gruppi con sole soglie (`ENTRO`/`OLTRE`/`RIDOTTO`/`SCONTATO`), del primo versamento flaggato.
+  Un `numero_avviso` assente lascia `notifica_send_nav` nullo: il debitore è elencato dal report
+  diagnostico finale e SEND non viene interrogato per lui. SEND esiste in v2 solo dalla 3.10.x;
 - la `06` gira in un'unica transazione (annullata per intero in caso di errore, quindi non esistono
   gruppi migrati a metà) ed è idempotente: un gruppo già presente come `pd_debitori` dello stesso
   documento non si duplica. Un gruppo scartato e corretto a mano è migrato da una riesecuzione con
@@ -122,9 +143,10 @@ Dettagli di `06_opzioni_pagamento_documenti_esistenti.sql`:
 ## 5. Questioni aperte
 
 - Eliminazione fisica dei debitori rimossi e rilascio di `idPendenza`/`numeroAvviso`: da decidere con `govpay-aca-batch`, che deve aver comunicato l'annullamento.
-- Sincronizzazione di `Pendenza.sendAbilitato` con la notifica SEND del debitore dell'opzione: la
-  libreria non la esegue (il campo resta `false` salvo valorizzazione del chiamante); va stabilito
-  dove deve avvenire.
+- Ruolo di `notifica_send_payed` con la regola per NAV: la pendenza con il NAV di notifica si paga una
+  sola volta, quindi il flag è quasi ridondante. Da chiarire con chi gestisce il modello il suo
+  significato e se resta.
+- `SPESE_NOTIFICA` e notifica SEND: non è verificato che siano incompatibili.
 - Migrazione non completa: manca la `06` per HSQLDB; le versioni MySQL, Oracle e SQL Server non sono
   eseguite contro un'istanza reale; il routing ACA v1/v3 sui dati già comunicati (vedi sotto) è
   rimandato.

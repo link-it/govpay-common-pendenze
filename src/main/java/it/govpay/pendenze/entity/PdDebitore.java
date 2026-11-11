@@ -52,6 +52,11 @@ public class PdDebitore {
     @Column(name = "posizione", nullable = false)
     private int posizione;
 
+    /** SEND previsto per il debitore: scelto dall'Ente. */
+    @Column(name = "notifica_send", nullable = false)
+    private boolean notificaSend;
+
+    /** Spese di notifica SEND gia' registrate sul debitore: impostato dalla libreria. */
     @Column(name = "notifica_send_payed", nullable = false)
     private boolean notificaSendPayed;
 
@@ -113,6 +118,14 @@ public class PdDebitore {
 
     public void setPosizione(int posizione) {
         this.posizione = posizione;
+    }
+
+    public boolean isNotificaSend() {
+        return notificaSend;
+    }
+
+    public void setNotificaSend(boolean notificaSend) {
+        this.notificaSend = notificaSend;
     }
 
     public boolean isNotificaSendPayed() {

@@ -262,8 +262,6 @@ public class PosizioneDebitoriaService {
             }
         }
 
-        assegnaOValidaNavNotifica(posizione);
-
         try {
             // saveAndFlush, non save: con id generato da
             // SEQUENCE Hibernate puo' differire l'INSERT fisico oltre il ritorno di save(),
@@ -472,35 +470,6 @@ public class PosizioneDebitoriaService {
             // AuxDigit, ...): un errore del chiamante, non un errore interno.
             throw new ValidazioneNonSuperataException("numeroAvviso della pendenza ["
                     + pendenza.getIdPendenza() + "] non valido: " + e.getMessage());
-        }
-    }
-
-    private void assegnaOValidaNavNotifica(PosizioneDebitoria posizione) {
-        posizione.getPdDebitori().forEach(this::assegnaOValidaNavNotifica);
-    }
-
-    /**
-     * Se {@link PdDebitore#isNotificaSendPayed()} e' attivo il {@code navNotifica} del debitore
-     * e' obbligatorio: non viene assegnato in automatico, e' il NAV a cui l'Ente ha agganciato
-     * le spese di notifica. Se indicato, deve corrispondere al {@code numeroAvviso} di una
-     * pendenza dello stesso debitore.
-     */
-    private void assegnaOValidaNavNotifica(PdDebitore pdDebitore) {
-        if (pdDebitore.getNotificaSendNav() == null) {
-            if (pdDebitore.isNotificaSendPayed()) {
-                throw new ValidazioneNonSuperataException(
-                        "navNotifica e' obbligatorio per il debitore ["
-                                + pdDebitore.getDebitore().getIdentificativo() + "] con notificaSend attivo");
-            }
-            return;
-        }
-        boolean corrisponde = pdDebitore.getOpzioniPagamento().stream()
-                .flatMap(o -> o.getPendenze().stream())
-                .anyMatch(p -> pdDebitore.getNotificaSendNav().equals(p.getNumeroAvviso()));
-        if (!corrisponde) {
-            throw new ValidazioneNonSuperataException(
-                    "navNotifica [" + pdDebitore.getNotificaSendNav()
-                            + "] non corrisponde al numeroAvviso di alcuna pendenza del debitore");
         }
     }
 
@@ -750,7 +719,7 @@ public class PosizioneDebitoriaService {
     /**
      * Aggiunge un debitore, con le sue opzioni di pagamento, a una posizione esistente. Stesse
      * validazioni della creazione: almeno un'opzione, identificativo univoco tra i debitori
-     * attivi, {@code navNotifica} coerente. Rifiutata se la posizione ha gia' un'opzione
+     * attivi. Rifiutata se la posizione ha gia' un'opzione
      * {@code ATTIVATA}: le nuove opzioni sarebbero alternative mai passate dall'annullamento
      * automatico, come per {@link #aggiungiOpzionePagamento}. La corrispondenza con le opzioni
      * degli altri debitori non e' verificata.
@@ -772,7 +741,6 @@ public class PosizioneDebitoriaService {
         }
         nuovo.setPosizione(posizione.getPdDebitoriInclusiRimossi().stream()
                 .mapToInt(PdDebitore::getPosizione).max().orElse(-1) + 1);
-        assegnaOValidaNavNotifica(nuovo);
         posizione.addPdDebitore(nuovo);
 
         ValidatorePosizioneDebitoria.valida(posizione);
@@ -824,11 +792,10 @@ public class PosizioneDebitoriaService {
             if (comando.notificaSend().valore() == null) {
                 throw new ValidazioneNonSuperataException("'notificaSend' del debitore non puo' essere azzerato");
             }
-            pdDebitore.setNotificaSendPayed(comando.notificaSend().valore());
+            pdDebitore.setNotificaSend(comando.notificaSend().valore());
         }
         if (comando.navNotifica().presente()) pdDebitore.setNotificaSendNav(comando.navNotifica().valore());
 
-        assegnaOValidaNavNotifica(pdDebitore);
         ValidatorePosizioneDebitoria.valida(posizione);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
@@ -1648,6 +1615,9 @@ public class PosizioneDebitoriaService {
      * l'opzione cambi stato o no (stessa regola trasversale di {@link #marcaModificaAca},
      * "nessuna eccezione").</p>
      *
+     * <p>Se la pendenza ha {@code sendImportoTotale} maggiore di zero, le spese di notifica SEND
+     * del suo debitore sono registrate: il debitore e' marcato con {@code notificaSendPayed}.</p>
+     *
      * @param idA2A      identificativo del gestionale responsabile
      * @param idPendenza identificativo della pendenza nel gestionale
      * @param nuovoStato esito di pagamento da registrare ({@code ESEGUITO},
@@ -1685,8 +1655,17 @@ public class PosizioneDebitoriaService {
         } else {
             marcaModificaAca(opzione, adesso);
         }
+        registraSpeseNotificaSend(pendenza);
         ValidatorePosizioneDebitoria.validaStati(opzione.getPosizioneDebitoria());
         return pendenza;
+    }
+
+    private void registraSpeseNotificaSend(Pendenza pagata) {
+        Double quota = pagata.getSendImportoTotale();
+        if (quota == null || quota <= 0) {
+            return;
+        }
+        pagata.getOpzionePagamento().getPdDebitore().setNotificaSendPayed(true);
     }
 
     /**
@@ -1765,8 +1744,8 @@ public class PosizioneDebitoriaService {
 
     /**
      * Registra l'importo delle spese di notifica SEND quantificato dal servizio di
-     * pagamento interrogando il connettore SEND del dominio (percorso automatico,
-     * {@code sendAbilitato} {@code true} sulla pendenza) — equivalente di
+     * pagamento interrogando il connettore SEND del dominio (sulla pendenza il cui
+     * {@code numeroAvviso} e' il {@code notificaSendNav} del suo debitore) — equivalente di
      * {@code VersamentoUtils.aggiornaImportoSend} del legacy, ma qui separato dal calcolo
      * stesso: questa libreria si limita a persistere un valore gia' quantificato altrove
      * (il connettore SEND, la politica di retention e la chiamata al servizio restano di

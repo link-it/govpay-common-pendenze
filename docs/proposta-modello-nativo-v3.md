@@ -659,9 +659,7 @@ esattamente uno tra i rispettivi campi alternativi (`capitolo`/
 `accertamento`/`pianoFinanziario5Livello`; `conto`/`commessa`/
 `nrDocumento`); `INCASSO_TIPICO` non ammette sia `emissioneFattura` sia
 `nrDocumento` insieme; `UNKNOWN_ENTRIES` sempre rifiutato in scrittura;
-`notificaSend` attivo con una voce che ha già `SPESE_NOTIFICA` rifiutato
-(altrimenti le spese verrebbero applicate due volte — semantica esplicita
-dello YAML v3). Non validati i vincoli di lunghezza dei singoli campi (già
+nessun vincolo tra `SPESE_NOTIFICA` e `notificaSend`. Non validati i vincoli di lunghezza dei singoli campi (già
 espressi dallo schema JSON, non compito di questa libreria).
 
 13 nuovi test (92 totali): `DettaglioContabileConverterTest` (4, incluso il

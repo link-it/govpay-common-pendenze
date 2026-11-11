@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -301,29 +302,7 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("crea rifiuta la notifica SEND attiva senza navNotifica: non viene assegnato in automatico")
-    void creaRifiutaNotificaSendSenzaNavNotifica() {
-        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.getPdDebitori().get(0).setNotificaSendPayed(true);
-
-        assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("navNotifica e' obbligatorio");
-    }
-
-    @Test
-    @DisplayName("crea rifiuta il nav di notifica che non corrisponde al numeroAvviso di alcuna pendenza del debitore")
-    void creaRifiutaNavNotificaNonCorrispondente() {
-        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
-        posizione.getPdDebitori().get(0).setNotificaSendNav("999999999999999999");
-
-        assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("navNotifica");
-    }
-
-    @Test
-    @DisplayName("crea accetta il nav di notifica esplicito di ciascun debitore, uguale al numeroAvviso di una sua pendenza")
+    @DisplayName("crea accetta il nav di notifica esplicito di ciascun debitore")
     void creaAccettaNavNotificaEsplicitoPerDebitore() {
         PosizioneDebitoria posizione = new PosizioneDebitoria();
         posizione.setIdApplicazione(idApplicazionePer("A2A-nav-debitori"));
@@ -338,38 +317,15 @@ class PosizioneDebitoriaServiceTest {
                 .getPendenze().get(0).getNumeroAvviso();
         String navSecondo = opzioneConPendenza(secondo, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2")
                 .getPendenze().get(0).getNumeroAvviso();
-        primo.setNotificaSendPayed(true);
+        primo.setNotificaSend(true);
         primo.setNotificaSendNav(navPrimo);
-        secondo.setNotificaSendPayed(true);
+        secondo.setNotificaSend(true);
         secondo.setNotificaSendNav(navSecondo);
 
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
         assertThat(salvata.getPdDebitori()).extracting(PdDebitore::getNotificaSendNav)
                 .containsExactly(navPrimo, navSecondo);
-    }
-
-    @Test
-    @DisplayName("crea rifiuta un nav di notifica che corrisponde alla pendenza di un ALTRO debitore")
-    void creaRifiutaNavNotificaDiUnAltroDebitore() {
-        PosizioneDebitoria posizione = new PosizioneDebitoria();
-        posizione.setIdApplicazione(idApplicazionePer("A2A-nav-altro"));
-        posizione.setCodDocumento("pos-nav-altro");
-        posizione.setIdDominio(idDominioPer(DOMINIO_1));
-        posizione.setDescrizione("test");
-        PdDebitore primo = pdDiProva();
-        PdDebitore secondo = pdDiProva2();
-        posizione.addPdDebitore(primo);
-        posizione.addPdDebitore(secondo);
-        opzioneConPendenza(primo, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "1");
-        String navSecondo = opzioneConPendenza(secondo, TipologiaOpzionePagamento.SOLUZIONE_UNICA, "2")
-                .getPendenze().get(0).getNumeroAvviso();
-        primo.setNotificaSendPayed(true);
-        primo.setNotificaSendNav(navSecondo);
-
-        assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(posizione)))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("non corrisponde");
     }
 
     // ── Opzioni di pagamento per debitore ────────────────────────────────────
@@ -729,34 +685,12 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("aggiornaDebitore: notificaSend attivo richiede il navNotifica, che deve essere una pendenza del debitore")
-    void aggiornaDebitoreNotificaSendRichiedeNav() {
+    @DisplayName("aggiornaDebitore: notificaSend e navNotifica sono registrati cosi' come indicati, senza verifiche, e non toccano notificaSendPayed")
+    void aggiornaDebitoreNotificaSendENavNonVerificati() {
         PosizioneDebitoria posizione = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
         String id = service.idPosizioneDebitoriaPubblica(posizione);
         String a2a = codApplicazioneDi(posizione);
-        String navMario = posizione.getPdDebitori().get(0).getOpzioniPagamento().get(0).getPendenze().get(0)
-                .getNumeroAvviso();
-
-        DatiAggiornamentoDebitore soloNotifica = new DatiAggiornamentoDebitore(
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.imposta(true),
-                ModificaCampo.invariato());
-        assertThatThrownBy(() -> service.aggiornaDebitore(a2a, id, MARIO, soloNotifica))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("navNotifica e' obbligatorio");
-
-        DatiAggiornamentoDebitore conNavAltroDebitore = new DatiAggiornamentoDebitore(
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.imposta(true),
-                ModificaCampo.imposta(posizione.getPdDebitori().get(1).getOpzioniPagamento().get(0).getPendenze()
-                        .get(0).getNumeroAvviso()));
-        assertThatThrownBy(() -> service.aggiornaDebitore(a2a, id, MARIO, conNavAltroDebitore))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("non corrisponde");
+        String navMario = "999999999999999999";
 
         DatiAggiornamentoDebitore valido = new DatiAggiornamentoDebitore(
                 ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
@@ -765,7 +699,8 @@ class PosizioneDebitoriaServiceTest {
                 ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.imposta(true),
                 ModificaCampo.imposta(navMario));
         PdDebitore aggiornato = service.aggiornaDebitore(a2a, id, MARIO, valido);
-        assertThat(aggiornato.isNotificaSendPayed()).isTrue();
+        assertThat(aggiornato.isNotificaSend()).isTrue();
+        assertThat(aggiornato.isNotificaSendPayed()).isFalse();
         assertThat(aggiornato.getNotificaSendNav()).isEqualTo(navMario);
     }
 
@@ -1339,6 +1274,64 @@ class PosizioneDebitoriaServiceTest {
         assertThatThrownBy(() -> service.segnalaAnomalia(salvata.getIdApplicazione(), salvata.getIdDominio(),
                 salvata.getCodDocumento(), " "))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza con quota SEND marca il debitore e non tocca la quota delle altre pendenze")
+    void registraEsitoPendenzaRegistraLeSpeseDiNotificaSend() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "3");
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        String idA2A = codApplicazioneDi(salvata);
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+        OffsetDateTime aggiornamento = OffsetDateTime.now();
+        rate.get(0).setSendImportoTotale(5.0);
+        rate.get(0).setSendDataAggiornamento(aggiornamento);
+        rate.get(1).setSendImportoTotale(5.0);
+        rate.get(1).setSendDataAggiornamento(aggiornamento);
+        azzeraMarcatureAca(salvata);
+
+        service.registraEsitoPendenza(idA2A, "pendenza-1", StatoPendenza.ESEGUITO);
+
+        assertThat(salvata.getPdDebitori().get(0).isNotificaSendPayed()).isTrue();
+        assertThat(rate.get(0).getSendImportoTotale()).isEqualTo(5.0);
+        assertThat(rate.get(0).getSendDataAggiornamento()).isEqualTo(aggiornamento);
+        assertThat(rate.get(1).getSendImportoTotale()).isEqualTo(5.0);
+        assertThat(rate.get(1).getSendDataAggiornamento()).isEqualTo(aggiornamento);
+        assertThat(rate.get(2).getSendImportoTotale()).isNull();
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza con quota SEND non tocca gli altri debitori della posizione")
+    void registraEsitoPendenzaSpeseSendNonTocchenoAltriDebitori() {
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizioneConDueDebitori()));
+        Pendenza dellaMario = salvata.getPdDebitori().get(0).getOpzioniPagamento().get(0).getPendenze().get(0);
+        Pendenza dellaGiovanna = salvata.getPdDebitori().get(1).getOpzioniPagamento().get(0).getPendenze().get(0);
+        dellaMario.setSendImportoTotale(5.0);
+        dellaGiovanna.setSendImportoTotale(7.0);
+
+        service.registraEsitoPendenza(codApplicazioneDi(salvata), "pendenza-1", StatoPendenza.ESEGUITO);
+
+        assertThat(salvata.getPdDebitori().get(0).isNotificaSendPayed()).isTrue();
+        assertThat(salvata.getPdDebitori().get(1).isNotificaSendPayed()).isFalse();
+        assertThat(dellaGiovanna.getSendImportoTotale()).isEqualTo(7.0);
+    }
+
+    @Test
+    @DisplayName("registraEsitoPendenza senza quota SEND (assente o zero) non marca il debitore")
+    void registraEsitoPendenzaSenzaQuotaSendNonMarcaIlDebitore() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+        rate.get(0).setSendImportoTotale(0.0);
+        rate.get(1).setSendImportoTotale(5.0);
+
+        service.registraEsitoPendenza(codApplicazioneDi(salvata), "pendenza-1", StatoPendenza.ESEGUITO);
+
+        assertThat(salvata.getPdDebitori().get(0).isNotificaSendPayed()).isFalse();
+        assertThat(rate.get(1).getSendImportoTotale()).isEqualTo(5.0);
     }
 
     @Test

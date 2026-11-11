@@ -5,7 +5,7 @@ import java.util.Objects;
 import it.govpay.pendenze.model.TipoSoggetto;
 
 /**
- * Aggiornamento parziale di un debitore di una posizione: anagrafica, notifica SEND. Un campo
+ * Aggiornamento parziale di un debitore di una posizione: anagrafica, notificaSend e navNotifica. Un campo
  * non indicato resta invariato; {@code ModificaCampo.imposta(null)} azzera i campi facoltativi.
  */
 public record DatiAggiornamentoDebitore(

@@ -53,11 +53,7 @@ public sealed interface DettaglioContabile {
             String nrDocumento, BigDecimal importo) implements DettaglioContabile {
     }
 
-    /**
-     * Spese di notifica SEND già incluse nell'importo della voce. Se presente su una voce
-     * della posizione, {@code notificaSend} non deve essere attivo sulla posizione stessa
-     * (altrimenti le spese verrebbero applicate due volte).
-     */
+    /** Spese di notifica SEND già incluse nell'importo della voce. */
     record SpeseNotifica(BigDecimal importo) implements DettaglioContabile {
     }
 

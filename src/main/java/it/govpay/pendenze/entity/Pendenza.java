@@ -280,14 +280,18 @@ public class Pendenza {
     @Column(name = "importo_incassato", nullable = false)
     private double importoIncassato = 0d;
 
-    /** Sincronizzato con {@link PdDebitore#isNotificaSendPayed()} dal servizio di caricamento. */
+    /**
+     * Flag della v2, indicato dall'Ente. Per le pendenze v3 la notifica SEND dipende da
+     * {@link PdDebitore#isNotificaSend()} e {@link PdDebitore#getNotificaSendNav()}.
+     */
     @Column(name = "send_abilitato", nullable = false)
     private boolean sendAbilitato = false;
 
     /**
      * Importo delle spese di notifica SEND, quantificato dal servizio di pagamento
-     * interrogando il connettore SEND del dominio (percorso automatico, {@link #sendAbilitato}
-     * {@code true}) — mai scritto da questa libreria o da govpay-pendenze-api, solo
+     * interrogando il connettore SEND del dominio (sulla pendenza il cui {@link #numeroAvviso}
+     * e' {@link PdDebitore#getNotificaSendNav()} del suo debitore) — mai scritto da questa
+     * libreria o da govpay-pendenze-api, solo
      * registrato tramite {@link it.govpay.pendenze.service.PosizioneDebitoriaService#registraImportoSend}.
      * Non partecipa alla coerenza importo/voci di {@link #importo}: e' una quota aggiuntiva
      * nota solo al momento del pagamento, non al caricamento della pendenza (vedi
