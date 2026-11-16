@@ -247,6 +247,16 @@ public class PosizioneDebitoria {
         this.dataPubblicazione = dataPubblicazione;
     }
 
+    /**
+     * La posizione e' pubblicata se non ha una data di pubblicazione o se questa e' raggiunta:
+     * la data e' un giorno, valido dalle 00:00.
+     *
+     * @param oggi giorno corrente, dallo stesso {@code Clock} della libreria
+     */
+    public boolean isPubblicata(LocalDate oggi) {
+        return dataPubblicazione == null || !dataPubblicazione.isAfter(oggi);
+    }
+
     public boolean isAnomalo() {
         return anomalo;
     }

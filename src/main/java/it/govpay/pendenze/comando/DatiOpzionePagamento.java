@@ -11,6 +11,8 @@ public record DatiOpzionePagamento(
         Integer giorni,
         LocalDate dataInizioValidita,
         LocalDate dataScadenza,
+        boolean sendAbilitato,
+        String sendNav,
         List<DatiPendenza> pendenze) {
     public DatiOpzionePagamento {
         pendenze = List.copyOf(pendenze);
@@ -22,6 +24,8 @@ public record DatiOpzionePagamento(
                 e.getGiorni(),
                 e.getDataInizioValidita(),
                 e.getDataScadenza(),
+                e.isSendAbilitato(),
+                e.getSendNav(),
                 e.getPendenze().stream().map(DatiPendenza::da).toList());
     }
 }

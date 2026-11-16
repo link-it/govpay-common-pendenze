@@ -10,8 +10,6 @@ import it.govpay.pendenze.entity.PdDebitore;
  */
 public record DatiPdDebitore(
         DatiDebitore debitore,
-        boolean notificaSend,
-        String notificaSendNav,
         List<DatiOpzionePagamento> opzioniPagamento) {
     public DatiPdDebitore {
         opzioniPagamento = List.copyOf(opzioniPagamento);
@@ -20,8 +18,6 @@ public record DatiPdDebitore(
     /** Copia i soli campi ammessi; successive modifiche all'entita non modificano il comando. */
     public static DatiPdDebitore da(PdDebitore e) {
         return new DatiPdDebitore(DatiDebitore.da(e.getDebitore()),
-                e.isNotificaSend(),
-                e.getNotificaSendNav(),
                 e.getOpzioniPagamento().stream().map(DatiOpzionePagamento::da).toList());
     }
 }

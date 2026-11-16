@@ -98,8 +98,8 @@ class OpzioneMigrataMappingTest {
                 VALUES (?, 'F', 'RSSMRA80A01H501U', 'Mario Rossi')
                 """).setParameter(1, ID_DEBITORE).executeUpdate();
         em.getEntityManager().createNativeQuery("""
-                INSERT INTO pd_debitori (id, id_documento, id_debitore, posizione, notifica_send_payed)
-                VALUES (?, ?, ?, 0, FALSE)
+                INSERT INTO pd_debitori (id, id_documento, id_debitore, posizione)
+                VALUES (?, ?, ?, 0)
                 """)
                 .setParameter(1, ID_PD_DEBITORE)
                 .setParameter(2, ID_DOCUMENTO)

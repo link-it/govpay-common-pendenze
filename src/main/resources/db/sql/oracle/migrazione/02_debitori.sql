@@ -60,9 +60,6 @@ CREATE SEQUENCE seq_pd_debitori MINVALUE 1 MAXVALUE 9223372036854775807 START WI
 CREATE TABLE pd_debitori
 (
 	posizione NUMBER NOT NULL,
-	notifica_send NUMBER DEFAULT 0 NOT NULL,
-	notifica_send_payed NUMBER DEFAULT 0 NOT NULL,
-	notifica_send_nav VARCHAR2(18),
 	data_rimozione TIMESTAMP,
 	-- fk/pk columns
 	id NUMBER NOT NULL,

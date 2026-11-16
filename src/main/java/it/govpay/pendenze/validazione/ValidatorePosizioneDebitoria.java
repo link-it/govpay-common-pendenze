@@ -223,7 +223,34 @@ public final class ValidatorePosizioneDebitoria {
      * {@code PosizioneDebitoriaMapper#sostituisciVoci} in govpay-pendenze-api) indicizza le voci
      * esistenti con {@code Collectors.toMap}, che non accetta chiavi duplicate.
      */
+    /**
+     * Notifica SEND della pendenza: il NAV e' ammesso solo con la notifica abilitata, e' di 18
+     * cifre e non coincide con il numero avviso della pendenza. Il numero avviso puo' non essere
+     * ancora assegnato: il confronto con esso si ripete dopo l'assegnazione.
+     */
+    public static void validaNotificaSend(Pendenza pendenza) {
+        String nav = pendenza.getSendNav();
+        if (nav == null) {
+            return;
+        }
+        if (!pendenza.isSendAbilitato()) {
+            throw new ValidazioneNonSuperataException("'sendNav' della pendenza [" + pendenza.getIdPendenza()
+                    + "] e' ammesso solo con la notifica SEND abilitata");
+        }
+        if (!NAV_SEND.matcher(nav).matches()) {
+            throw new ValidazioneNonSuperataException("'sendNav' della pendenza [" + pendenza.getIdPendenza()
+                    + "] deve essere di 18 cifre");
+        }
+        if (nav.equals(pendenza.getNumeroAvviso())) {
+            throw new ValidazioneNonSuperataException("'sendNav' della pendenza [" + pendenza.getIdPendenza()
+                    + "] non puo' coincidere con il numero avviso della pendenza stessa");
+        }
+    }
+
+    private static final java.util.regex.Pattern NAV_SEND = java.util.regex.Pattern.compile("\\d{18}");
+
     private static void validaPendenza(Pendenza pendenza) {
+        validaNotificaSend(pendenza);
         int numeroVoci = pendenza.getVoci().size();
         if (numeroVoci < 1 || numeroVoci > 5) {
             throw new ValidazioneNonSuperataException(
