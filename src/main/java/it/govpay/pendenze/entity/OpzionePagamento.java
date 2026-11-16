@@ -121,8 +121,7 @@ public class OpzionePagamento {
 
     /**
      * Notifica SEND dell'opzione, derivata dalla prima pendenza (quella con {@code numeroRata}
-     * minore): in un piano rateale e' l'unica che la porta, nelle altre opzioni tutte le
-     * pendenze portano lo stesso valore.
+     * minore), che e' l'unica a portarla in ogni tipologia di opzione.
      */
     public boolean isSendAbilitato() {
         return !pendenze.isEmpty() && pendenze.get(0).isSendAbilitato();
@@ -134,9 +133,8 @@ public class OpzionePagamento {
     }
 
     /**
-     * Scrive la notifica SEND sulle pendenze che devono portarla: la prima rata in un piano
-     * rateale, tutte le pendenze nelle altre tipologie. Le altre pendenze non la portano.
-     * Con la notifica disattivata il NAV non e' conservato.
+     * Scrive la notifica SEND sulla prima pendenza dell'opzione, in ogni tipologia: le altre
+     * pendenze non la portano. Con la notifica disattivata il NAV non e' conservato.
      *
      * @param abilitato notifica SEND prevista per l'opzione
      * @param sendNav   NAV di notifica, {@code null} per usare il numero avviso della pendenza
@@ -144,7 +142,7 @@ public class OpzionePagamento {
     public void impostaNotificaSend(boolean abilitato, String sendNav) {
         for (int i = 0; i < pendenze.size(); i++) {
             Pendenza pendenza = pendenze.get(i);
-            boolean porta = abilitato && (tipologia != TipologiaOpzionePagamento.PIANO_RATEALE || i == 0);
+            boolean porta = abilitato && i == 0;
             pendenza.setSendAbilitato(porta);
             pendenza.setSendNav(porta ? sendNav : null);
         }

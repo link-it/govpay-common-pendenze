@@ -580,11 +580,7 @@ public class PosizioneDebitoriaService {
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         posizione.setDataUltimoAggiornamento(adesso);
         posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
-        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
-            for (Pendenza pendenza : opzione.getPendenze()) {
-                pendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
-            }
-        }
+        marcaAcaPendenze(posizione, adesso);
 
         try {
             // saveAndFlush, non save — stesso motivo di crea()/aggiungiOpzionePagamento: da
@@ -626,6 +622,17 @@ public class PosizioneDebitoriaService {
      */
     public List<OpzionePagamento> aggiungiOpzionePagamento(String idA2A, String idPosizioneDebitoria,
             List<DatiOpzionePagamentoDebitore> comando) {
+        return aggiungiOpzionePagamento(idA2A, idPosizioneDebitoria, comando, ModificaCampo.invariato());
+    }
+
+    /**
+     * Come {@link #aggiungiOpzionePagamento(String, String, List)}, con in piu' la data di
+     * pubblicazione della posizione, applicata insieme alle nuove opzioni: le scadenze si validano
+     * contro la data finale e il divieto di una data futura su una posizione gia' pubblicata resta
+     * riferito alla data salvata.
+     */
+    public List<OpzionePagamento> aggiungiOpzionePagamento(String idA2A, String idPosizioneDebitoria,
+            List<DatiOpzionePagamentoDebitore> comando, ModificaCampo<LocalDate> dataPubblicazione) {
         PosizioneDebitoria posizione = trovaPerIdentificativoInterno(idA2A, idPosizioneDebitoria)
                 .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
                         + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
@@ -675,11 +682,23 @@ public class PosizioneDebitoriaService {
             destinatari.get(i).addOpzionePagamento(nuoveOpzioni.get(i));
         }
 
+        LocalDate dataPubblicazioneSalvata = posizione.getDataPubblicazione();
+        if (dataPubblicazione.presente()) {
+            posizione.setDataPubblicazione(dataPubblicazione.valore());
+        }
         ValidatorePosizioneDebitoria.valida(posizione);
         validaScadenzeRispettoAllaPubblicazione(posizione);
+        boolean dataCambiata = dataPubblicazione.presente()
+                && !Objects.equals(dataPubblicazioneSalvata, posizione.getDataPubblicazione());
+        if (dataCambiata) {
+            validaNuovaDataPubblicazione(posizione.getDataPubblicazione(), dataPubblicazioneSalvata, true);
+        }
 
         posizione.setDataUltimoAggiornamento(adesso);
         posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
+        if (dataCambiata) {
+            marcaAcaPendenze(posizione, adesso);
+        }
 
         try {
             // saveAndFlush, non save — stessa ragione di crea() (intercettare qui la
@@ -913,6 +932,17 @@ public class PosizioneDebitoriaService {
      */
     public Pendenza aggiungiPendenza(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento,
             DatiPendenza comando) {
+        return aggiungiPendenza(idA2A, idPosizioneDebitoria, idOpzionePagamento, comando, ModificaCampo.invariato());
+    }
+
+    /**
+     * Come {@link #aggiungiPendenza(String, String, UUID, DatiPendenza)}, con in piu' la data di
+     * pubblicazione della posizione, applicata insieme alla nuova pendenza: le scadenze si validano
+     * contro la data finale e il divieto di una data futura su una posizione gia' pubblicata resta
+     * riferito alla data salvata.
+     */
+    public Pendenza aggiungiPendenza(String idA2A, String idPosizioneDebitoria, UUID idOpzionePagamento,
+            DatiPendenza comando, ModificaCampo<LocalDate> dataPubblicazione) {
         OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
         PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
         if (!appartiene(posizione, idA2A, idPosizioneDebitoria)) {
@@ -950,20 +980,25 @@ public class PosizioneDebitoriaService {
         verificaIdPendenzaNonDuplicato(posizione, nuovaPendenza);
         assegnaIdentificativiPagamento(posizione, nuovaPendenza);
 
-        // Fuori dal piano rateale ogni pendenza porta la notifica SEND dell'opzione; nel piano la
-        // porta solo la prima rata, e la nuova e' sempre l'ultima.
-        if (opzione.getTipologia() != TipologiaOpzionePagamento.PIANO_RATEALE && opzione.isSendAbilitato()) {
-            nuovaPendenza.setSendAbilitato(true);
-            nuovaPendenza.setSendNav(opzione.getSendNav());
-        }
-
         opzione.addPendenza(nuovaPendenza);
 
+        LocalDate dataPubblicazioneSalvata = posizione.getDataPubblicazione();
+        if (dataPubblicazione.presente()) {
+            posizione.setDataPubblicazione(dataPubblicazione.valore());
+        }
         ValidatorePosizioneDebitoria.valida(posizione);
         validaScadenzeRispettoAllaPubblicazione(posizione);
+        boolean dataCambiata = dataPubblicazione.presente()
+                && !Objects.equals(dataPubblicazioneSalvata, posizione.getDataPubblicazione());
+        if (dataCambiata) {
+            validaNuovaDataPubblicazione(posizione.getDataPubblicazione(), dataPubblicazioneSalvata, true);
+        }
 
         posizione.setDataUltimoAggiornamento(adesso);
         posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
+        if (dataCambiata) {
+            marcaAcaPendenze(posizione, adesso);
+        }
         opzione.setDataUltimoAggiornamento(adesso);
 
         try {
@@ -1681,8 +1716,8 @@ public class PosizioneDebitoriaService {
 
     /**
      * Imposta la notifica SEND di un'opzione di pagamento: abilitazione e NAV di notifica. Le
-     * pendenze che portano la notifica (la prima rata in un piano rateale, tutte le altre
-     * negli altri casi) ricevono i nuovi valori; quelle il cui stato SEND cambia, se
+     * pendenza che porta la notifica (la prima dell'opzione) riceve i nuovi valori; se
+     * il suo stato SEND cambia, se
      * {@code NON_ESEGUITO} o {@code ANNULLATO} e senza alcuna RPT, perdono {@code sendImportoTotale} e
      * {@code sendDataAggiornamento}, cosi' la verifica successiva interroga di nuovo SEND.
      * Restano invariate le pendenze pagate e quelle con una RPT (pagamento in corso).
@@ -1731,27 +1766,62 @@ public class PosizioneDebitoriaService {
 
         Map<Pendenza, String> prima = new IdentityHashMap<>();
         for (Pendenza pendenza : opzione.getPendenze()) {
-            prima.put(pendenza, pendenza.isSendAbilitato() + "|" + pendenza.getSendNav());
+            prima.put(pendenza, statoNotificaSend(pendenza));
         }
         opzione.impostaNotificaSend(abilitato, abilitato ? nav : null);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         for (Pendenza pendenza : opzione.getPendenze()) {
             ValidatorePosizioneDebitoria.validaNotificaSend(pendenza);
-            String dopo = pendenza.isSendAbilitato() + "|" + pendenza.getSendNav();
-            if (dopo.equals(prima.get(pendenza))) {
-                continue;
-            }
-            pendenza.setDataUltimoAggiornamento(adesso);
-            if (pendenza.getSendImportoTotale() != null && !rptRepository.existsByIdVersamento(pendenza.getId())) {
-                pendenza.setSendImportoTotale(null);
-                pendenza.setSendDataAggiornamento(null);
+            if (!statoNotificaSend(pendenza).equals(prima.get(pendenza))) {
+                invalidaQuotaSend(pendenza);
+                pendenza.setDataUltimoAggiornamento(adesso);
             }
         }
         opzione.setDataUltimoAggiornamento(adesso);
         posizione.setDataUltimoAggiornamento(adesso);
         entityManager.lock(posizione, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
         return opzione;
+    }
+
+    private static String statoNotificaSend(Pendenza pendenza) {
+        return pendenza.isSendAbilitato() + "|" + pendenza.getSendNav();
+    }
+
+    /** Toglie la quota SEND dalla pendenza, salvo che abbia una RPT (pagamento in corso). */
+    private void invalidaQuotaSend(Pendenza pendenza) {
+        if (pendenza.getSendImportoTotale() != null && !rptRepository.existsByIdVersamento(pendenza.getId())) {
+            pendenza.setSendImportoTotale(null);
+            pendenza.setSendDataAggiornamento(null);
+        }
+    }
+
+    /**
+     * Imposta abilitazione e NAV di notifica SEND su una singola pendenza gestita nella
+     * transazione corrente, per chi scrive la pendenza direttamente (come la API v2): il NAV e'
+     * validato e, se lo stato SEND cambia, la quota gia' acquisita e' tolta, salvo una RPT in
+     * corso. Con la notifica disabilitata il NAV non e' conservato.
+     *
+     * @throws ValidazioneNonSuperataException se il NAV non e' valido, o se si abilita la notifica
+     *                                          su una pendenza che non e' la prima dell'opzione
+     */
+    public void impostaNotificaSendPendenza(Pendenza pendenza, boolean abilitato, String sendNav) {
+        if (abilitato) {
+            List<Pendenza> sorelle = pendenza.getOpzionePagamento() == null ? List.of()
+                    : pendenza.getOpzionePagamento().getPendenze();
+            if (!sorelle.isEmpty() && sorelle.get(0) != pendenza) {
+                throw new ValidazioneNonSuperataException("la notifica SEND puo' essere abilitata solo sulla "
+                        + "prima pendenza dell'opzione di pagamento: la pendenza [" + pendenza.getIdPendenza()
+                        + "] non lo e'");
+            }
+        }
+        String prima = statoNotificaSend(pendenza);
+        pendenza.setSendAbilitato(abilitato);
+        pendenza.setSendNav(abilitato ? sendNav : null);
+        ValidatorePosizioneDebitoria.validaNotificaSend(pendenza);
+        if (!statoNotificaSend(pendenza).equals(prima)) {
+            invalidaQuotaSend(pendenza);
+        }
     }
 
     /**
@@ -1906,6 +1976,17 @@ public class PosizioneDebitoriaService {
      * l'intero aggregato e vengono aggiornate le marcature ACA.</p>
      */
     public Pendenza aggiornaPendenza(String idA2A, String idPendenza, AggiornamentoPendenza comando) {
+        return aggiornaPendenza(idA2A, idPendenza, comando, ModificaCampo.invariato());
+    }
+
+    /**
+     * Come {@link #aggiornaPendenza(String, String, AggiornamentoPendenza)}, con in piu' la data di
+     * pubblicazione della posizione, applicata insieme alla pendenza: le scadenze si validano
+     * contro la data finale, non contro quella salvata, mentre il divieto di una data futura su
+     * una posizione gia' pubblicata resta riferito alla data salvata.
+     */
+    public Pendenza aggiornaPendenza(String idA2A, String idPendenza, AggiornamentoPendenza comando,
+            ModificaCampo<LocalDate> dataPubblicazione) {
         Pendenza pendenza = trovaPendenzaScrivibile(idA2A, idPendenza);
         if (pendenza.getOpzionePagamento().getPdDebitore().isRimosso()) {
             throw new TransizioneStatoNonAmmessaException("la pendenza [" + idPendenza
@@ -1940,7 +2021,8 @@ public class PosizioneDebitoriaService {
             pendenza.setNumeroAvviso(comando.numeroAvviso());
         }
         pendenza.setDataUltimoAggiornamento(OffsetDateTime.now(clock));
-        aggiorna(idA2A, idPosizioneDebitoriaPubblica(posizione), AggiornamentoPosizioneDebitoria.nessunaModifica());
+        aggiorna(idA2A, idPosizioneDebitoriaPubblica(posizione),
+                new AggiornamentoPosizioneDebitoria(ModificaCampo.invariato(), dataPubblicazione));
         return pendenza;
     }
 
@@ -2104,6 +2186,15 @@ public class PosizioneDebitoriaService {
         }
         OffsetDateTime inizio = pubblicazione.atStartOfDay(fuso).toOffsetDateTime();
         return inizio.isAfter(adesso) ? inizio : adesso;
+    }
+
+    /** Riallinea la marcatura ACA di tutte le pendenze della posizione, con lo stesso istante della posizione. */
+    private void marcaAcaPendenze(PosizioneDebitoria posizione, OffsetDateTime adesso) {
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                pendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
+            }
+        }
     }
 
     /** {@code true} se la posizione e' pubblicata: senza data di pubblicazione o con la data raggiunta. */

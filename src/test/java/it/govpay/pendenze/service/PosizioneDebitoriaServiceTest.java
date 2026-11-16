@@ -323,8 +323,8 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("crea in un'opzione diversa dal piano rateale scrive la notifica SEND su tutte le pendenze")
-    void creaSoluzioneUnicaConSendLaPortanoTutteLePendenze() {
+    @DisplayName("crea in un'opzione diversa dal piano rateale scrive la notifica SEND solo sulla prima pendenza")
+    void creaSoluzioneUnicaConSendLaPortaSoloLaPrimaPendenza() {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
         opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
         posizione.getOpzioniPagamento().get(0).impostaNotificaSend(true, null);
@@ -332,8 +332,9 @@ class PosizioneDebitoriaServiceTest {
         PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
 
         OpzionePagamento opzione = salvata.getOpzioniPagamento().get(0);
-        assertThat(opzione.getPendenze()).extracting(Pendenza::isSendAbilitato).containsExactly(true, true);
+        assertThat(opzione.getPendenze()).extracting(Pendenza::isSendAbilitato).containsExactly(true, false);
         assertThat(opzione.getPendenze()).extracting(Pendenza::getSendNav).containsOnlyNulls();
+        assertThat(opzione.isSendAbilitato()).isTrue();
     }
 
     @Test
@@ -1441,6 +1442,41 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
+    @DisplayName("impostaNotificaSendPendenza valida il NAV, e se lo stato SEND cambia toglie la quota")
+    void impostaNotificaSendPendenzaValidaEInvalidaLaQuota() {
+        PosizioneDebitoria salvata = pianoConQuotaSend();
+        Pendenza prima = salvata.getOpzioniPagamento().get(0).getPendenze().get(0);
+
+        service.impostaNotificaSendPendenza(prima, true, prima.getSendNav());
+        assertThat(prima.getSendImportoTotale()).isEqualTo(5.0);
+
+        service.impostaNotificaSendPendenza(prima, true, NAV_SEND_ESTERNO);
+        assertThat(prima.getSendNav()).isEqualTo(NAV_SEND_ESTERNO);
+        assertThat(prima.getSendImportoTotale()).isNull();
+
+        assertThatThrownBy(() -> service.impostaNotificaSendPendenza(prima, true, "12"))
+                .isInstanceOf(ValidazioneNonSuperataException.class);
+
+        service.impostaNotificaSendPendenza(prima, false, NAV_SEND_ESTERNO);
+        assertThat(prima.isSendAbilitato()).isFalse();
+        assertThat(prima.getSendNav()).isNull();
+    }
+
+    @Test
+    @DisplayName("impostaNotificaSendPendenza rifiuta di abilitare la notifica su una pendenza che non e' la prima dell'opzione")
+    void impostaNotificaSendPendenzaRifiutaUnaPendenzaNonPrima() {
+        PosizioneDebitoria salvata = pianoConQuotaSend();
+        Pendenza seconda = salvata.getOpzioniPagamento().get(0).getPendenze().get(1);
+
+        assertThatThrownBy(() -> service.impostaNotificaSendPendenza(seconda, true, null))
+                .isInstanceOf(ValidazioneNonSuperataException.class)
+                .hasMessageContaining("prima pendenza");
+
+        service.impostaNotificaSendPendenza(seconda, false, null);
+        assertThat(seconda.isSendAbilitato()).isFalse();
+    }
+
+    @Test
     @DisplayName("aggiornaNotificaSend rifiuta se una pendenza dell'opzione e' stata pagata")
     void aggiornaNotificaSendRifiutaSeUnaPendenzaEPagata() {
         PosizioneDebitoria salvata = pianoConQuotaSend();
@@ -1465,8 +1501,8 @@ class PosizioneDebitoriaServiceTest {
     }
 
     @Test
-    @DisplayName("aggiungiPendenza su un'opzione diversa dal piano rateale eredita la notifica SEND, su un piano no")
-    void aggiungiPendenzaEreditaLaNotificaSendSoloFuoriDalPiano() {
+    @DisplayName("aggiungiPendenza non porta la notifica SEND sulla nuova pendenza, in nessuna tipologia di opzione")
+    void aggiungiPendenzaNonEreditaLaNotificaSend() {
         PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
         OpzionePagamento piano = opzioneConPendenza(posizione, TipologiaOpzionePagamento.PIANO_RATEALE, "2");
         posizione.getOpzioniPagamento().get(0).impostaNotificaSend(true, NAV_SEND_ESTERNO);
@@ -1482,9 +1518,11 @@ class PosizioneDebitoriaServiceTest {
         Pendenza nelPiano = service.aggiungiPendenza(a2a, id, rateale.getIdOpzionePagamento(),
                 DatiPendenza.da(nuovaPendenzaStandalone(salvata.getIdApplicazione(), "seconda")));
 
-        assertThat(nellaUnica.isSendAbilitato()).isTrue();
-        assertThat(nellaUnica.getSendNav()).isEqualTo(NAV_SEND_ESTERNO);
+        assertThat(nellaUnica.isSendAbilitato()).isFalse();
+        assertThat(nellaUnica.getSendNav()).isNull();
         assertThat(nelPiano.isSendAbilitato()).isFalse();
+        assertThat(unica.isSendAbilitato()).isTrue();
+        assertThat(unica.getSendNav()).isEqualTo(NAV_SEND_ESTERNO);
     }
 
     @Test
@@ -1537,6 +1575,96 @@ class PosizioneDebitoriaServiceTest {
         conScadenzaOpzione.getOpzioniPagamento().get(0).setDataScadenza(LocalDate.now().plusDays(3));
         assertThatThrownBy(() -> service.crea(DatiPosizioneDebitoria.da(conScadenzaOpzione)))
                 .isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento con scadenza anteriore alla data di pubblicazione salvata e' rifiutata")
+    void aggiungiOpzionePagamentoRifiutaLaScadenzaControLaDataSalvata() {
+        LocalDate oggi = LocalDate.now();
+        PosizioneDebitoria posizione = posizioneConDueDebitoriEOpzioniDaAggiungere(oggi);
+
+        assertThatThrownBy(() -> service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                service.idPosizioneDebitoriaPubblica(posizione), comandoOpzioniScadenti(oggi)))
+                .isInstanceOf(ValidazioneNonSuperataException.class);
+    }
+
+    @Test
+    @DisplayName("aggiungiOpzionePagamento con la data di pubblicazione valida le scadenze contro la data finale")
+    void aggiungiOpzionePagamentoConDataPubblicazioneValidaLoStatoFinale() {
+        LocalDate oggi = LocalDate.now();
+        PosizioneDebitoria posizione = posizioneConDueDebitoriEOpzioniDaAggiungere(oggi);
+
+        service.aggiungiOpzionePagamento(codApplicazioneDi(posizione),
+                service.idPosizioneDebitoriaPubblica(posizione), comandoOpzioniScadenti(oggi),
+                ModificaCampo.imposta(oggi.plusDays(1)));
+
+        assertThat(posizione.getDataPubblicazione()).isEqualTo(oggi.plusDays(1));
+        assertThat(posizione.getDataUltimaModificaAca().toLocalDate()).isEqualTo(oggi.plusDays(1));
+        assertThat(posizione.getOpzioniPagamento()).flatExtracting(OpzionePagamento::getPendenze)
+                .isNotEmpty()
+                .allSatisfy(p -> assertThat(p.getDataUltimaModificaAca().toLocalDate()).isEqualTo(oggi.plusDays(1)));
+    }
+
+    @Test
+    @DisplayName("aggiungiPendenza con una nuova data di pubblicazione riallinea la marcatura ACA di tutte le pendenze")
+    void aggiungiPendenzaConDataPubblicazioneRiallineaLeMarcatureAca() {
+        LocalDate oggi = LocalDate.now();
+        PosizioneDebitoria da = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        da.setDataPubblicazione(oggi.plusDays(5));
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(da));
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze().get(0).getDataUltimaModificaAca().toLocalDate())
+                .isEqualTo(oggi.plusDays(5));
+
+        service.aggiungiPendenza(codApplicazioneDi(salvata), service.idPosizioneDebitoriaPubblica(salvata),
+                salvata.getOpzioniPagamento().get(0).getIdOpzionePagamento(),
+                DatiPendenza.da(nuovaPendenzaStandalone(salvata.getIdApplicazione(), "rata-aca")),
+                ModificaCampo.imposta(oggi.plusDays(1)));
+
+        assertThat(salvata.getOpzioniPagamento().get(0).getPendenze()).hasSize(2)
+                .allSatisfy(p -> assertThat(p.getDataUltimaModificaAca().toLocalDate()).isEqualTo(oggi.plusDays(1)));
+    }
+
+    private PosizioneDebitoria posizioneConDueDebitoriEOpzioniDaAggiungere(LocalDate oggi) {
+        PosizioneDebitoria da = posizioneConDueDebitori();
+        da.setDataPubblicazione(oggi.plusDays(5));
+        return service.crea(DatiPosizioneDebitoria.da(da));
+    }
+
+    private java.util.List<DatiOpzionePagamentoDebitore> comandoOpzioniScadenti(LocalDate oggi) {
+        OpzionePagamento perG = opzioneDaAggiungere("nuova-g", "400000000000000002");
+        perG.setDataScadenza(oggi.plusDays(2));
+        OpzionePagamento perM = opzioneDaAggiungere("nuova-m", "400000000000000001");
+        perM.setDataScadenza(oggi.plusDays(2));
+        return java.util.List.of(
+                new DatiOpzionePagamentoDebitore(GIOVANNA, DatiOpzionePagamento.da(perG)),
+                new DatiOpzionePagamentoDebitore(MARIO, DatiOpzionePagamento.da(perM)));
+    }
+
+    @Test
+    @DisplayName("aggiornaPendenza con la data di pubblicazione valida le scadenze contro la data finale")
+    void aggiornaPendenzaConDataPubblicazioneValidaLoStatoFinale() {
+        LocalDate oggi = LocalDate.now();
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        posizione.setDataPubblicazione(oggi.plusDays(5));
+        posizione.getOpzioniPagamento().get(0).getPendenze().get(0)
+                .setDataScadenzaAvviso(oggi.plusDays(6).atStartOfDay().atOffset(java.time.ZoneOffset.UTC));
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        Pendenza pendenza = salvata.getOpzioniPagamento().get(0).getPendenze().get(0);
+        AggiornamentoPendenza base = AggiornamentoPendenza.da(pendenza);
+        AggiornamentoPendenza anticipata = new AggiornamentoPendenza(base.idPendenza(), base.idTipoPendenza(),
+                base.idTipoVersamento(), base.codificaIuvTipoPendenza(), base.importo(), base.numeroAvviso(),
+                base.dataValidita(), oggi.plusDays(2).atStartOfDay().atOffset(java.time.ZoneOffset.UTC),
+                base.voci(), base.causale());
+        String a2a = codApplicazioneDi(salvata);
+
+        assertThatThrownBy(() -> service.aggiornaPendenza(a2a, pendenza.getIdPendenza(), anticipata))
+                .isInstanceOf(ValidazioneNonSuperataException.class);
+
+        Pendenza aggiornata = service.aggiornaPendenza(a2a, pendenza.getIdPendenza(), anticipata,
+                ModificaCampo.imposta(oggi.plusDays(1)));
+
+        assertThat(aggiornata.getOpzionePagamento().getPosizioneDebitoria().getDataPubblicazione())
+                .isEqualTo(oggi.plusDays(1));
     }
 
     @Test

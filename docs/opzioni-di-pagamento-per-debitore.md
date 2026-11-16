@@ -63,10 +63,10 @@ dell'opzione di pagamento nel contratto, ma sul database stanno sulla singola pe
 più NAV con importi distinti nella stessa posizione. Con soluzione unica e piano rateale alternativi,
 un solo NAV per debitore non coprirebbe l'opzione scelta.
 
-- *Scrittura.* Alla creazione o alla modifica dell'opzione i due valori vanno sulle sole pendenze che
-  portano il pagamento della notifica: la prima rata (`numero_rata` minore) in un piano rateale, tutte
-  le pendenze nelle altre tipologie; le altre pendenze non la portano. Una pendenza aggiunta a
-  un'opzione non rateale eredita il valore dell'opzione.
+- *Scrittura.* Alla creazione o alla modifica dell'opzione i due valori vanno sulla sola prima pendenza
+  dell'opzione (`numero_rata` minore), in ogni tipologia; le altre pendenze non la portano. Una
+  pendenza aggiunta all'opzione non la porta e non è possibile abilitarla su una pendenza che non
+  sia la prima.
 - *Lettura.* Sull'opzione non esiste alcuna colonna: abilitazione e NAV si ricostruiscono dalla prima
   pendenza dell'opzione.
 - *Interrogazione.* SEND si interroga per ogni pendenza con `send_abilitato` vero, con `send_nav` se

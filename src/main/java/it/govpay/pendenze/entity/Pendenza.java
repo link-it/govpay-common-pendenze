@@ -282,8 +282,8 @@ public class Pendenza {
 
     /**
      * La pendenza porta le spese di notifica SEND. Scritto a partire dall'opzione di pagamento
-     * ({@link OpzionePagamento#impostaNotificaSend}): in un piano rateale solo dalla prima
-     * rata, nelle altre opzioni da tutte le pendenze.
+     * ({@link OpzionePagamento#impostaNotificaSend}): solo la prima pendenza dell'opzione, in
+     * ogni tipologia, la porta.
      */
     @Column(name = "send_abilitato", nullable = false)
     private boolean sendAbilitato = false;
