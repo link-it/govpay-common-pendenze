@@ -45,6 +45,7 @@ import it.govpay.pendenze.entity.FlussoRendicontazione;
 import it.govpay.pendenze.entity.OpzionePagamento;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
+import it.govpay.pendenze.entity.Rpt;
 import it.govpay.pendenze.entity.Rendicontazione;
 import it.govpay.pendenze.entity.Debitore;
 import it.govpay.pendenze.entity.PdDebitore;
@@ -1331,6 +1332,98 @@ class PosizioneDebitoriaServiceTest {
         service.registraEsitoPendenza(codApplicazioneDi(salvata), "pendenza-1", StatoPendenza.ESEGUITO);
 
         assertThat(salvata.getPdDebitori().get(0).isNotificaSendPayed()).isFalse();
+        assertThat(rate.get(1).getSendImportoTotale()).isEqualTo(5.0);
+    }
+
+    /** Piano rateale di tre rate con le spese SEND memorizzate sulle prime due e la notifica sul NAV della prima. */
+    private PosizioneDebitoria pianoConQuotaSend() {
+        PosizioneDebitoria posizione = posizioneConUnaOpzione(TipologiaOpzionePagamento.PIANO_RATEALE);
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "2");
+        opzioneConPendenza(posizione.getOpzioniPagamento().get(0), "3");
+        PosizioneDebitoria salvata = service.crea(DatiPosizioneDebitoria.da(posizione));
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+        OffsetDateTime aggiornamento = OffsetDateTime.now();
+        rate.get(0).setSendImportoTotale(5.0);
+        rate.get(0).setSendDataAggiornamento(aggiornamento);
+        rate.get(1).setSendImportoTotale(5.0);
+        rate.get(1).setSendDataAggiornamento(aggiornamento);
+        PdDebitore pd = salvata.getPdDebitori().get(0);
+        pd.setNotificaSend(true);
+        pd.setNotificaSendNav(rate.get(0).getNumeroAvviso());
+        return salvata;
+    }
+
+    private DatiAggiornamentoDebitore soloNotifica(ModificaCampo<Boolean> notificaSend, ModificaCampo<String> nav) {
+        return new DatiAggiornamentoDebitore(
+                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
+                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
+                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
+                ModificaCampo.invariato(), ModificaCampo.invariato(), notificaSend, nav);
+    }
+
+    @Test
+    @DisplayName("aggiornaDebitore con un navNotifica diverso toglie la quota SEND dalla vecchia pendenza e non dalla nuova")
+    void aggiornaDebitoreCambiaNavEInvalidaLaQuotaDellaVecchiaPendenza() {
+        PosizioneDebitoria salvata = pianoConQuotaSend();
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+
+        service.aggiornaDebitore(codApplicazioneDi(salvata), service.idPosizioneDebitoriaPubblica(salvata), MARIO,
+                soloNotifica(ModificaCampo.invariato(), ModificaCampo.imposta(rate.get(1).getNumeroAvviso())));
+
+        assertThat(rate.get(0).getSendImportoTotale()).isNull();
+        assertThat(rate.get(0).getSendDataAggiornamento()).isNull();
+        assertThat(rate.get(1).getSendImportoTotale()).isEqualTo(5.0);
+    }
+
+    @Test
+    @DisplayName("aggiornaDebitore con notificaSend disattivato toglie la quota SEND da tutte le pendenze non pagate")
+    void aggiornaDebitoreDisattivaLaNotificaEInvalidaLeQuote() {
+        PosizioneDebitoria salvata = pianoConQuotaSend();
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+
+        service.aggiornaDebitore(codApplicazioneDi(salvata), service.idPosizioneDebitoriaPubblica(salvata), MARIO,
+                soloNotifica(ModificaCampo.imposta(false), ModificaCampo.invariato()));
+
+        assertThat(rate.get(0).getSendImportoTotale()).isNull();
+        assertThat(rate.get(1).getSendImportoTotale()).isNull();
+    }
+
+    @Test
+    @DisplayName("impostaNotificaSend non tocca la quota SEND di una pendenza pagata")
+    void impostaNotificaSendPreservaLaQuotaDiUnaPendenzaPagata() {
+        PosizioneDebitoria salvata = pianoConQuotaSend();
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+        rate.get(1).setStato(StatoPendenza.ESEGUITO);
+
+        service.impostaNotificaSend(salvata.getPdDebitori().get(0), false, null);
+
+        assertThat(rate.get(0).getSendImportoTotale()).isNull();
+        assertThat(rate.get(1).getSendImportoTotale()).isEqualTo(5.0);
+    }
+
+    @Test
+    @DisplayName("impostaNotificaSend non tocca la quota SEND di una pendenza con una RPT (pagamento in corso)")
+    void impostaNotificaSendPreservaLaQuotaDiUnaPendenzaConRpt() {
+        PosizioneDebitoria salvata = pianoConQuotaSend();
+        em.flush();
+        List<Pendenza> rate = salvata.getOpzioniPagamento().get(0).getPendenze();
+        Rpt rpt = new Rpt();
+        rpt.setIdVersamento(rate.get(1).getId());
+        rpt.setIuv(rate.get(1).getIuv());
+        rpt.setIur("iur-send");
+        rpt.setCodDominio("DOMINIO_1");
+        rpt.setCodStazione("STAZIONE_1");
+        rpt.setCodMsgRichiesta("msg-send");
+        rpt.setStato("RPT_ATTIVATA");
+        rpt.setDataMsgRichiesta(OffsetDateTime.now());
+        rpt.setDataAggiornamentoStato(OffsetDateTime.now());
+        rpt.setVersione("RPTV2_RTV1");
+        em.persist(rpt);
+        em.flush();
+
+        service.impostaNotificaSend(salvata.getPdDebitori().get(0), false, null);
+
+        assertThat(rate.get(0).getSendImportoTotale()).isNull();
         assertThat(rate.get(1).getSendImportoTotale()).isEqualTo(5.0);
     }
 

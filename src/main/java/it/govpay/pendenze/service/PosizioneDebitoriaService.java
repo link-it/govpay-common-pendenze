@@ -61,6 +61,7 @@ import it.govpay.pendenze.repository.OpzionePagamentoRepository;
 import it.govpay.pendenze.repository.PendenzaRepository;
 import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
 import it.govpay.pendenze.repository.RendicontazioneRepository;
+import it.govpay.pendenze.repository.RptRepository;
 import it.govpay.pendenze.spi.GeneratoreIuv;
 import it.govpay.pendenze.spi.IdentificativiPagamento;
 import it.govpay.pendenze.validazione.ValidatorePosizioneDebitoria;
@@ -87,6 +88,7 @@ public class PosizioneDebitoriaService {
     private final ApplicazioneRepository applicazioneRepository;
     private final DominioRepository dominioRepository;
     private final RendicontazioneRepository rendicontazioneRepository;
+    private final RptRepository rptRepository;
     private final Clock clock;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
 
@@ -111,7 +113,7 @@ public class PosizioneDebitoriaService {
     public PosizioneDebitoriaService(PosizioneDebitoriaRepository posizioneDebitoriaRepository,
             OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository,
             ApplicazioneRepository applicazioneRepository, DominioRepository dominioRepository,
-            RendicontazioneRepository rendicontazioneRepository,
+            RendicontazioneRepository rendicontazioneRepository, RptRepository rptRepository,
             Clock clock, ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
@@ -119,6 +121,7 @@ public class PosizioneDebitoriaService {
         this.applicazioneRepository = applicazioneRepository;
         this.dominioRepository = dominioRepository;
         this.rendicontazioneRepository = rendicontazioneRepository;
+        this.rptRepository = rptRepository;
         this.clock = clock;
         this.generatoreIuvProvider = generatoreIuvProvider;
     }
@@ -788,13 +791,12 @@ public class PosizioneDebitoriaService {
         if (comando.nazione().presente()) debitore.setNazione(comando.nazione().valore());
         if (comando.email().presente()) debitore.setEmail(comando.email().valore());
         if (comando.cellulare().presente()) debitore.setCellulare(comando.cellulare().valore());
-        if (comando.notificaSend().presente()) {
-            if (comando.notificaSend().valore() == null) {
-                throw new ValidazioneNonSuperataException("'notificaSend' del debitore non puo' essere azzerato");
-            }
-            pdDebitore.setNotificaSend(comando.notificaSend().valore());
+        if (comando.notificaSend().presente() && comando.notificaSend().valore() == null) {
+            throw new ValidazioneNonSuperataException("'notificaSend' del debitore non puo' essere azzerato");
         }
-        if (comando.navNotifica().presente()) pdDebitore.setNotificaSendNav(comando.navNotifica().valore());
+        impostaNotificaSend(pdDebitore,
+                comando.notificaSend().presente() ? comando.notificaSend().valore() : pdDebitore.isNotificaSend(),
+                comando.navNotifica().presente() ? comando.navNotifica().valore() : pdDebitore.getNotificaSendNav());
 
         ValidatorePosizioneDebitoria.valida(posizione);
 
@@ -1658,6 +1660,33 @@ public class PosizioneDebitoriaService {
         registraSpeseNotificaSend(pendenza);
         ValidatorePosizioneDebitoria.validaStati(opzione.getPosizioneDebitoria());
         return pendenza;
+    }
+
+    /**
+     * Imposta {@code notificaSend} e {@code notificaSendNav} del debitore. Le pendenze del
+     * debitore {@code NON_ESEGUITO}, senza alcuna RPT, che non sono quella indicata dal NAV di
+     * notifica perdono {@code sendImportoTotale} e {@code sendDataAggiornamento}; restano
+     * invariate le pendenze pagate e quelle con una RPT (pagamento in corso).
+     *
+     * @param pdDebitore      debitore gestito nella transazione corrente
+     * @param notificaSend    SEND previsto per il debitore
+     * @param notificaSendNav NAV di notifica, {@code null} se assente
+     */
+    public void impostaNotificaSend(PdDebitore pdDebitore, boolean notificaSend, String notificaSendNav) {
+        pdDebitore.setNotificaSend(notificaSend);
+        pdDebitore.setNotificaSendNav(notificaSendNav);
+        for (OpzionePagamento opzione : pdDebitore.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                boolean portaLeSpese = notificaSend && notificaSendNav != null
+                        && notificaSendNav.equals(pendenza.getNumeroAvviso());
+                if (!portaLeSpese && pendenza.getStato() == StatoPendenza.NON_ESEGUITO
+                        && pendenza.getSendImportoTotale() != null
+                        && !rptRepository.existsByIdVersamento(pendenza.getId())) {
+                    pendenza.setSendImportoTotale(null);
+                    pendenza.setSendDataAggiornamento(null);
+                }
+            }
+        }
     }
 
     private void registraSpeseNotificaSend(Pendenza pagata) {

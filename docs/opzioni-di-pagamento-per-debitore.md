@@ -68,6 +68,11 @@ no. `Pendenza.sendAbilitato`, campo della v2, non entra nella decisione. `notifi
 stato "spese già registrate sul debitore": `false` alla creazione, impostato dalla libreria, mai in
 ingresso.
 
+Quando cambiano `notifica_send` o `notifica_send_nav` (modifica del debitore, `impostaNotificaSend`), le
+pendenze del debitore `NON_ESEGUITO`, senza RPT, che non sono quella indicata dal NAV di notifica perdono
+`sendImportoTotale` e `sendDataAggiornamento`: la quota non resta esposta su una pendenza che non la porta
+più. Le pendenze pagate e quelle con una RPT (pagamento in corso) conservano il loro valore.
+
 `registraEsitoPendenza`, quando la pendenza pagata ha `sendImportoTotale` maggiore di zero, marca il
 debitore con `notifica_send_payed`; non modifica le altre pendenze. Un importo assente o pari a 0 non
 marca il debitore.
