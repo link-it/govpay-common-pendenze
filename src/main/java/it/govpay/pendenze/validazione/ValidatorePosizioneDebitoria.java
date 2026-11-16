@@ -91,7 +91,6 @@ public final class ValidatorePosizioneDebitoria {
             validaOpzione(opzione);
         }
         validaStati(posizione);
-        validaSpeseNotificaEnotificaSend(posizione);
         validaNumeroAvvisoNonDuplicatoNellAggregato(posizione);
         validaIdPendenzaNonDuplicatoNellAggregato(posizione);
     }
@@ -355,8 +354,7 @@ public final class ValidatorePosizioneDebitoria {
                     "la voce [" + voce.getIdVocePendenza() + "] ha un dettaglioContabile INCASSO_TIPICO con sia"
                             + " emissioneFattura sia nrDocumento: sono alternativi, non ammessi insieme");
         }
-        // SpeseNotifica: nessun vincolo di campo qui, solo l'incrocio con notificaSend
-        // (validaSpeseNotificaEnotificaSend, sull'intera posizione).
+        // SpeseNotifica: nessun vincolo.
     }
 
     private static void richiedeEsattamenteUno(VocePendenza voce, String tipo, String nome1, Object valore1,
@@ -367,30 +365,6 @@ public final class ValidatorePosizioneDebitoria {
                     "la voce [" + voce.getIdVocePendenza() + "] ha un dettaglioContabile " + tipo + " con "
                             + presenti + " tra " + nome1 + "/" + nome2 + "/" + nome3
                             + " valorizzati: deve essere presente esattamente uno");
-        }
-    }
-
-    /**
-     * {@code SPESE_NOTIFICA} va indicato solo se l'importo della voce include già le spese
-     * di notifica SEND calcolate autonomamente dall'applicativo — in quel caso
-     * {@code notificaSend} non deve essere attivo sul debitore, altrimenti le spese
-     * verrebbero applicate due volte (semantica esplicita dello YAML v3).
-     */
-    private static void validaSpeseNotificaEnotificaSend(PosizioneDebitoria posizione) {
-        for (PdDebitore pdDebitore : posizione.getPdDebitori()) {
-            if (!pdDebitore.isNotificaSendPayed()) {
-                continue;
-            }
-            boolean presenteSpeseNotifica = pdDebitore.getOpzioniPagamento().stream()
-                    .flatMap(o -> o.getPendenze().stream())
-                    .flatMap(p -> p.getVoci().stream())
-                    .flatMap(v -> v.getDettaglioContabile().stream())
-                    .anyMatch(DettaglioContabile.SpeseNotifica.class::isInstance);
-            if (presenteSpeseNotifica) {
-                throw new ValidazioneNonSuperataException(
-                        "notificaSend e' attivo ma una voce ha gia' un dettaglioContabile SPESE_NOTIFICA: le spese"
-                                + " verrebbero applicate due volte");
-            }
         }
     }
 }

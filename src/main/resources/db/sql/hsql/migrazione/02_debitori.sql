@@ -49,6 +49,7 @@ CREATE SEQUENCE seq_pd_debitori START WITH 1 INCREMENT BY 1;
 CREATE TABLE pd_debitori
 (
 	posizione INT NOT NULL,
+	notifica_send BOOLEAN DEFAULT FALSE NOT NULL,
 	notifica_send_payed BOOLEAN DEFAULT FALSE NOT NULL,
 	notifica_send_nav VARCHAR(18),
 	data_rimozione TIMESTAMP,

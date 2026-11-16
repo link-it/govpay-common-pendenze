@@ -44,6 +44,7 @@ CREATE INDEX idx_deb_identificativo ON debitori (identificativo);
 CREATE TABLE pd_debitori
 (
 	posizione INT NOT NULL,
+	notifica_send BIT NOT NULL DEFAULT 0,
 	notifica_send_payed BIT NOT NULL DEFAULT 0,
 	notifica_send_nav VARCHAR(18),
 	data_rimozione DATETIME2,

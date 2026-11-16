@@ -214,6 +214,40 @@ JOIN #tmp_vrs_soglia vs ON vs.id = v.id
 JOIN #tmp_vrs_soglia_id idc ON idc.id_opzione_pagamento = vs.id_opzione_pagamento;
 
 -- ---------------------------------------------------------------------------
+-- Notifica SEND per debitore: un debitore con almeno un versamento v2 con
+-- send_abilitato porta notifica_send e il NAV di notifica. Il NAV e' quello della
+-- pendenza di numero_rata piu' basso (soluzione unica, rata del piano rateale) e,
+-- per i gruppi con sole soglie, del primo versamento con send_abilitato. Un NAV
+-- assente resta NULL ed e' elencato dal report diagnostico finale.
+-- ---------------------------------------------------------------------------
+
+UPDATE p SET p.notifica_send = 1
+FROM pd_debitori p
+WHERE p.id IN (SELECT g.id_pd_debitore FROM #tmp_gruppi g)
+  AND EXISTS (SELECT 1 FROM opzioni_pagamento o JOIN versamenti v ON v.id_opzione_pagamento = o.id
+              WHERE o.id_pd_debitore = p.id AND v.send_abilitato = 1);
+
+UPDATE p SET p.notifica_send_nav = (SELECT v.numero_avviso
+    FROM opzioni_pagamento o JOIN versamenti v ON v.id_opzione_pagamento = o.id
+    WHERE o.id_pd_debitore = p.id
+      AND v.numero_rata = (SELECT MIN(v2.numero_rata)
+                           FROM opzioni_pagamento o2 JOIN versamenti v2 ON v2.id_opzione_pagamento = o2.id
+                           WHERE o2.id_pd_debitore = p.id))
+FROM pd_debitori p
+WHERE p.notifica_send = 1
+  AND p.id IN (SELECT g.id_pd_debitore FROM #tmp_gruppi g WHERE g.tipologia IS NOT NULL);
+
+UPDATE p SET p.notifica_send_nav = (SELECT v.numero_avviso
+    FROM opzioni_pagamento o JOIN versamenti v ON v.id_opzione_pagamento = o.id
+    WHERE o.id_pd_debitore = p.id
+      AND v.id = (SELECT MIN(v2.id)
+                  FROM opzioni_pagamento o2 JOIN versamenti v2 ON v2.id_opzione_pagamento = o2.id
+                  WHERE o2.id_pd_debitore = p.id AND v2.send_abilitato = 1))
+FROM pd_debitori p
+WHERE p.notifica_send = 1
+  AND p.id IN (SELECT g.id_pd_debitore FROM #tmp_gruppi g WHERE g.tipologia IS NULL);
+
+-- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa
 -- posizione (di qualunque suo debitore) di un'opzione ATTIVATA e' un'alternativa non piu' applicabile —
 -- stessa semantica di PosizioneDebitoriaService.attiva() della libreria.
@@ -280,6 +314,13 @@ SELECT pd.id AS id_pd_debitori, pd.id_documento, d.identificativo
 FROM pd_debitori pd
 JOIN debitori d ON d.id = pd.id_debitore
 WHERE NOT EXISTS (SELECT 1 FROM opzioni_pagamento op WHERE op.id_pd_debitore = pd.id);
+
+-- Debitori con notifica SEND prevista ma senza NAV di notifica (versamento v2 con
+-- send_abilitato e numero_avviso assente): SEND non verra' interrogato per loro.
+SELECT pd.id AS id_pd_debitori, pd.id_documento, d.identificativo
+FROM pd_debitori pd
+JOIN debitori d ON d.id = pd.id_debitore
+WHERE pd.notifica_send = 1 AND pd.notifica_send_nav IS NULL;
 
 DROP TABLE #tmp_vrs_rata;
 DROP TABLE #tmp_gruppi;

@@ -84,7 +84,7 @@ final class ApplicatoreComandi {
     static PdDebitore pdDebitore(DatiPdDebitore dati) {
         PdDebitore e = new PdDebitore();
         e.setDebitore(debitore(dati.debitore()));
-        e.setNotificaSendPayed(dati.notificaSendPayed());
+        e.setNotificaSend(dati.notificaSend());
         e.setNotificaSendNav(dati.notificaSendNav());
         dati.opzioniPagamento().forEach(v -> e.addOpzionePagamento(opzionePagamento(v)));
         return e;

@@ -46,6 +46,7 @@ CREATE SEQUENCE IF NOT EXISTS seq_pd_debitori
 CREATE TABLE IF NOT EXISTS pd_debitori
 (
     posizione INT NOT NULL,
+    notifica_send BOOLEAN NOT NULL DEFAULT false,
     notifica_send_payed BOOLEAN NOT NULL DEFAULT false,
     notifica_send_nav VARCHAR(18),
     data_rimozione TIMESTAMP,

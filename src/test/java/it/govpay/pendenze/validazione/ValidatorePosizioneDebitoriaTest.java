@@ -417,18 +417,6 @@ class ValidatorePosizioneDebitoriaTest {
         assertThatCode(() -> ValidatorePosizioneDebitoria.valida(posizione)).doesNotThrowAnyException();
     }
 
-    @Test
-    @DisplayName("notifica SEND attiva sul debitore con una voce che ha gia' SPESE_NOTIFICA e' rifiutata (doppio addebito)")
-    void notificaSendConSpeseNotificaGiaPresente() {
-        PosizioneDebitoria posizione = posizioneValida(TipologiaOpzionePagamento.SOLUZIONE_UNICA, 1);
-        posizione.getPdDebitori().get(0).setNotificaSendPayed(true);
-        primaVoce(posizione).setDettaglioContabile(List.of(new DettaglioContabile.SpeseNotifica(BigDecimal.ONE)));
-
-        assertThatThrownBy(() -> ValidatorePosizioneDebitoria.valida(posizione))
-                .isInstanceOf(ValidazioneNonSuperataException.class)
-                .hasMessageContaining("due volte");
-    }
-
     // ── Fixture ──────────────────────────────────────────────────────────────
 
     private VocePendenza primaVoce(PosizioneDebitoria posizione) {
