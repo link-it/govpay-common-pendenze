@@ -79,8 +79,6 @@ class PosizioneDebitoriaMappingTest {
         assertThat(riletta.getPdDebitori()).hasSize(1);
         PdDebitore pdLetto = riletta.getPdDebitori().get(0);
         assertThat(pdLetto.getPosizioneDebitoria().getId()).isEqualTo(riletta.getId());
-        assertThat(pdLetto.isNotificaSendPayed()).isFalse();
-        assertThat(pdLetto.getNotificaSendNav()).isNull();
         Debitore debitoreLetto = pdLetto.getDebitore();
         assertThat(debitoreLetto.getTipo()).isEqualTo(TipoSoggetto.F);
         assertThat(debitoreLetto.getIdentificativo()).isEqualTo("RSSMRA80A01H501U");

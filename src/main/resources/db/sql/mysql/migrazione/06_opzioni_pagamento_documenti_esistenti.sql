@@ -123,9 +123,18 @@ SELECT
 FROM tmp_gruppi g
 JOIN versamenti v ON v.id = g.primo_versamento;
 
-INSERT INTO pd_debitori (id, id_documento, id_debitore, posizione, notifica_send_payed)
-SELECT g.id_pd_debitore, g.id_documento, g.id_debitore, g.posizione, 0
+INSERT INTO pd_debitori (id, id_documento, id_debitore, posizione)
+SELECT g.id_pd_debitore, g.id_documento, g.id_debitore, g.posizione
 FROM tmp_gruppi g;
+
+-- Data di pubblicazione: il documento prende la data piu' tarda tra quelle dei suoi versamenti,
+-- troncata al giorno, cosi' nessuna pendenza e' pagabile prima della propria data. Una data
+-- gia' presente sul documento non viene toccata.
+UPDATE documenti d SET d.data_pubblicazione =
+    (SELECT DATE(MAX(v.data_pubblicazione)) FROM versamenti v WHERE v.id_documento = d.id)
+WHERE d.data_pubblicazione IS NULL
+  AND d.id IN (SELECT g.id_documento FROM tmp_gruppi g)
+  AND EXISTS (SELECT 1 FROM versamenti v WHERE v.id_documento = d.id AND v.data_pubblicazione IS NOT NULL);
 
 -- ---------------------------------------------------------------------------
 -- Pattern C: ENTRO/OLTRE espliciti, inclusa la coppia RIDOTTO/SCONTATO. Una
@@ -209,37 +218,6 @@ SET v.id_opzione_pagamento = op.id,
     v.numero_rata = 1;
 
 -- ---------------------------------------------------------------------------
--- Notifica SEND per debitore: un debitore con almeno un versamento v2 con
--- send_abilitato porta notifica_send e il NAV di notifica. Il NAV e' quello della
--- pendenza di numero_rata piu' basso (soluzione unica, rata del piano rateale) e,
--- per i gruppi con sole soglie, del primo versamento con send_abilitato. Un NAV
--- assente resta NULL ed e' elencato dal report diagnostico finale.
--- ---------------------------------------------------------------------------
-
-UPDATE pd_debitori p SET p.notifica_send = 1
-WHERE p.id IN (SELECT g.id_pd_debitore FROM tmp_gruppi g)
-  AND EXISTS (SELECT 1 FROM opzioni_pagamento o JOIN versamenti v ON v.id_opzione_pagamento = o.id
-              WHERE o.id_pd_debitore = p.id AND v.send_abilitato = 1);
-
-UPDATE pd_debitori p SET p.notifica_send_nav = (SELECT v.numero_avviso
-    FROM opzioni_pagamento o JOIN versamenti v ON v.id_opzione_pagamento = o.id
-    WHERE o.id_pd_debitore = p.id
-      AND v.numero_rata = (SELECT MIN(v2.numero_rata)
-                           FROM opzioni_pagamento o2 JOIN versamenti v2 ON v2.id_opzione_pagamento = o2.id
-                           WHERE o2.id_pd_debitore = p.id))
-WHERE p.notifica_send = 1
-  AND p.id IN (SELECT g.id_pd_debitore FROM tmp_gruppi g WHERE g.tipologia IS NOT NULL);
-
-UPDATE pd_debitori p SET p.notifica_send_nav = (SELECT v.numero_avviso
-    FROM opzioni_pagamento o JOIN versamenti v ON v.id_opzione_pagamento = o.id
-    WHERE o.id_pd_debitore = p.id
-      AND v.id = (SELECT MIN(v2.id)
-                  FROM opzioni_pagamento o2 JOIN versamenti v2 ON v2.id_opzione_pagamento = o2.id
-                  WHERE o2.id_pd_debitore = p.id AND v2.send_abilitato = 1))
-WHERE p.notifica_send = 1
-  AND p.id IN (SELECT g.id_pd_debitore FROM tmp_gruppi g WHERE g.tipologia IS NULL);
-
--- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa
 -- posizione (di qualunque suo debitore) di un'opzione ATTIVATA e' un'alternativa non piu' applicabile —
 -- stessa semantica di PosizioneDebitoriaService.attiva() della libreria.
@@ -307,13 +285,6 @@ SELECT pd.id AS id_pd_debitori, pd.id_documento, d.identificativo
 FROM pd_debitori pd
 JOIN debitori d ON d.id = pd.id_debitore
 WHERE NOT EXISTS (SELECT 1 FROM opzioni_pagamento op WHERE op.id_pd_debitore = pd.id);
-
--- Debitori con notifica SEND prevista ma senza NAV di notifica (versamento v2 con
--- send_abilitato e numero_avviso assente): SEND non verra' interrogato per loro.
-SELECT pd.id AS id_pd_debitori, pd.id_documento, d.identificativo
-FROM pd_debitori pd
-JOIN debitori d ON d.id = pd.id_debitore
-WHERE pd.notifica_send = 1 AND pd.notifica_send_nav IS NULL;
 
 DROP TEMPORARY TABLE tmp_vrs_rata;
 DROP TEMPORARY TABLE tmp_gruppi;

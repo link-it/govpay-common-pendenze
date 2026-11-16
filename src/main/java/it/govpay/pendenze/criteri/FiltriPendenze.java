@@ -32,6 +32,9 @@ import it.govpay.pendenze.model.StatoPendenza;
  *                                     {@code true}/{@code false} per le pendenze
  *                                     {@code NON_ESEGUITO} scadute/non scadute (soglia: il
  *                                     giorno DOPO {@code dataScadenzaAvviso})
+ * @param nonPubblicata               {@code null} nessun filtro; {@code true} solo le pendenze di una
+ *                                    posizione con data di pubblicazione futura, {@code false} tutte le
+ *                                    altre
  * @param escludiSpontaneiNonEseguiti {@code true} esclude {@code tipo=SPONTANEO AND
  *                                     stato=NON_ESEGUITO} (replica {@code mostraSpontaneiNonPagati}
  *                                     del legacy quando {@code false}); {@code null}/{@code false}
@@ -40,10 +43,10 @@ import it.govpay.pendenze.model.StatoPendenza;
 public record FiltriPendenze(Long idDominio, String idDebitore, String direzione, String divisione,
         OffsetDateTime dataDa, OffsetDateTime dataA, StatoPendenza statoVersamento,
         StatoPendenza statoVersamentoAlternativo, StatoPagamento statoPagamento, Boolean scaduta,
-        Boolean escludiSpontaneiNonEseguiti) {
+        Boolean escludiSpontaneiNonEseguiti, Boolean nonPubblicata) {
 
     /** Nessun filtro oltre a {@code idApplicazione} (che il chiamante fornisce separatamente). */
     public static FiltriPendenze nessuno() {
-        return new FiltriPendenze(null, null, null, null, null, null, null, null, null, null, null);
+        return new FiltriPendenze(null, null, null, null, null, null, null, null, null, null, null, null);
     }
 }

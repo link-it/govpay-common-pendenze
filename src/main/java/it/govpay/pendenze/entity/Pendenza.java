@@ -281,16 +281,24 @@ public class Pendenza {
     private double importoIncassato = 0d;
 
     /**
-     * Flag della v2, indicato dall'Ente. Per le pendenze v3 la notifica SEND dipende da
-     * {@link PdDebitore#isNotificaSend()} e {@link PdDebitore#getNotificaSendNav()}.
+     * La pendenza porta le spese di notifica SEND. Scritto a partire dall'opzione di pagamento
+     * ({@link OpzionePagamento#impostaNotificaSend}): in un piano rateale solo dalla prima
+     * rata, nelle altre opzioni da tutte le pendenze.
      */
     @Column(name = "send_abilitato", nullable = false)
     private boolean sendAbilitato = false;
 
     /**
+     * NAV con cui interrogare SEND al posto del numero avviso della pendenza, ad esempio quando
+     * un avviso gia' notificato e' stato sostituito. Ammesso solo con {@link #sendAbilitato}.
+     */
+    @Column(name = "send_nav", length = 18)
+    private String sendNav;
+
+    /**
      * Importo delle spese di notifica SEND, quantificato dal servizio di pagamento
-     * interrogando il connettore SEND del dominio (sulla pendenza il cui {@link #numeroAvviso}
-     * e' {@link PdDebitore#getNotificaSendNav()} del suo debitore) — mai scritto da questa
+     * interrogando il connettore SEND del dominio con {@link #sendNav} o, se assente, con il
+     * {@link #numeroAvviso} — mai scritto da questa
      * libreria o da govpay-pendenze-api, solo
      * registrato tramite {@link it.govpay.pendenze.service.PosizioneDebitoriaService#registraImportoSend}.
      * Non partecipa alla coerenza importo/voci di {@link #importo}: e' una quota aggiuntiva
@@ -666,6 +674,14 @@ public class Pendenza {
 
     public void setSendAbilitato(boolean sendAbilitato) {
         this.sendAbilitato = sendAbilitato;
+    }
+
+    public String getSendNav() {
+        return sendNav;
+    }
+
+    public void setSendNav(String sendNav) {
+        this.sendNav = sendNav;
     }
 
     public Double getSendImportoTotale() {

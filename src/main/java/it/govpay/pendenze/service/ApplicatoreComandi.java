@@ -13,6 +13,7 @@ import it.govpay.pendenze.entity.PdDebitore;
 import it.govpay.pendenze.entity.Pendenza;
 import it.govpay.pendenze.entity.PosizioneDebitoria;
 import it.govpay.pendenze.entity.VocePendenza;
+import it.govpay.pendenze.exception.ValidazioneNonSuperataException;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
 import it.govpay.pendenze.model.StatoPendenza;
 
@@ -77,6 +78,10 @@ final class ApplicatoreComandi {
         e.setDataInizioValidita(dati.dataInizioValidita());
         e.setDataScadenza(dati.dataScadenza());
         dati.pendenze().forEach(v -> e.addPendenza(pendenza(v)));
+        if (!dati.sendAbilitato() && dati.sendNav() != null) {
+            throw new ValidazioneNonSuperataException("'sendNav' e' ammesso solo con la notifica SEND abilitata");
+        }
+        e.impostaNotificaSend(dati.sendAbilitato(), dati.sendNav());
         e.setStato(StatoOpzionePagamento.DISPONIBILE);
         return e;
     }
@@ -84,8 +89,6 @@ final class ApplicatoreComandi {
     static PdDebitore pdDebitore(DatiPdDebitore dati) {
         PdDebitore e = new PdDebitore();
         e.setDebitore(debitore(dati.debitore()));
-        e.setNotificaSend(dati.notificaSend());
-        e.setNotificaSendNav(dati.notificaSendNav());
         dati.opzioniPagamento().forEach(v -> e.addOpzionePagamento(opzionePagamento(v)));
         return e;
     }

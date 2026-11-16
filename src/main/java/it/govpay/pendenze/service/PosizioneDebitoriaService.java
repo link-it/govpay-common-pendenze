@@ -2,8 +2,11 @@ package it.govpay.pendenze.service;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -14,6 +17,7 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.Set;
 import it.govpay.pendenze.comando.AggiornamentoPendenza;
+import it.govpay.pendenze.config.PendenzeProperties;
 import it.govpay.pendenze.comando.DatiAggiornamentoDebitore;
 import it.govpay.pendenze.comando.DatiPdDebitore;
 import it.govpay.pendenze.comando.AggiornamentoPosizioneDebitoria;
@@ -22,6 +26,7 @@ import it.govpay.pendenze.comando.DatiOpzionePagamentoDebitore;
 import it.govpay.pendenze.comando.DatiPendenza;
 import it.govpay.pendenze.comando.DatiPosizioneDebitoria;
 import it.govpay.pendenze.comando.DatiVocePendenza;
+import it.govpay.pendenze.comando.ModificaCampo;
 import java.util.stream.Collectors;
 
 import jakarta.persistence.EntityManager;
@@ -90,6 +95,7 @@ public class PosizioneDebitoriaService {
     private final RendicontazioneRepository rendicontazioneRepository;
     private final RptRepository rptRepository;
     private final Clock clock;
+    private final int giorniMassimiDataPubblicazione;
     private final ObjectProvider<GeneratoreIuv> generatoreIuvProvider;
 
     /**
@@ -114,7 +120,7 @@ public class PosizioneDebitoriaService {
             OpzionePagamentoRepository opzionePagamentoRepository, PendenzaRepository pendenzaRepository,
             ApplicazioneRepository applicazioneRepository, DominioRepository dominioRepository,
             RendicontazioneRepository rendicontazioneRepository, RptRepository rptRepository,
-            Clock clock, ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
+            Clock clock, PendenzeProperties properties, ObjectProvider<GeneratoreIuv> generatoreIuvProvider) {
         this.posizioneDebitoriaRepository = posizioneDebitoriaRepository;
         this.opzionePagamentoRepository = opzionePagamentoRepository;
         this.pendenzaRepository = pendenzaRepository;
@@ -123,6 +129,7 @@ public class PosizioneDebitoriaService {
         this.rendicontazioneRepository = rendicontazioneRepository;
         this.rptRepository = rptRepository;
         this.clock = clock;
+        this.giorniMassimiDataPubblicazione = properties.giorniMassimiDataPubblicazione();
         this.generatoreIuvProvider = generatoreIuvProvider;
     }
 
@@ -221,13 +228,15 @@ public class PosizioneDebitoriaService {
                             + posizione.getCodDocumento() + "] per questa applicazione e questo dominio");
         }
         ValidatorePosizioneDebitoria.valida(posizione);
+        validaScadenzeRispettoAllaPubblicazione(posizione);
+        validaNuovaDataPubblicazione(posizione.getDataPubblicazione(), null, false);
         assegnaIndici(posizione);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
 
         posizione.setDataCreazione(adesso);
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
 
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
             if (opzione.getIdOpzionePagamento() == null) {
@@ -242,7 +251,7 @@ public class PosizioneDebitoriaService {
             for (Pendenza pendenza : opzione.getPendenze()) {
                 pendenza.setDataCreazione(adesso);
                 pendenza.setDataUltimoAggiornamento(adesso);
-                pendenza.setDataUltimaModificaAca(adesso);
+                pendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
                 // IUV/NAV sono univoci per dominio, non globalmente (vedi
                 // verificaNumeroAvvisoNonDuplicato, controllo applicativo — nessun vincolo DB
                 // li copre): la pendenza deve portare lo stesso dominio della posizione per
@@ -394,6 +403,7 @@ public class PosizioneDebitoriaService {
                             + "] senza il numeroAvviso corrispondente: fornire entrambi, oppure solo il"
                             + " numeroAvviso (lo iuv viene ricavato automaticamente)");
         }
+        ValidatorePosizioneDebitoria.validaNotificaSend(pendenza);
     }
 
     /**
@@ -557,16 +567,22 @@ public class PosizioneDebitoriaService {
                 .orElseThrow(() -> new RisorsaNonTrovataException("nessuna posizione debitoria con "
                         + "idPosizioneDebitoria [" + idPosizioneDebitoria + "] per idA2A [" + idA2A + "]"));
 
+        LocalDate dataPubblicazioneSalvata = posizione.getDataPubblicazione();
         applicaAggiornamento(posizione, comando);
 
         ValidatorePosizioneDebitoria.valida(posizione);
+        validaScadenzeRispettoAllaPubblicazione(posizione);
+        if (comando.dataPubblicazione().presente()
+                && !Objects.equals(dataPubblicazioneSalvata, posizione.getDataPubblicazione())) {
+            validaNuovaDataPubblicazione(posizione.getDataPubblicazione(), dataPubblicazioneSalvata, true);
+        }
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
             for (Pendenza pendenza : opzione.getPendenze()) {
-                pendenza.setDataUltimaModificaAca(adesso);
+                pendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
             }
         }
 
@@ -660,9 +676,10 @@ public class PosizioneDebitoriaService {
         }
 
         ValidatorePosizioneDebitoria.valida(posizione);
+        validaScadenzeRispettoAllaPubblicazione(posizione);
 
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
 
         try {
             // saveAndFlush, non save — stessa ragione di crea() (intercettare qui la
@@ -747,9 +764,10 @@ public class PosizioneDebitoriaService {
         posizione.addPdDebitore(nuovo);
 
         ValidatorePosizioneDebitoria.valida(posizione);
+        validaScadenzeRispettoAllaPubblicazione(posizione);
 
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         salvaDebitori(posizione, idPosizioneDebitoria);
         return nuovo;
     }
@@ -791,21 +809,15 @@ public class PosizioneDebitoriaService {
         if (comando.nazione().presente()) debitore.setNazione(comando.nazione().valore());
         if (comando.email().presente()) debitore.setEmail(comando.email().valore());
         if (comando.cellulare().presente()) debitore.setCellulare(comando.cellulare().valore());
-        if (comando.notificaSend().presente() && comando.notificaSend().valore() == null) {
-            throw new ValidazioneNonSuperataException("'notificaSend' del debitore non puo' essere azzerato");
-        }
-        impostaNotificaSend(pdDebitore,
-                comando.notificaSend().presente() ? comando.notificaSend().valore() : pdDebitore.isNotificaSend(),
-                comando.navNotifica().presente() ? comando.navNotifica().valore() : pdDebitore.getNotificaSendNav());
 
         ValidatorePosizioneDebitoria.valida(posizione);
 
         OffsetDateTime adesso = OffsetDateTime.now(clock);
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         for (OpzionePagamento opzione : pdDebitore.getOpzioniPagamento()) {
             for (Pendenza pendenza : opzione.getPendenze()) {
-                pendenza.setDataUltimaModificaAca(adesso);
+                pendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
             }
         }
         salvaDebitori(posizione, idPosizioneDebitoria);
@@ -851,7 +863,7 @@ public class PosizioneDebitoriaService {
         ValidatorePosizioneDebitoria.validaStati(posizione);
 
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         salvaDebitori(posizione, idPosizioneDebitoria);
     }
 
@@ -872,7 +884,7 @@ public class PosizioneDebitoriaService {
             pendenza.setNumeroRata(numeroRata++);
             pendenza.setDataCreazione(adesso);
             pendenza.setDataUltimoAggiornamento(adesso);
-            pendenza.setDataUltimaModificaAca(adesso);
+            pendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
             // Stesso principio di crea(): IUV/NAV sono univoci per dominio, la pendenza deve
             // portare lo stesso dominio della posizione.
             pendenza.setIdDominio(posizione.getIdDominio());
@@ -919,7 +931,7 @@ public class PosizioneDebitoriaService {
         nuovaPendenza.setNumeroRata(numeroRata);
         nuovaPendenza.setDataCreazione(adesso);
         nuovaPendenza.setDataUltimoAggiornamento(adesso);
-        nuovaPendenza.setDataUltimaModificaAca(adesso);
+        nuovaPendenza.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         // Stesso principio di crea()/aggiungiOpzionePagamento: IUV/NAV sono univoci per
         // dominio, la pendenza deve portare lo stesso dominio della posizione.
         nuovaPendenza.setIdDominio(posizione.getIdDominio());
@@ -938,12 +950,20 @@ public class PosizioneDebitoriaService {
         verificaIdPendenzaNonDuplicato(posizione, nuovaPendenza);
         assegnaIdentificativiPagamento(posizione, nuovaPendenza);
 
+        // Fuori dal piano rateale ogni pendenza porta la notifica SEND dell'opzione; nel piano la
+        // porta solo la prima rata, e la nuova e' sempre l'ultima.
+        if (opzione.getTipologia() != TipologiaOpzionePagamento.PIANO_RATEALE && opzione.isSendAbilitato()) {
+            nuovaPendenza.setSendAbilitato(true);
+            nuovaPendenza.setSendNav(opzione.getSendNav());
+        }
+
         opzione.addPendenza(nuovaPendenza);
 
         ValidatorePosizioneDebitoria.valida(posizione);
+        validaScadenzeRispettoAllaPubblicazione(posizione);
 
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         opzione.setDataUltimoAggiornamento(adesso);
 
         try {
@@ -1141,7 +1161,8 @@ public class PosizioneDebitoriaService {
         Page<Pendenza> pagina = pendenzaRepository.cercaFiltrate(idApplicazioneOpt.get(), filtri.idDominio(),
                 filtri.idDebitore(), filtri.direzione(), filtri.divisione(), filtri.dataDa(), filtri.dataA(),
                 filtri.statoVersamento(), filtri.statoVersamentoAlternativo(), filtri.statoPagamento(),
-                filtri.scaduta(), inizioGiornoCorrente(), filtri.escludiSpontaneiNonEseguiti(), pageable);
+                filtri.scaduta(), inizioGiornoCorrente(), filtri.escludiSpontaneiNonEseguiti(),
+                filtri.nonPubblicata(), LocalDate.now(clock), pageable);
         return paginaDa(pagina, pageable);
     }
 
@@ -1160,7 +1181,7 @@ public class PosizioneDebitoriaService {
                 filtri.idDominio(), filtri.idDebitore(), filtri.direzione(), filtri.divisione(), filtri.dataDa(),
                 filtri.dataA(), filtri.statoVersamento(), filtri.statoVersamentoAlternativo(),
                 filtri.statoPagamento(), filtri.scaduta(), inizioGiornoCorrente(),
-                filtri.escludiSpontaneiNonEseguiti(), pageablePiuUno);
+                filtri.escludiSpontaneiNonEseguiti(), filtri.nonPubblicata(), LocalDate.now(clock), pageablePiuUno);
         return PaginaSenzaConteggio.daRisultatiGrezzi(grezzi, pageable.getPageSize());
     }
 
@@ -1617,9 +1638,6 @@ public class PosizioneDebitoriaService {
      * l'opzione cambi stato o no (stessa regola trasversale di {@link #marcaModificaAca},
      * "nessuna eccezione").</p>
      *
-     * <p>Se la pendenza ha {@code sendImportoTotale} maggiore di zero, le spese di notifica SEND
-     * del suo debitore sono registrate: il debitore e' marcato con {@code notificaSendPayed}.</p>
-     *
      * @param idA2A      identificativo del gestionale responsabile
      * @param idPendenza identificativo della pendenza nel gestionale
      * @param nuovoStato esito di pagamento da registrare ({@code ESEGUITO},
@@ -1657,44 +1675,83 @@ public class PosizioneDebitoriaService {
         } else {
             marcaModificaAca(opzione, adesso);
         }
-        registraSpeseNotificaSend(pendenza);
         ValidatorePosizioneDebitoria.validaStati(opzione.getPosizioneDebitoria());
         return pendenza;
     }
 
     /**
-     * Imposta {@code notificaSend} e {@code notificaSendNav} del debitore. Le pendenze del
-     * debitore {@code NON_ESEGUITO}, senza alcuna RPT, che non sono quella indicata dal NAV di
-     * notifica perdono {@code sendImportoTotale} e {@code sendDataAggiornamento}; restano
-     * invariate le pendenze pagate e quelle con una RPT (pagamento in corso).
+     * Imposta la notifica SEND di un'opzione di pagamento: abilitazione e NAV di notifica. Le
+     * pendenze che portano la notifica (la prima rata in un piano rateale, tutte le altre
+     * negli altri casi) ricevono i nuovi valori; quelle il cui stato SEND cambia, se
+     * {@code NON_ESEGUITO} o {@code ANNULLATO} e senza alcuna RPT, perdono {@code sendImportoTotale} e
+     * {@code sendDataAggiornamento}, cosi' la verifica successiva interroga di nuovo SEND.
+     * Restano invariate le pendenze pagate e quelle con una RPT (pagamento in corso).
      *
-     * @param pdDebitore      debitore gestito nella transazione corrente
-     * @param notificaSend    SEND previsto per il debitore
-     * @param notificaSendNav NAV di notifica, {@code null} se assente
+     * <p>Un campo non indicato resta quello salvato; con la notifica disabilitata il NAV non e'
+     * conservato.</p>
+     *
+     * @param idA2A                identificativo del gestionale responsabile
+     * @param idPosizioneDebitoria identificativo della posizione nel gestionale
+     * @param idOpzionePagamento   identificativo dell'opzione
+     * @param sendAbilitato        nuova abilitazione, o invariata
+     * @param sendNav              nuovo NAV di notifica, o invariato; {@code imposta(null)} lo azzera
+     * @return l'opzione aggiornata
+     * @throws RisorsaNonTrovataException          se l'opzione non appartiene alla posizione
+     * @throws TransizioneStatoNonAmmessaException se il debitore e' rimosso o una pendenza
+     *                                              dell'opzione non e' {@code NON_ESEGUITO}/{@code ANNULLATO}
+     * @throws ValidazioneNonSuperataException     se il NAV non e' valido
      */
-    public void impostaNotificaSend(PdDebitore pdDebitore, boolean notificaSend, String notificaSendNav) {
-        pdDebitore.setNotificaSend(notificaSend);
-        pdDebitore.setNotificaSendNav(notificaSendNav);
-        for (OpzionePagamento opzione : pdDebitore.getOpzioniPagamento()) {
-            for (Pendenza pendenza : opzione.getPendenze()) {
-                boolean portaLeSpese = notificaSend && notificaSendNav != null
-                        && notificaSendNav.equals(pendenza.getNumeroAvviso());
-                if (!portaLeSpese && pendenza.getStato() == StatoPendenza.NON_ESEGUITO
-                        && pendenza.getSendImportoTotale() != null
-                        && !rptRepository.existsByIdVersamento(pendenza.getId())) {
-                    pendenza.setSendImportoTotale(null);
-                    pendenza.setSendDataAggiornamento(null);
-                }
+    public OpzionePagamento aggiornaNotificaSend(String idA2A, String idPosizioneDebitoria,
+            UUID idOpzionePagamento, ModificaCampo<Boolean> sendAbilitato, ModificaCampo<String> sendNav) {
+        OpzionePagamento opzione = trovaOpzionePagamento(idOpzionePagamento);
+        PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
+        if (!appartiene(posizione, idA2A, idPosizioneDebitoria)) {
+            throw new RisorsaNonTrovataException("nessuna opzione di pagamento [" + idOpzionePagamento
+                    + "] per idPosizioneDebitoria [" + idPosizioneDebitoria + "] e idA2A [" + idA2A + "]");
+        }
+        if (opzione.getPdDebitore().isRimosso()) {
+            throw new TransizioneStatoNonAmmessaException("l'opzione di pagamento [" + idOpzionePagamento
+                    + "] appartiene a un debitore rimosso: non puo' essere aggiornata");
+        }
+        for (Pendenza pendenza : opzione.getPendenze()) {
+            if (pendenza.getStato() != StatoPendenza.NON_ESEGUITO && pendenza.getStato() != StatoPendenza.ANNULLATO) {
+                throw new TransizioneStatoNonAmmessaException("la pendenza [" + pendenza.getIdPendenza() + "] e' "
+                        + pendenza.getStato() + ": la notifica SEND puo' essere aggiornata solo se le pendenze "
+                        + "dell'opzione sono NON_ESEGUITO o ANNULLATO");
             }
         }
-    }
-
-    private void registraSpeseNotificaSend(Pendenza pagata) {
-        Double quota = pagata.getSendImportoTotale();
-        if (quota == null || quota <= 0) {
-            return;
+        if (sendAbilitato.presente() && sendAbilitato.valore() == null) {
+            throw new ValidazioneNonSuperataException("'sendAbilitato' non puo' essere azzerato");
         }
-        pagata.getOpzionePagamento().getPdDebitore().setNotificaSendPayed(true);
+        boolean abilitato = sendAbilitato.presente() ? sendAbilitato.valore() : opzione.isSendAbilitato();
+        String nav = sendNav.presente() ? sendNav.valore() : opzione.getSendNav();
+        if (!abilitato && sendNav.presente() && sendNav.valore() != null) {
+            throw new ValidazioneNonSuperataException("'sendNav' e' ammesso solo con la notifica SEND abilitata");
+        }
+
+        Map<Pendenza, String> prima = new IdentityHashMap<>();
+        for (Pendenza pendenza : opzione.getPendenze()) {
+            prima.put(pendenza, pendenza.isSendAbilitato() + "|" + pendenza.getSendNav());
+        }
+        opzione.impostaNotificaSend(abilitato, abilitato ? nav : null);
+
+        OffsetDateTime adesso = OffsetDateTime.now(clock);
+        for (Pendenza pendenza : opzione.getPendenze()) {
+            ValidatorePosizioneDebitoria.validaNotificaSend(pendenza);
+            String dopo = pendenza.isSendAbilitato() + "|" + pendenza.getSendNav();
+            if (dopo.equals(prima.get(pendenza))) {
+                continue;
+            }
+            pendenza.setDataUltimoAggiornamento(adesso);
+            if (pendenza.getSendImportoTotale() != null && !rptRepository.existsByIdVersamento(pendenza.getId())) {
+                pendenza.setSendImportoTotale(null);
+                pendenza.setSendDataAggiornamento(null);
+            }
+        }
+        opzione.setDataUltimoAggiornamento(adesso);
+        posizione.setDataUltimoAggiornamento(adesso);
+        entityManager.lock(posizione, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        return opzione;
     }
 
     /**
@@ -1767,14 +1824,14 @@ public class PosizioneDebitoriaService {
         pendenza.setDataUltimoAggiornamento(adesso);
         // Solo questa pendenza, non l'intera opzione (a differenza di marcaModificaAca):
         // le sue "sorelle" non sono cambiate, l'opzione stessa resta ANNULLATA.
-        pendenza.setDataUltimaModificaAca(adesso);
+        pendenza.setDataUltimaModificaAca(istanteModificaAca(pendenza.getOpzionePagamento().getPosizioneDebitoria(), adesso));
         return pendenza;
     }
 
     /**
      * Registra l'importo delle spese di notifica SEND quantificato dal servizio di
-     * pagamento interrogando il connettore SEND del dominio (sulla pendenza il cui
-     * {@code numeroAvviso} e' il {@code notificaSendNav} del suo debitore) — equivalente di
+     * pagamento interrogando il connettore SEND del dominio (con il
+     * {@code sendNav} della pendenza o, se assente, con il suo {@code numeroAvviso}) — equivalente di
      * {@code VersamentoUtils.aggiornaImportoSend} del legacy, ma qui separato dal calcolo
      * stesso: questa libreria si limita a persistere un valore gia' quantificato altrove
      * (il connettore SEND, la politica di retention e la chiamata al servizio restano di
@@ -1831,7 +1888,7 @@ public class PosizioneDebitoriaService {
         posizione.setAnomalo(true);
         posizione.setDescrizioneStato(descrizioneStato);
         posizione.setDataUltimoAggiornamento(adesso);
-        posizione.setDataUltimaModificaAca(adesso);
+        posizione.setDataUltimaModificaAca(istanteModificaAca(posizione, adesso));
         return posizione;
     }
 
@@ -2018,9 +2075,86 @@ public class PosizioneDebitoriaService {
      * @param adesso  istante della transizione, dallo stesso {@link Clock} della libreria
      */
     private void marcaModificaAca(OpzionePagamento opzione, OffsetDateTime adesso) {
-        opzione.getPosizioneDebitoria().setDataUltimaModificaAca(adesso);
+        PosizioneDebitoria posizione = opzione.getPosizioneDebitoria();
+        OffsetDateTime istante = istanteModificaAca(posizione, adesso);
+        posizione.setDataUltimaModificaAca(istante);
         for (Pendenza pendenza : opzione.getPendenze()) {
-            pendenza.setDataUltimaModificaAca(adesso);
+            pendenza.setDataUltimaModificaAca(istante);
+        }
+    }
+
+    /**
+     * Istante da scrivere in {@code dataUltimaModificaAca}: quello della modifica, ma non prima
+     * dell'inizio del giorno di pubblicazione, cosi' il batch ACA non prende in carico la
+     * posizione prima che sia pubblicata.
+     */
+    private OffsetDateTime istanteModificaAca(PosizioneDebitoria posizione, OffsetDateTime adesso) {
+        return istanteModificaAca(posizione, adesso, clock.getZone());
+    }
+
+    /**
+     * L'inizio del giorno di pubblicazione e' calcolato nel fuso della libreria alla data di
+     * destinazione, non con l'offset di {@code adesso}: tra la modifica e la pubblicazione
+     * l'offset puo' cambiare (ora legale).
+     */
+    static OffsetDateTime istanteModificaAca(PosizioneDebitoria posizione, OffsetDateTime adesso, ZoneId fuso) {
+        LocalDate pubblicazione = posizione.getDataPubblicazione();
+        if (pubblicazione == null) {
+            return adesso;
+        }
+        OffsetDateTime inizio = pubblicazione.atStartOfDay(fuso).toOffsetDateTime();
+        return inizio.isAfter(adesso) ? inizio : adesso;
+    }
+
+    /** {@code true} se la posizione e' pubblicata: senza data di pubblicazione o con la data raggiunta. */
+    public boolean isPubblicata(PosizioneDebitoria posizione) {
+        return posizione.isPubblicata(LocalDate.now(clock));
+    }
+
+    /**
+     * La data di pubblicazione deve essere antecedente alla scadenza di ogni pendenza della
+     * posizione (la scadenza dell'avviso o, se assente, quella dell'opzione): una pendenza con
+     * scadenza uguale o anteriore non sarebbe mai pagabile. Le pendenze senza scadenza non
+     * vincolano.
+     */
+    private void validaScadenzeRispettoAllaPubblicazione(PosizioneDebitoria posizione) {
+        LocalDate pubblicazione = posizione.getDataPubblicazione();
+        if (pubblicazione == null) {
+            return;
+        }
+        for (OpzionePagamento opzione : posizione.getOpzioniPagamento()) {
+            for (Pendenza pendenza : opzione.getPendenze()) {
+                LocalDate scadenza = pendenza.getDataScadenzaAvviso() != null
+                        ? pendenza.getDataScadenzaAvviso().toLocalDate() : opzione.getDataScadenza();
+                if (scadenza != null && !pubblicazione.isBefore(scadenza)) {
+                    throw new ValidazioneNonSuperataException("'dataPubblicazione' [" + pubblicazione
+                            + "] deve essere antecedente alla scadenza [" + scadenza + "] della pendenza ["
+                            + pendenza.getIdPendenza() + "]");
+                }
+            }
+        }
+    }
+
+    /**
+     * Controlli su una data di pubblicazione futura appena indicata: non oltre
+     * {@code giorniMassimiDataPubblicazione} giorni da oggi e, in aggiornamento, non su una
+     * posizione gia' pubblicata, perche' l'avviso non si ritira da pagoPA e dall'ACA.
+     *
+     * @param dataSalvata la data prima dell'aggiornamento, {@code null} se assente o in creazione
+     * @param aggiornamento {@code true} se la posizione esiste gia'
+     */
+    private void validaNuovaDataPubblicazione(LocalDate nuova, LocalDate dataSalvata, boolean aggiornamento) {
+        LocalDate oggi = LocalDate.now(clock);
+        if (nuova == null || !nuova.isAfter(oggi)) {
+            return;
+        }
+        if (aggiornamento && (dataSalvata == null || !dataSalvata.isAfter(oggi))) {
+            throw new ValidazioneNonSuperataException("'dataPubblicazione' [" + nuova
+                    + "] non puo' essere futura su una posizione gia' pubblicata");
+        }
+        if (nuova.isAfter(oggi.plusDays(giorniMassimiDataPubblicazione))) {
+            throw new ValidazioneNonSuperataException("'dataPubblicazione' [" + nuova + "] supera di oltre "
+                    + giorniMassimiDataPubblicazione + " giorni la data corrente");
         }
     }
 

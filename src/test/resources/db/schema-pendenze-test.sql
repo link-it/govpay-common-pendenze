@@ -367,9 +367,6 @@ CREATE TABLE IF NOT EXISTS debitori
 CREATE TABLE IF NOT EXISTS pd_debitori
 (
 	posizione INT NOT NULL,
-	notifica_send BOOLEAN NOT NULL DEFAULT false,
-	notifica_send_payed BOOLEAN NOT NULL DEFAULT false,
-	notifica_send_nav VARCHAR(18),
 	data_rimozione TIMESTAMP,
 	-- fk/pk columns
 	id BIGINT DEFAULT nextval('seq_pd_debitori') NOT NULL,
@@ -472,6 +469,7 @@ CREATE TABLE IF NOT EXISTS versamenti
 	data_ultima_modifica_aca TIMESTAMP,
 	data_ultima_comunicazione_aca TIMESTAMP,
 	send_abilitato BOOLEAN NOT NULL,
+	send_nav VARCHAR(18),
 	send_importo_totale DOUBLE PRECISION,
 	send_data_aggiornamento TIMESTAMP,
 	-- fk/pk columns

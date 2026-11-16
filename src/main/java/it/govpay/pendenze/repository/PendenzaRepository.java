@@ -61,6 +61,10 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
      * {@code oggiInizioGiorno} (mezzanotte del giorno corrente, stessa soglia di
      * {@code PendenzaV2Mapper#isScaduta}: scaduta solo dal giorno DOPO la data di scadenza).</p>
      *
+     * <p><b>{@code nonPubblicata}</b>: {@code null} nessun filtro; {@code true} solo le pendenze
+     * la cui posizione ha una {@code dataPubblicazione} successiva a {@code oggi}; {@code false}
+     * tutte le altre.</p>
+     *
      * <p><b>{@code escludiSpontaneiNonEseguiti}</b>: replica il filtro del legacy su
      * {@code mostraSpontaneiNonPagati} ({@code VersamentoFilter}, righe 402-410: esclude
      * {@code tipo=SPONTANEO AND stato=NON_ESEGUITO} quando {@code false}/non specificato).
@@ -92,6 +96,11 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
             + "         and p.dataScadenzaAvviso < :oggiInizioGiorno) "
             + "     or (:scaduta = false and (p.dataScadenzaAvviso is null "
             + "         or p.dataScadenzaAvviso >= :oggiInizioGiorno))) "
+            + "and (:nonPubblicata is null "
+            + "     or (:nonPubblicata = true and exists (select 1 from OpzionePagamento q "
+            + "         where q.id = p.opzionePagamento.id and q.pdDebitore.posizioneDebitoria.dataPubblicazione > :oggi)) "
+            + "     or (:nonPubblicata = false and not exists (select 1 from OpzionePagamento q "
+            + "         where q.id = p.opzionePagamento.id and q.pdDebitore.posizioneDebitoria.dataPubblicazione > :oggi))) "
             + "and (:escludiSpontaneiNonEseguiti is null or :escludiSpontaneiNonEseguiti = false "
             + "     or not (p.tipo = 'SPONTANEO' and p.stato = 'NON_ESEGUITO'))";
 
@@ -103,7 +112,8 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
             @Param("statoVersamentoAlternativo") StatoPendenza statoVersamentoAlternativo,
             @Param("statoPagamento") StatoPagamento statoPagamento, @Param("scaduta") Boolean scaduta,
             @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno,
-            @Param("escludiSpontaneiNonEseguiti") Boolean escludiSpontaneiNonEseguiti, Pageable pageable);
+            @Param("escludiSpontaneiNonEseguiti") Boolean escludiSpontaneiNonEseguiti,
+            @Param("nonPubblicata") Boolean nonPubblicata, @Param("oggi") java.time.LocalDate oggi, Pageable pageable);
 
     /** Come {@link #cercaFiltrate}, ma senza {@code COUNT(*)} — stesso meccanismo "limit+1" di
      *  {@link #findAllByIdApplicazioneAndNumeroAvvisoAndOpzionePagamentoIsNotNull}. */
@@ -116,7 +126,8 @@ public interface PendenzaRepository extends JpaRepository<Pendenza, Long>, JpaSp
             @Param("statoVersamentoAlternativo") StatoPendenza statoVersamentoAlternativo,
             @Param("statoPagamento") StatoPagamento statoPagamento, @Param("scaduta") Boolean scaduta,
             @Param("oggiInizioGiorno") OffsetDateTime oggiInizioGiorno,
-            @Param("escludiSpontaneiNonEseguiti") Boolean escludiSpontaneiNonEseguiti, Pageable pageable);
+            @Param("escludiSpontaneiNonEseguiti") Boolean escludiSpontaneiNonEseguiti,
+            @Param("nonPubblicata") Boolean nonPubblicata, @Param("oggi") java.time.LocalDate oggi, Pageable pageable);
 
     /**
      * IUV e NAV sono univoci **per dominio**, non globalmente (vedi la nota di classe su

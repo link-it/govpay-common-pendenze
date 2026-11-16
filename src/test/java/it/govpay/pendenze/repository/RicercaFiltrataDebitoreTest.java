@@ -60,12 +60,12 @@ class RicercaFiltrataDebitoreTest {
         scenario();
 
         var tutte = pendenzaRepository.cercaFiltrate(1L, null, null, null, null, null, null, null, null, null,
-                null, ADESSO, null, PageRequest.of(0, 10));
+                null, ADESSO, null, null, null, PageRequest.of(0, 10));
         assertThat(tutte.getContent()).extracting(Pendenza::getIdPendenza)
                 .containsExactlyInAnyOrder("legacy", "mario", "giovanna");
 
         var senzaConteggio = pendenzaRepository.cercaFiltrateSenzaConteggio(1L, null, null, null, null, null,
-                null, null, null, null, null, ADESSO, null, PageRequest.of(0, 10));
+                null, null, null, null, null, ADESSO, null, null, null, PageRequest.of(0, 10));
         assertThat(senzaConteggio).hasSize(3);
     }
 
@@ -75,7 +75,7 @@ class RicercaFiltrataDebitoreTest {
         scenario();
 
         var trovate = pendenzaRepository.cercaFiltrate(1L, null, "rssmra80a01h501u", null, null, null, null,
-                null, null, null, null, ADESSO, null, PageRequest.of(0, 10));
+                null, null, null, null, ADESSO, null, null, null, PageRequest.of(0, 10));
         assertThat(trovate.getContent()).extracting(Pendenza::getIdPendenza).containsExactly("mario");
     }
 
@@ -111,11 +111,11 @@ class RicercaFiltrataDebitoreTest {
         scenario(true);
 
         var pendenze = pendenzaRepository.cercaFiltrate(1L, null, null, null, null, null, null, null, null, null,
-                null, ADESSO, null, PageRequest.of(0, 10));
+                null, ADESSO, null, null, null, PageRequest.of(0, 10));
         assertThat(pendenze.getContent()).extracting(Pendenza::getIdPendenza)
                 .containsExactlyInAnyOrder("legacy", "mario");
         var perDebitore = pendenzaRepository.cercaFiltrate(1L, null, GIOVANNA, null, null, null, null, null, null,
-                null, null, ADESSO, null, PageRequest.of(0, 10));
+                null, null, ADESSO, null, null, null, PageRequest.of(0, 10));
         assertThat(perDebitore.getContent()).isEmpty();
 
         var ricevute = rptRepository.cercaFiltrate(1L, null, null, null, null, null, null, null, null, null, null,

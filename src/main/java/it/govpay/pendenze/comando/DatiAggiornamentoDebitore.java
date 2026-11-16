@@ -5,7 +5,7 @@ import java.util.Objects;
 import it.govpay.pendenze.model.TipoSoggetto;
 
 /**
- * Aggiornamento parziale di un debitore di una posizione: anagrafica, notificaSend e navNotifica. Un campo
+ * Aggiornamento parziale di un debitore di una posizione: anagrafica. Un campo
  * non indicato resta invariato; {@code ModificaCampo.imposta(null)} azzera i campi facoltativi.
  */
 public record DatiAggiornamentoDebitore(
@@ -19,9 +19,7 @@ public record DatiAggiornamentoDebitore(
         ModificaCampo<String> provincia,
         ModificaCampo<String> nazione,
         ModificaCampo<String> email,
-        ModificaCampo<String> cellulare,
-        ModificaCampo<Boolean> notificaSend,
-        ModificaCampo<String> navNotifica) {
+        ModificaCampo<String> cellulare) {
     public DatiAggiornamentoDebitore {
         Objects.requireNonNull(tipo);
         Objects.requireNonNull(identificativo);
@@ -34,15 +32,12 @@ public record DatiAggiornamentoDebitore(
         Objects.requireNonNull(nazione);
         Objects.requireNonNull(email);
         Objects.requireNonNull(cellulare);
-        Objects.requireNonNull(notificaSend);
-        Objects.requireNonNull(navNotifica);
     }
 
     public static DatiAggiornamentoDebitore nessunaModifica() {
         return new DatiAggiornamentoDebitore(ModificaCampo.invariato(), ModificaCampo.invariato(),
                 ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
                 ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato(),
-                ModificaCampo.invariato(), ModificaCampo.invariato());
+                ModificaCampo.invariato(), ModificaCampo.invariato(), ModificaCampo.invariato());
     }
 }

@@ -52,17 +52,6 @@ public class PdDebitore {
     @Column(name = "posizione", nullable = false)
     private int posizione;
 
-    /** SEND previsto per il debitore: scelto dall'Ente. */
-    @Column(name = "notifica_send", nullable = false)
-    private boolean notificaSend;
-
-    /** Spese di notifica SEND gia' registrate sul debitore: impostato dalla libreria. */
-    @Column(name = "notifica_send_payed", nullable = false)
-    private boolean notificaSendPayed;
-
-    @Column(name = "notifica_send_nav", length = 18)
-    private String notificaSendNav;
-
     /**
      * Istante della rimozione logica del debitore, {@code null} se attivo. Un debitore rimosso
      * conserva le sue opzioni (tutte ANNULLATE) e pendenze (tutte ANNULLATO) ma non e' piu'
@@ -118,30 +107,6 @@ public class PdDebitore {
 
     public void setPosizione(int posizione) {
         this.posizione = posizione;
-    }
-
-    public boolean isNotificaSend() {
-        return notificaSend;
-    }
-
-    public void setNotificaSend(boolean notificaSend) {
-        this.notificaSend = notificaSend;
-    }
-
-    public boolean isNotificaSendPayed() {
-        return notificaSendPayed;
-    }
-
-    public void setNotificaSendPayed(boolean notificaSendPayed) {
-        this.notificaSendPayed = notificaSendPayed;
-    }
-
-    public String getNotificaSendNav() {
-        return notificaSendNav;
-    }
-
-    public void setNotificaSendNav(String notificaSendNav) {
-        this.notificaSendNav = notificaSendNav;
     }
 
     public OffsetDateTime getDataRimozione() {
