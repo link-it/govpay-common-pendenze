@@ -115,6 +115,77 @@ class RicevutaRendicontazioneMappingTest {
     }
 
     @Test
+    @DisplayName("una ricevuta con importo, PSP, attestante e identificativi di transazione viene salvata e riletta")
+    void ricevutaConDatiDelPspSalvataERiletta() {
+        Rpt rpt = rptMinima(pendenzaPersistita(), "iur-psp");
+        rpt.setImportoTotalePagato(100.50);
+        rpt.setCodPsp("PSP_1");
+        rpt.setIdentificativoAttestante("ATTESTANTE_1");
+        rpt.setDenominazioneAttestante("Banca di prova");
+        rpt.setCodTransazioneRt("trn-rt-1");
+        rpt.setCodMsgRicevuta("msg-ricevuta-1");
+        em.persistAndFlush(rpt);
+        em.clear();
+
+        Rpt riletta = em.find(Rpt.class, rpt.getId());
+
+        assertThat(riletta.getImportoTotalePagato()).isEqualTo(100.50);
+        assertThat(riletta.getCodPsp()).isEqualTo("PSP_1");
+        assertThat(riletta.getIdentificativoAttestante()).isEqualTo("ATTESTANTE_1");
+        assertThat(riletta.getDenominazioneAttestante()).isEqualTo("Banca di prova");
+        assertThat(riletta.getCodTransazioneRt()).isEqualTo("trn-rt-1");
+        assertThat(riletta.getCodMsgRicevuta()).isEqualTo("msg-ricevuta-1");
+    }
+
+    @Test
+    @DisplayName("una ricevuta senza i dati del PSP viene riletta con tutti quei campi nulli")
+    void ricevutaSenzaDatiDelPspRiletta() {
+        Rpt rpt = rptMinima(pendenzaPersistita(), "iur-senza-psp");
+        em.persistAndFlush(rpt);
+        em.clear();
+
+        Rpt riletta = em.find(Rpt.class, rpt.getId());
+
+        assertThat(riletta.getImportoTotalePagato()).isNull();
+        assertThat(riletta.getCodPsp()).isNull();
+        assertThat(riletta.getIdentificativoAttestante()).isNull();
+        assertThat(riletta.getDenominazioneAttestante()).isNull();
+        assertThat(riletta.getCodTransazioneRt()).isNull();
+        assertThat(riletta.getCodMsgRicevuta()).isNull();
+    }
+
+    @Test
+    @DisplayName("un pagamento con commissioni PSP e collegamenti a voce e incasso viene salvato e riletto")
+    void pagamentoConCommissioniECollegamentiSalvatoERiletto() {
+        Pagamento pagamento = pagamentoMinimo("iur-collegamenti");
+        pagamento.setCommissioniPsp(1.25);
+        pagamento.setIdSingoloVersamento(42L);
+        pagamento.setIdIncasso(7L);
+        em.persistAndFlush(pagamento);
+        em.clear();
+
+        Pagamento riletto = em.find(Pagamento.class, pagamento.getId());
+
+        assertThat(riletto.getCommissioniPsp()).isEqualTo(1.25);
+        assertThat(riletto.getIdSingoloVersamento()).isEqualTo(42L);
+        assertThat(riletto.getIdIncasso()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("un pagamento senza commissioni e collegamenti viene riletto con quei campi nulli")
+    void pagamentoSenzaCommissioniECollegamentiRiletto() {
+        Pagamento pagamento = pagamentoMinimo("iur-senza-collegamenti");
+        em.persistAndFlush(pagamento);
+        em.clear();
+
+        Pagamento riletto = em.find(Pagamento.class, pagamento.getId());
+
+        assertThat(riletto.getCommissioniPsp()).isNull();
+        assertThat(riletto.getIdSingoloVersamento()).isNull();
+        assertThat(riletto.getIdIncasso()).isNull();
+    }
+
+    @Test
     @DisplayName("una rendicontazione viene salvata e riletta insieme al suo flusso")
     void rendicontazioneConFlussoSalvataERiletta() {
         Pendenza pendenza = pendenzaPersistita();
@@ -263,6 +334,33 @@ class RicevutaRendicontazioneMappingTest {
         assertThat(rev2Riletta.isObsoleto()).isFalse();
         assertThat(rendicontazioneRiletta.getFlusso().getId()).isEqualTo(revisione1.getId());
         assertThat(rendicontazioneRiletta.getFlusso().getRevisione()).isEqualTo(1L);
+    }
+
+    private static Rpt rptMinima(Pendenza pendenza, String iur) {
+        Rpt rpt = new Rpt();
+        rpt.setIdVersamento(pendenza.getId());
+        rpt.setIuv(pendenza.getIuv());
+        rpt.setIur(iur);
+        rpt.setCodDominio("DOMINIO_1");
+        rpt.setCodStazione("STAZIONE_1");
+        rpt.setCodMsgRichiesta("msg-" + iur);
+        rpt.setStato("RT_ACCETTATA_NODO");
+        rpt.setDataMsgRichiesta(ADESSO);
+        rpt.setDataAggiornamentoStato(ADESSO);
+        rpt.setVersione("RPTV2_RTV1");
+        return rpt;
+    }
+
+    private static Pagamento pagamentoMinimo(String iur) {
+        Pagamento pagamento = new Pagamento();
+        pagamento.setCodDominio("DOMINIO_1");
+        pagamento.setIuv("01000000000000001");
+        pagamento.setIur(iur);
+        pagamento.setImportoPagato(100.50);
+        pagamento.setDataAcquisizione(ADESSO);
+        pagamento.setDataPagamento(ADESSO);
+        pagamento.setTipo(TipoPagamento.ENTRATA);
+        return pagamento;
     }
 
     private Pendenza pendenzaPersistita() {

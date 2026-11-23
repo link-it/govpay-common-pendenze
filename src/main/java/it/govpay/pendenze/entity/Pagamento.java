@@ -75,6 +75,18 @@ public class Pagamento {
     @JoinColumn(name = "id_rpt")
     private Rpt rpt;
 
+    /** Commissioni applicate dal PSP al pagamento. */
+    @Column(name = "commissioni_psp")
+    private Double commissioniPsp;
+
+    /** FK piatta verso la voce di pendenza ({@code singoli_versamenti}) a cui si riferisce il pagamento. */
+    @Column(name = "id_singolo_versamento")
+    private Long idSingoloVersamento;
+
+    /** FK piatta verso l'incasso ({@code incassi}) che ha riconciliato il pagamento, se presente. */
+    @Column(name = "id_incasso")
+    private Long idIncasso;
+
     // ── Accessori ────────────────────────────────────────────────────────────
 
     public Long getId() {
@@ -163,5 +175,29 @@ public class Pagamento {
 
     public void setRpt(Rpt rpt) {
         this.rpt = rpt;
+    }
+
+    public Double getCommissioniPsp() {
+        return commissioniPsp;
+    }
+
+    public void setCommissioniPsp(Double commissioniPsp) {
+        this.commissioniPsp = commissioniPsp;
+    }
+
+    public Long getIdSingoloVersamento() {
+        return idSingoloVersamento;
+    }
+
+    public void setIdSingoloVersamento(Long idSingoloVersamento) {
+        this.idSingoloVersamento = idSingoloVersamento;
+    }
+
+    public Long getIdIncasso() {
+        return idIncasso;
+    }
+
+    public void setIdIncasso(Long idIncasso) {
+        this.idIncasso = idIncasso;
     }
 }
