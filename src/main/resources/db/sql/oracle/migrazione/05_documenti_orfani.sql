@@ -17,7 +17,8 @@ ALTER TABLE documenti MODIFY (descrizione VARCHAR2(1024 CHAR));
 -- vuota da NULL, quindi una causale NULL produrrebbe comunque NULL e
 -- violerebbe il NOT NULL su descrizione. Un singolo spazio e' il piu' vicino
 -- a "vuoto" rappresentabile.
-INSERT INTO documenti (id, id_dominio, id_applicazione, cod_documento, descrizione)
+INSERT INTO documenti (id, id_dominio, id_applicazione, cod_documento, descrizione,
+                       id_unita_operativa, data_creazione, data_ultimo_aggiornamento)
 SELECT
     seq_documenti.NEXTVAL,
     v.id_dominio,
@@ -32,7 +33,14 @@ SELECT
             )
         END,
         ' '
-    )
+    ),
+    -- Il documento e il suo unico versamento hanno lo stesso beneficiario e le
+    -- stesse date: la UO si copia com'e' (l'id della UO EC resta l'id della UO EC).
+    -- Le date ACA del documento restano NULL: non si ricavano dalle date dei
+    -- versamenti (vedi 06).
+    v.id_uo,
+    v.data_creazione,
+    v.data_ora_ultimo_aggiornamento
 FROM versamenti v
 WHERE v.id_documento IS NULL;
 

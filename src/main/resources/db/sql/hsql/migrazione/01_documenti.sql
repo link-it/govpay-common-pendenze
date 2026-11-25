@@ -41,6 +41,12 @@ ALTER TABLE documenti ADD COLUMN data_ultima_comunicazione_aca TIMESTAMP;
 ALTER TABLE documenti ADD COLUMN data_creazione TIMESTAMP DEFAULT TIMESTAMP '1970-01-01 00:00:00' NOT NULL;
 ALTER TABLE documenti ADD COLUMN data_ultimo_aggiornamento TIMESTAMP DEFAULT TIMESTAMP '1970-01-01 00:00:00' NOT NULL;
 
+-- Posizione anomala: analoghi di versamenti.anomalo e versamenti.descrizione_stato
+-- a livello di posizione. Il DEFAULT resta dopo lo script: chi inserisce
+-- documenti senza conoscere le colonne continua a funzionare.
+ALTER TABLE documenti ADD COLUMN anomalo BOOLEAN DEFAULT false NOT NULL;
+ALTER TABLE documenti ADD COLUMN descrizione_stato VARCHAR(255);
+
 -- Lock ottimistico senza questa colonna, aggiungere un'opzione di pagamento e
 -- attivarne un'altra sulla stessa posizione possono correre in parallelo
 -- senza che nessuno dei due veda le modifiche dell'altro.
