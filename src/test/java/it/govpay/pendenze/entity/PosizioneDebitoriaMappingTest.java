@@ -153,6 +153,36 @@ class PosizioneDebitoriaMappingTest {
     }
 
     @Test
+    @DisplayName("datiAllegati e metadata della voce sopravvivono alla rilettura, null compreso")
+    void datiAllegatiEMetadataDellaVoceSopravvivonoAllaRilettura() {
+        PosizioneDebitoria posizione = posizioneMinima();
+        PdDebitore pdDebitore = pdDebitore(0, "RSSMRA80A01H501U", "Mario Rossi");
+        posizione.addPdDebitore(pdDebitore);
+        OpzionePagamento opzione = opzione(TipologiaOpzionePagamento.SOLUZIONE_UNICA);
+        pdDebitore.addOpzionePagamento(opzione);
+        Pendenza pendenza = pendenza(posizione.getIdDominio(), "10000000001", "300000000000000001");
+        opzione.addPendenza(pendenza);
+
+        VocePendenza conDati = voceRiferimentoEntrata(1);
+        conDati.setDatiAllegati("{\"chiave\":\"valore\"}");
+        conDati.setMetadata("{\"mapEntry\":[{\"key\":\"k\",\"value\":\"v\"}]}");
+        pendenza.addVocePendenza(conDati);
+        VocePendenza senzaDati = voceRiferimentoEntrata(2);
+        pendenza.addVocePendenza(senzaDati);
+
+        em.persistAndFlush(posizione);
+        em.clear();
+
+        PosizioneDebitoria riletta = em.find(PosizioneDebitoria.class, posizione.getId());
+        List<VocePendenza> voci = riletta.getOpzioniPagamento().get(0).getPendenze().get(0).getVoci();
+
+        assertThat(voci.get(0).getDatiAllegati()).isEqualTo("{\"chiave\":\"valore\"}");
+        assertThat(voci.get(0).getMetadata()).isEqualTo("{\"mapEntry\":[{\"key\":\"k\",\"value\":\"v\"}]}");
+        assertThat(voci.get(1).getDatiAllegati()).isNull();
+        assertThat(voci.get(1).getMetadata()).isNull();
+    }
+
+    @Test
     @DisplayName("l'ordine di debitori, pendenze e voci sopravvive alla rilettura")
     void ordineMantenuto() {
         PosizioneDebitoria posizione = posizioneMinima();

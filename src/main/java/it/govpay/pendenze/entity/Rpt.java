@@ -154,6 +154,30 @@ public class Rpt {
     @Column(name = "versione", nullable = false, length = 35)
     private String versione;
 
+    /** Importo totale pagato indicato dalla ricevuta. */
+    @Column(name = "importo_totale_pagato")
+    private Double importoTotalePagato;
+
+    /** Codice del PSP che ha eseguito il pagamento. */
+    @Column(name = "cod_psp", length = 35)
+    private String codPsp;
+
+    /** Identificativo dell'attestante (PSP) della ricevuta. */
+    @Column(name = "identificativo_attestante", length = 35)
+    private String identificativoAttestante;
+
+    /** Denominazione dell'attestante (PSP) della ricevuta. */
+    @Column(name = "denominazione_attestante", length = 70)
+    private String denominazioneAttestante;
+
+    /** Identificativo di transazione della ricevuta (RT). */
+    @Column(name = "cod_transazione_rt", length = 36)
+    private String codTransazioneRt;
+
+    /** Identificativo del messaggio di ricevuta. */
+    @Column(name = "cod_msg_ricevuta", length = 35)
+    private String codMsgRicevuta;
+
     /**
      * FK piatta verso {@code ApplicazioneEntity} (govpay-common), popolata SOLO per una
      * ricevuta senza pendenza — vedi nota di classe. {@code null} in tutti gli altri casi.
@@ -326,6 +350,54 @@ public class Rpt {
 
     public void setVersione(String versione) {
         this.versione = versione;
+    }
+
+    public Double getImportoTotalePagato() {
+        return importoTotalePagato;
+    }
+
+    public void setImportoTotalePagato(Double importoTotalePagato) {
+        this.importoTotalePagato = importoTotalePagato;
+    }
+
+    public String getCodPsp() {
+        return codPsp;
+    }
+
+    public void setCodPsp(String codPsp) {
+        this.codPsp = codPsp;
+    }
+
+    public String getIdentificativoAttestante() {
+        return identificativoAttestante;
+    }
+
+    public void setIdentificativoAttestante(String identificativoAttestante) {
+        this.identificativoAttestante = identificativoAttestante;
+    }
+
+    public String getDenominazioneAttestante() {
+        return denominazioneAttestante;
+    }
+
+    public void setDenominazioneAttestante(String denominazioneAttestante) {
+        this.denominazioneAttestante = denominazioneAttestante;
+    }
+
+    public String getCodTransazioneRt() {
+        return codTransazioneRt;
+    }
+
+    public void setCodTransazioneRt(String codTransazioneRt) {
+        this.codTransazioneRt = codTransazioneRt;
+    }
+
+    public String getCodMsgRicevuta() {
+        return codMsgRicevuta;
+    }
+
+    public void setCodMsgRicevuta(String codMsgRicevuta) {
+        this.codMsgRicevuta = codMsgRicevuta;
     }
 
     public Long getIdApplicazione() {

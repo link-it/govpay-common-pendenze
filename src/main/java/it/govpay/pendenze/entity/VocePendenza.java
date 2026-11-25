@@ -186,6 +186,16 @@ public class VocePendenza {
     @Column(name = "contabilita")
     private List<DettaglioContabile> dettaglioContabile = new ArrayList<>();
 
+    /** JSON libero del chiamante, mai interpretato. Colonna legacy {@code dati_allegati}. */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+    @Column(name = "dati_allegati")
+    private String datiAllegati;
+
+    /** Metadati applicativi della voce, JSON mai interpretato. Colonna legacy {@code metadata}. */
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+    @Column(name = "metadata")
+    private String metadata;
+
     // ── Accessori ────────────────────────────────────────────────────────────
 
     public Long getId() {
@@ -394,5 +404,21 @@ public class VocePendenza {
 
     public void setDettaglioContabile(List<DettaglioContabile> dettaglioContabile) {
         this.dettaglioContabile = dettaglioContabile != null ? dettaglioContabile : new ArrayList<>();
+    }
+
+    public String getDatiAllegati() {
+        return datiAllegati;
+    }
+
+    public void setDatiAllegati(String datiAllegati) {
+        this.datiAllegati = datiAllegati;
+    }
+
+    public String getMetadata() {
+        return metadata;
+    }
+
+    public void setMetadata(String metadata) {
+        this.metadata = metadata;
     }
 }
