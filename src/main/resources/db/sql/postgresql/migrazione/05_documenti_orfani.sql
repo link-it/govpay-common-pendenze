@@ -141,13 +141,21 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
 WITH nuovi_documenti AS (
-    INSERT INTO documenti (id, id_dominio, id_applicazione, cod_documento, descrizione)
+    INSERT INTO documenti (id, id_dominio, id_applicazione, cod_documento, descrizione,
+                           id_unita_operativa, data_creazione, data_ultimo_aggiornamento)
     SELECT
         nextval('seq_documenti'),
         v.id_dominio,
         v.id_applicazione,
         'MIGR-' || v.id,
-        COALESCE(pg_temp.gp_decodifica_causale(v.causale_versamento), '')
+        COALESCE(pg_temp.gp_decodifica_causale(v.causale_versamento), ''),
+        -- Il documento e il suo unico versamento hanno lo stesso beneficiario e le
+        -- stesse date: la UO si copia com'e' (l'id della UO EC resta l'id della UO EC).
+        -- Le date ACA del documento restano NULL: non si ricavano dalle date dei
+        -- versamenti (vedi 06).
+        v.id_uo,
+        v.data_creazione,
+        v.data_ora_ultimo_aggiornamento
     FROM versamenti v
     WHERE v.id_documento IS NULL
     RETURNING id, cod_documento

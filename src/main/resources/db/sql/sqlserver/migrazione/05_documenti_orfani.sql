@@ -22,7 +22,8 @@ GO
 ALTER TABLE documenti ALTER COLUMN descrizione VARCHAR(1024) NOT NULL;
 
 -- id non specificato: IDENTITY lo assegna da solo.
-INSERT INTO documenti (id_dominio, id_applicazione, cod_documento, descrizione)
+INSERT INTO documenti (id_dominio, id_applicazione, cod_documento, descrizione,
+                       id_unita_operativa, data_creazione, data_ultimo_aggiornamento)
 SELECT
     v.id_dominio,
     v.id_applicazione,
@@ -34,7 +35,14 @@ SELECT
             + CONVERT(VARBINARY(MAX), ']]></x>')
         ).value('(/x)[1]', 'NVARCHAR(1024)') AS VARCHAR(1024)),
         ''
-    )
+    ),
+    -- Il documento e il suo unico versamento hanno lo stesso beneficiario e le
+    -- stesse date: la UO si copia com'e' (l'id della UO EC resta l'id della UO EC).
+    -- Le date ACA del documento restano NULL: non si ricavano dalle date dei
+    -- versamenti (vedi 06).
+    v.id_uo,
+    v.data_creazione,
+    v.data_ora_ultimo_aggiornamento
 FROM versamenti v
 CROSS APPLY (SELECT SUBSTRING(v.causale_versamento, 3, 8000) AS b64) b
 WHERE v.id_documento IS NULL;

@@ -30,18 +30,25 @@
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS id_unita_operativa BIGINT;
 
 -- Nullable, nessuna sentinella necessaria: NULL significa "pubblicata subito"
--- (semantica dello YAML v3), che e' esattamente il significato corretto anche
--- per le righe v2 esistenti (v2 non ha mai avuto questo concetto).
+-- (semantica dello YAML v3). Per i documenti esistenti 06 la ricava dalla data
+-- di pubblicazione dei versamenti, dove c'e'.
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_pubblicazione DATE;
 
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_modifica_aca TIMESTAMP;
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultima_comunicazione_aca TIMESTAMP;
 
--- Sentinella 1970-01-01: nessun equivalente v2 da cui derivare queste due date
--- per i documenti esistenti (v2 usa documenti/id_documento per l'avviso
--- cumulativo, ma non traccia una propria data di creazione/aggiornamento).
+-- Sentinella 1970-01-01: v2 non traccia una data di creazione/aggiornamento
+-- del documento. 05 e 06 la sostituiscono, per i documenti con versamenti, con
+-- le date dei versamenti (la minima di creazione, la massima di aggiornamento);
+-- resta solo sui documenti senza versamenti.
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_creazione TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
 ALTER TABLE documenti ADD COLUMN IF NOT EXISTS data_ultimo_aggiornamento TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
+
+-- Posizione anomala: analoghi di versamenti.anomalo e versamenti.descrizione_stato
+-- a livello di posizione. Il DEFAULT resta dopo lo script: chi inserisce
+-- documenti senza conoscere le colonne (05 compreso) continua a funzionare.
+ALTER TABLE documenti ADD COLUMN IF NOT EXISTS anomalo BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE documenti ADD COLUMN IF NOT EXISTS descrizione_stato VARCHAR(255);
 
 -- Lock ottimistico senza questa colonna, aggiungere un'opzione di pagamento e
 -- attivarne un'altra sulla stessa posizione possono correre in parallelo

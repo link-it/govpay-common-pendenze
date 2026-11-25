@@ -11,6 +11,10 @@
 -- errore. Le tabelle di appoggio si eliminano in fondo, e all'inizio di ogni
 -- esecuzione se un errore precedente le ha lasciate.
 --
+-- Oltre ai gruppi, lo script ricava dai versamenti le colonne di documenti che v2
+-- non ha (date, UO): vedi il blocco dopo il pattern C. Il report in fondo elenca
+-- anche i documenti rimasti senza UO per UO discordanti.
+--
 -- Oracle non supporta CTE scrivibili (niente "WITH cte AS (INSERT ...
 -- RETURNING ...) UPDATE ..." come in PostgreSQL): la classificazione viene
 -- materializzata in tabelle di appoggio (DROP alla fine).
@@ -153,12 +157,15 @@ UPDATE tmp_vrs_soglia vs
 DELETE FROM tmp_vrs_soglia WHERE id_pd_debitore IS NULL;
 
 -- Anagrafica del debitore: copiata dal primo versamento del gruppo.
--- debitore_tipo e' nullable in v2, tipo no: i dati senza tipo diventano 'F'.
+-- debitore_tipo e' nullable in v2, tipo no: se manca, G per una partita IVA
+-- (11 cifre), F altrimenti.
 INSERT INTO debitori
     (id, tipo, identificativo, anagrafica, indirizzo, civico, cap, localita,
      provincia, nazione, email, cellulare)
 SELECT
-    g.id_debitore, COALESCE(v.debitore_tipo, 'F'), v.debitore_identificativo, v.debitore_anagrafica,
+    g.id_debitore,
+    COALESCE(v.debitore_tipo, CASE WHEN REGEXP_LIKE(v.debitore_identificativo, '^[0-9]{11}$') THEN 'G' ELSE 'F' END),
+    v.debitore_identificativo, v.debitore_anagrafica,
     v.debitore_indirizzo, v.debitore_civico, v.debitore_cap, v.debitore_localita,
     v.debitore_provincia, v.debitore_nazione, v.debitore_email, v.debitore_cellulare
 FROM tmp_gruppi g
@@ -252,6 +259,47 @@ SET (id_opzione_pagamento, numero_rata) = (
 WHERE v.id IN (SELECT id FROM tmp_vrs_soglia);
 
 -- ---------------------------------------------------------------------------
+-- Colonne di documenti che v2 ha solo sui versamenti. Valgono per ogni
+-- documento con versamenti, anche per quelli che i passi sopra non migrano.
+--
+-- Date: data_creazione e' la minima dei versamenti, data_ultimo_aggiornamento la
+-- massima. Si sostituisce solo la sentinella 1970-01-01 di 01_documenti.sql: un
+-- documento scritto da v3 ha date proprie e non si tocca.
+--
+-- Date ACA (data_ultima_modifica_aca, data_ultima_comunicazione_aca): NON si
+-- migrano, restano NULL. Il massimo dei versamenti nasconderebbe quelli ancora
+-- da inviare, e la comunicazione di un versamento v2 non dimostra che la
+-- posizione aggregata sia gia' stata comunicata: le date vanno decise insieme
+-- alla migrazione di govpay-aca-batch. Finche' la modifica e' NULL la posizione
+-- non e' selezionata per l'invio.
+--
+-- Unita' operativa: v2 la salva sempre su versamenti.id_uo (quella di default e'
+-- la riga uo con codice EC, con il suo id reale) e la copia e' fedele, senza
+-- trasformare l'id. Si copia solo se tutti i versamenti del documento hanno la
+-- stessa UO: con UO diverse, o con qualche versamento senza UO, la scelta
+-- decide chi vede la posizione e non si fa a caso; il documento resta con UO
+-- NULL e finisce nel report in fondo al file. I documenti scritti da v3 non
+-- cambiano: i loro versamenti non hanno id_uo.
+-- ---------------------------------------------------------------------------
+
+UPDATE documenti d
+SET (data_creazione, data_ultimo_aggiornamento) = (
+    SELECT MIN(v.data_creazione), MAX(v.data_ora_ultimo_aggiornamento)
+    FROM versamenti v
+    WHERE v.id_documento = d.id
+)
+WHERE d.data_creazione = TO_TIMESTAMP('1970-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')
+  AND EXISTS (SELECT 1 FROM versamenti v WHERE v.id_documento = d.id);
+
+UPDATE documenti d
+SET id_unita_operativa = (SELECT MAX(v.id_uo) FROM versamenti v WHERE v.id_documento = d.id)
+WHERE d.id_unita_operativa IS NULL
+  AND d.id IN (SELECT v.id_documento FROM versamenti v
+                WHERE v.id_documento IS NOT NULL
+                GROUP BY v.id_documento
+               HAVING COUNT(v.id_uo) = COUNT(*) AND COUNT(DISTINCT v.id_uo) = 1);
+
+-- ---------------------------------------------------------------------------
 -- Cascata della mutua esclusione: un'opzione ancora DISPONIBILE sulla stessa
 -- posizione (di qualunque suo debitore) di un'opzione ATTIVATA e' un'alternativa non piu' applicabile —
 -- stessa semantica di PosizioneDebitoriaService.attiva() della libreria.
@@ -308,6 +356,18 @@ GROUP BY id_documento, chiave
 HAVING NOT (SUM(flag_null) = COUNT(*))
    AND NOT (SUM(flag_numerico) = COUNT(*) AND COUNT(DISTINCT CASE WHEN flag_numerico = 1 THEN valore_numerico END) = COUNT(*))
    AND NOT (SUM(flag_soglia) = COUNT(*) AND COUNT(DISTINCT CASE WHEN flag_soglia = 1 THEN cod_rata END) = COUNT(*));
+
+-- Documenti rimasti senza unita' operativa perche' i loro versamenti ne hanno
+-- di diverse, o solo alcuni ne hanno una: la UO va scelta a mano. Un documento
+-- scritto da v3 con UO NULL non compare: i suoi versamenti non hanno id_uo.
+SELECT v.id_documento, COUNT(*) AS totale_versamenti, COUNT(v.id_uo) AS con_uo,
+       COUNT(DISTINCT v.id_uo) AS uo_distinte, MIN(v.id_uo) AS id_uo_minimo, MAX(v.id_uo) AS id_uo_massimo
+FROM versamenti v
+JOIN documenti d ON d.id = v.id_documento
+WHERE d.id_unita_operativa IS NULL
+GROUP BY v.id_documento
+HAVING COUNT(DISTINCT v.id_uo) > 1
+    OR (COUNT(v.id_uo) > 0 AND COUNT(v.id_uo) < COUNT(*));
 
 -- Debitori migrati senza alcuna opzione di pagamento: non dovrebbero esistere
 -- (la transazione lo impedisce); se compaiono, derivano da dati scritti fuori
