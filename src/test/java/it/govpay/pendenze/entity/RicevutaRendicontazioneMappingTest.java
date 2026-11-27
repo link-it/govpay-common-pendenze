@@ -16,6 +16,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.test.context.ActiveProfiles;
 
+import it.govpay.common.persistence.config.DatabaseTimezoneAutoConfiguration;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.model.StatoFlussoRendicontazione;
 import it.govpay.pendenze.model.StatoOpzionePagamento;
@@ -36,7 +37,7 @@ import it.govpay.pendenze.model.TipologiaOpzionePagamento;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ImportAutoConfiguration(PendenzeAutoConfiguration.class)
+@ImportAutoConfiguration({ PendenzeAutoConfiguration.class, DatabaseTimezoneAutoConfiguration.class })
 @ActiveProfiles("test")
 class RicevutaRendicontazioneMappingTest {
 

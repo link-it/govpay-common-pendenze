@@ -25,6 +25,7 @@ import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.common.entity.DominioEntity;
 import it.govpay.common.entity.IntermediarioEntity;
 import it.govpay.common.entity.StazioneEntity;
+import it.govpay.common.persistence.config.DatabaseTimezoneAutoConfiguration;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.spi.IdentificativiPagamento;
 
@@ -43,7 +44,7 @@ import it.govpay.pendenze.spi.IdentificativiPagamento;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ImportAutoConfiguration(PendenzeAutoConfiguration.class)
+@ImportAutoConfiguration({ PendenzeAutoConfiguration.class, DatabaseTimezoneAutoConfiguration.class })
 @Import({AllocatoreBloccoProgressivoIuv.class, GeneratoreProgressivoIuv.class, GeneratoreIuvStandard.class,
         GeneratoreIuvStandardTest.ClockFisso.class})
 @EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})

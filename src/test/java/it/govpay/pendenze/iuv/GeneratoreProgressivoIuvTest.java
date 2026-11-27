@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.transaction.TestTransaction;
 
+import it.govpay.common.persistence.config.DatabaseTimezoneAutoConfiguration;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.entity.ProgressivoIuv;
 import it.govpay.pendenze.entity.ProgressivoIuvId;
@@ -25,7 +26,7 @@ import it.govpay.pendenze.entity.ProgressivoIuvId;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ImportAutoConfiguration(PendenzeAutoConfiguration.class)
+@ImportAutoConfiguration({ PendenzeAutoConfiguration.class, DatabaseTimezoneAutoConfiguration.class })
 @Import({AllocatoreBloccoProgressivoIuv.class, GeneratoreProgressivoIuv.class})
 @ActiveProfiles("test")
 class GeneratoreProgressivoIuvTest {

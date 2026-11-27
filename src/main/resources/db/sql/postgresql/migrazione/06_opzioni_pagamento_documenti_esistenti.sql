@@ -75,6 +75,10 @@
 -- Dialetto: PostgreSQL — eseguito su un'istanza reale. Le traduzioni per
 -- Oracle, MySQL e SQL Server sono nelle cartelle sorelle (revisione statica,
 -- non eseguite); HSQLDB non ha una traduzione.
+--
+-- Fuso orario: la sessione che esegue lo script ha fuso Europe/Rome
+-- (SET timezone = 'Europe/Rome', oppure variabile PGTZ): le date di creazione
+-- e di aggiornamento sono quelle di now().
 -- ---------------------------------------------------------------------------
 
 -- Gruppi (documento, debitore) da migrare, con la loro classificazione. Tabella

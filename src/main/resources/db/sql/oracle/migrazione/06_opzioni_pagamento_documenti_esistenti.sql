@@ -18,6 +18,10 @@
 -- Oracle non supporta CTE scrivibili (niente "WITH cte AS (INSERT ...
 -- RETURNING ...) UPDATE ..." come in PostgreSQL): la classificazione viene
 -- materializzata in tabelle di appoggio (DROP alla fine).
+--
+-- Fuso orario: la sessione che esegue lo script ha fuso Europe/Rome
+-- (ALTER SESSION SET TIME_ZONE = 'Europe/Rome'): le date di creazione e di
+-- aggiornamento sono quelle di LOCALTIMESTAMP.
 -- ---------------------------------------------------------------------------
 
 -- Al primo errore SQL*Plus annulla la transazione e termina: impostato prima di
@@ -194,8 +198,8 @@ SELECT
     g.tipologia,
     g.stato,
     0,
-    SYSTIMESTAMP,
-    SYSTIMESTAMP
+    LOCALTIMESTAMP,
+    LOCALTIMESTAMP
 FROM tmp_gruppi g
 WHERE g.tipologia IS NOT NULL;
 
@@ -245,8 +249,8 @@ SELECT
     vs.giorni,
     vs.stato,
     0,
-    SYSTIMESTAMP,
-    SYSTIMESTAMP
+    LOCALTIMESTAMP,
+    LOCALTIMESTAMP
 FROM tmp_vrs_soglia vs;
 
 UPDATE versamenti v
@@ -310,7 +314,7 @@ WHERE d.id_unita_operativa IS NULL
 
 UPDATE versamenti v
 SET stato_versamento = 'ANNULLATO',
-    data_ora_ultimo_aggiornamento = SYSTIMESTAMP
+    data_ora_ultimo_aggiornamento = LOCALTIMESTAMP
 WHERE stato_versamento = 'NON_ESEGUITO'
   AND id_opzione_pagamento IN (
       SELECT op.id FROM opzioni_pagamento op
@@ -323,7 +327,7 @@ WHERE stato_versamento = 'NON_ESEGUITO'
 
 UPDATE opzioni_pagamento op
 SET stato = 'ANNULLATA',
-    data_ultimo_aggiornamento = SYSTIMESTAMP
+    data_ultimo_aggiornamento = LOCALTIMESTAMP
 WHERE op.stato = 'DISPONIBILE'
   AND EXISTS (SELECT 1 FROM opzioni_pagamento altra
                JOIN pd_debitori pd_altra ON pd_altra.id = altra.id_pd_debitore

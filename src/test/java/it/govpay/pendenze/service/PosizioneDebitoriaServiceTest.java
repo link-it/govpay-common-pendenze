@@ -40,6 +40,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import it.govpay.common.entity.ApplicazioneEntity;
 import it.govpay.common.entity.DominioEntity;
+import it.govpay.common.persistence.config.DatabaseTimezoneAutoConfiguration;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.criteri.OffsetPageRequest;
 import it.govpay.pendenze.criteri.PaginaRisultati;
@@ -74,7 +75,7 @@ import it.govpay.pendenze.repository.PosizioneDebitoriaRepository;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ImportAutoConfiguration(PendenzeAutoConfiguration.class)
+@ImportAutoConfiguration({ PendenzeAutoConfiguration.class, DatabaseTimezoneAutoConfiguration.class })
 @Import(PosizioneDebitoriaService.class)
 @EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})
 @EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"})
