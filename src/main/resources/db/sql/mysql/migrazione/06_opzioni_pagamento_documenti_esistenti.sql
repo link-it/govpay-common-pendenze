@@ -30,6 +30,10 @@
 -- l'id_opzione_pagamento (UUID, univoco per vincolo) in ciascuna tabella
 -- temporanea, poi usato per ritrovare l'id fisico generato dall'insert e
 -- collegarlo al versamento corrispondente.
+--
+-- Fuso orario: la sessione che esegue lo script ha fuso italiano (time_zone
+-- della sessione o del server): le date di creazione e di aggiornamento sono
+-- quelle di NOW(3).
 -- ---------------------------------------------------------------------------
 
 -- Pulizia iniziale delle sole tabelle di appoggio di questo script: se una sessione

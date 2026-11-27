@@ -26,6 +26,9 @@
 -- recupera con la clausola OUTPUT, dentro una tabella temporanea creata
 -- apposta (OUTPUT ... INTO richiede che la tabella di destinazione esista
 -- gia', a differenza di SELECT ... INTO).
+--
+-- Fuso orario: il server ha fuso italiano; le date di creazione e di
+-- aggiornamento sono quelle di SYSDATETIME(), l'orologio del server.
 -- ---------------------------------------------------------------------------
 
 -- Pulizia iniziale delle sole tabelle di appoggio di questo script: se la sessione

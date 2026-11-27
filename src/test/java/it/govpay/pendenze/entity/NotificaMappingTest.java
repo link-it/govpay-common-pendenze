@@ -17,6 +17,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.ActiveProfiles;
 
 import it.govpay.common.entity.ApplicazioneEntity;
+import it.govpay.common.persistence.config.DatabaseTimezoneAutoConfiguration;
 import it.govpay.pendenze.config.PendenzeAutoConfiguration;
 import it.govpay.pendenze.model.StatoSpedizioneNotifica;
 import it.govpay.pendenze.model.TipoNotifica;
@@ -28,7 +29,7 @@ import it.govpay.pendenze.model.TipoNotifica;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ImportAutoConfiguration(PendenzeAutoConfiguration.class)
+@ImportAutoConfiguration({ PendenzeAutoConfiguration.class, DatabaseTimezoneAutoConfiguration.class })
 @EntityScan(basePackages = {"it.govpay.pendenze.entity", "it.govpay.common.entity"})
 @EnableJpaRepositories(basePackages = {"it.govpay.pendenze.repository", "it.govpay.common.repository"})
 @ActiveProfiles("test")

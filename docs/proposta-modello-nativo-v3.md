@@ -263,6 +263,12 @@ nostro; il bean `Clock` e il customizer del fuso orario Hibernate di
 `PendenzeAutoConfiguration` sono originali, `govpay-common` non espone nulla
 del genere.
 
+**Aggiornamento sul fuso orario:** la configurazione di Hibernate è ora di
+`govpay-common` (`DatabaseTimezoneAutoConfiguration`), perché riguarda tutti i
+componenti che condividono il database. La libreria non ha più un proprio
+customizer né la property `govpay.pendenze.fuso-orario`; il bean `Clock` usa
+`DateTimePatterns.DEFAULT_TIME_ZONE` (§7.1 di `f1-modello-e-entita.md`).
+
 **Per `GeneratoreIuv`**: `govpay-common.utils.IuvUtils` ha oggi solo funzioni di
 **verifica** (`isIuvInterno`, `isNumeric` — per capire se uno IUV già esistente
 è interno), non di generazione. Verificato anche `jars/core/.../business/Iuv.java`
@@ -1439,7 +1445,7 @@ l'unicità.
   Risolto spostando quel bean in una classe di autoconfigurazione separata,
   `GeneratoreIuvAutoConfiguration` (stesse condizioni, registrata a parte in
   `AutoConfiguration.imports`), così resta escludibile indipendentemente da
-  `PendenzeAutoConfiguration` (che ora fornisce solo fuso orario/orologio). Un
+  `PendenzeAutoConfiguration` (che ora fornisce solo l'orologio). Un
   consumatore reale non nota la differenza (entrambe le classi vengono comunque
   auto-importate insieme); solo i test che selezionano esplicitamente quali
   autoconfigurazioni importare devono scegliere quali delle due vogliono.

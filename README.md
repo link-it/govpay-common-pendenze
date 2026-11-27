@@ -29,14 +29,14 @@ Il modello è una posizione debitoria (`documenti`) con una o più opzioni di pa
 | [Ricerca e paginazione](#ricerca-e-paginazione) | `it.govpay.pendenze.criteri` | Filtri, ordinamento, paginazione offset/limit e a cursore |
 | Identificativo della posizione | `it.govpay.pendenze.identificativo` | Composizione e scomposizione dell'IUPD (`idA2A` + `idDominio` + codice documento) |
 | [Ricevute pagoPA](#ricevute-pagopa) | `it.govpay.pendenze.ricevuta.pagopa` | Ricostruzione della richiesta di pagamento dalla ricevuta quando l'XML della RPT non c'è |
-| [Configurazione](#configurazione) | `it.govpay.pendenze.config` | Auto-configurazioni: fuso orario, orologio, generatore IUV standard |
+| [Configurazione](#configurazione) | `it.govpay.pendenze.config` | Auto-configurazioni: proprietà, orologio, generatore IUV standard |
 
 ## Integrazione con GovPay
 
 | Componente | Quando serve | Obbligatorio | Ruolo |
 |------------|--------------|--------------|-------|
 | [govpay-bom](https://github.com/link-it/govpay-bom) | build | sì | Parent Maven (`2.0.5-SNAPSHOT`): versioni delle dipendenze e dei plugin, compreso Spring Boot |
-| [govpay-common](https://github.com/link-it/govpay-common) | build e runtime | sì | Dipendenza diretta (`govpay-common.version`, oggi `2.0.4-SNAPSHOT`): `ApplicazioneRepository` e `DominioRepository` per risolvere `idA2A` e dominio, `IuvUtils` e `RisolutoreSegnaposto` per gli IUV, `DateTimePatterns` per il fuso orario di default, `TipoContabilita` per le voci |
+| [govpay-common](https://github.com/link-it/govpay-common) | build e runtime | sì | Dipendenza diretta (`govpay-common.version`, oggi `2.0.4-SNAPSHOT`): `ApplicazioneRepository` e `DominioRepository` per risolvere `idA2A` e dominio, `IuvUtils` e `RisolutoreSegnaposto` per gli IUV, `DateTimePatterns` per il fuso dell'orologio, configurazione delle date sul database, `TipoContabilita` per le voci |
 | Database di GovPay, schema 3.11.0 o successivo | runtime | sì | Tabelle scritte: `documenti`, `debitori`, `pd_debitori`, `opzioni_pagamento`, `versamenti`, `singoli_versamenti`, `id_messaggio_relativo` (progressivi IUV). Tabelle lette: `rpt`, `pagamenti`, `fr`, `rendicontazioni`, `notifiche` (i repository permettono anche di scriverle) e l'anagrafica `domini`, `applicazioni`. Lo schema è creato e aggiornato dagli script del core: vedi [Schema del database](#schema-del-database) |
 | Progetti che usano la libreria | build | - | Dipendenza diretta nel `pom.xml` (proprietà `govpay-common-pendenze.version`): [govpay-pendenze-api](https://github.com/link-it/govpay-pendenze-api), [govpay-pafornode-api](https://github.com/link-it/govpay-pafornode-api), [govpay-console-api](https://github.com/link-it/govpay-console-api) sul ramo `3.11`; [govpay-notify-batch](https://github.com/link-it/govpay-notify-batch) sul ramo `30-modello-dati-v3` |
 
@@ -103,8 +103,10 @@ La libreria porta con sé `spring-boot-starter-data-jpa`, `govpay-common`, Jacks
 
 Le auto-configurazioni registrate in `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` si attivano da sole:
 
-- `PendenzeAutoConfiguration`: proprietà `govpay.pendenze.*`, il bean `Clock` della libreria (`pendenzeClock`, sul fuso configurato) e un `HibernatePropertiesCustomizer` che imposta `hibernate.jdbc.time_zone` allo stesso fuso, se l'applicazione non l'ha già impostato;
+- `PendenzeAutoConfiguration`: proprietà `govpay.pendenze.*` e il bean `Clock` della libreria (`pendenzeClock`, fuso `Europe/Rome`);
 - `GeneratoreIuvAutoConfiguration`: il `GeneratoreIuv` standard, registrato se nel contesto c'è un `DominioRepository` e nessun altro `GeneratoreIuv`.
+
+Le colonne temporali contengono l'ora `Europe/Rome`: Hibernate è configurato da `DatabaseTimezoneAutoConfiguration` di govpay-common (vedi [Date sul database](https://github.com/link-it/govpay-common/blob/3.11.x/README.md#date-sul-database)), e la JVM dell'applicazione ha lo stesso fuso. Nei test a slice (per esempio `@DataJpaTest`) che importano `PendenzeAutoConfiguration` va importata anche `DatabaseTimezoneAutoConfiguration`.
 
 Servizi, entità e repository vanno invece inclusi dall'applicazione:
 
@@ -252,13 +254,12 @@ La libreria non ha un proprio `application.properties`: le proprietà si imposta
 
 | Proprietà | Variabile d'ambiente | Default | Descrizione |
 |-----------|----------------------|---------|-------------|
-| `govpay.pendenze.fuso-orario` | `GOVPAY_PENDENZE_FUSOORARIO` | `Europe/Rome` | Fuso orario con cui la libreria interpreta le colonne `TIMESTAMP` (senza fuso) dello schema GovPay. Usato dal bean `Clock` e, se l'applicazione non lo imposta, per `hibernate.jdbc.time_zone` |
+| `govpay.pendenze.giorni-massimi-data-pubblicazione` | `GOVPAY_PENDENZE_GIORNIMASSIMIDATAPUBBLICAZIONE` | `7` | Giorni massimi tra oggi e una data di pubblicazione futura |
 
 Proprietà dell'applicazione che influenzano la libreria:
 
 | Proprietà | Effetto |
 |-----------|---------|
-| `spring.jpa.properties.hibernate.jdbc.time_zone` | Se impostata, la libreria non la sovrascrive con `govpay.pendenze.fuso-orario` |
 | `spring.autoconfigure.exclude` | Con `it.govpay.pendenze.config.GeneratoreIuvAutoConfiguration` disattiva il generatore IUV standard |
 
 La libreria non legge altre proprietà; le configurazioni di govpay-common (connettori, GDE, tracciatura dei log) sono descritte nel [README di govpay-common](https://github.com/link-it/govpay-common#configurazione).

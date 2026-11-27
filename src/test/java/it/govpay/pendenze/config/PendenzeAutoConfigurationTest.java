@@ -4,58 +4,37 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Clock;
 import java.time.ZoneId;
-import java.util.HashMap;
-import java.util.Map;
+import java.time.ZoneOffset;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.hibernate.autoconfigure.HibernatePropertiesCustomizer;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class PendenzeAutoConfigurationTest {
 
-    private final PendenzeAutoConfiguration autoConfiguration = new PendenzeAutoConfiguration();
+    private final ApplicationContextRunner contesto = new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(PendenzeAutoConfiguration.class));
 
     @Test
-    @DisplayName("senza configurazione il fuso e' Europe/Rome")
-    void fusoDefault() {
-        assertThat(new PendenzeProperties(null).fusoOrario())
-                .isEqualTo(PendenzeProperties.FUSO_ORARIO_DEFAULT)
-                .isEqualTo(ZoneId.of("Europe/Rome"));
+    @DisplayName("l'orologio e' sul fuso Europe/Rome, non su quello della JVM")
+    void orologioSulFusoItaliano() {
+        contesto.run(c -> assertThat(c.getBean(Clock.class).getZone()).isEqualTo(ZoneId.of("Europe/Rome")));
     }
 
     @Test
-    @DisplayName("l'orologio usa il fuso configurato, non quello della JVM")
-    void orologioSulFusoConfigurato() {
-        Clock clock = autoConfiguration.pendenzeClock(
-                new PendenzeProperties(ZoneId.of("America/New_York")));
+    @DisplayName("l'orologio dell'applicazione sostituisce quello della libreria")
+    void orologioDellApplicazione() {
+        Clock proprio = Clock.system(ZoneOffset.UTC);
 
-        assertThat(clock.getZone()).isEqualTo(ZoneId.of("America/New_York"));
+        contesto.withBean(Clock.class, () -> proprio)
+                .run(c -> assertThat(c.getBean(Clock.class)).isSameAs(proprio));
     }
 
     @Test
-    @DisplayName("il customizer allinea Hibernate al fuso configurato")
-    void customizerImpostaIlFuso() {
-        HibernatePropertiesCustomizer customizer = autoConfiguration.pendenzeFusoOrarioCustomizer(
-                new PendenzeProperties(ZoneId.of("Europe/Rome")));
-        Map<String, Object> proprieta = new HashMap<>();
-
-        customizer.customize(proprieta);
-
-        assertThat(proprieta)
-                .containsEntry(PendenzeAutoConfiguration.HIBERNATE_JDBC_TIME_ZONE, "Europe/Rome");
-    }
-
-    @Test
-    @DisplayName("una configurazione esplicita del consumatore non viene sovrascritta")
-    void nonSovrascriveIlConsumatore() {
-        HibernatePropertiesCustomizer customizer = autoConfiguration.pendenzeFusoOrarioCustomizer(
-                new PendenzeProperties(ZoneId.of("Europe/Rome")));
-        Map<String, Object> proprieta = new HashMap<>();
-        proprieta.put(PendenzeAutoConfiguration.HIBERNATE_JDBC_TIME_ZONE, "UTC");
-
-        customizer.customize(proprieta);
-
-        assertThat(proprieta)
-                .containsEntry(PendenzeAutoConfiguration.HIBERNATE_JDBC_TIME_ZONE, "UTC");
+    @DisplayName("la libreria non configura Hibernate")
+    void nessunCustomizerDiHibernate() {
+        contesto.run(c -> assertThat(c).doesNotHaveBean(HibernatePropertiesCustomizer.class));
     }
 }
