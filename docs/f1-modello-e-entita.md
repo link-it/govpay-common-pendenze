@@ -18,7 +18,7 @@ e fornire i tipi di dominio (enum, value object, codec) su cui costruiranno F2-F
 | ID | Decisione |
 |---|---|
 | F1-1 | **DDL di test dalla variante PostgreSQL**, in H2 `MODE=PostgreSQL` (§12.1) |
-| F1-2 | **`OffsetDateTime`**, con le colonne in **ora `Europe/Rome`** (§7.1) |
+| F1-2 | **`OffsetDateTime`**, con **fuso orario letto dalle properties dell'applicazione** (§7.1) |
 | F1-3 | **`cod_anno_tributario`: colonna grezza** `String` + accessor derivato tollerante (§7.2) |
 | F1-4 | **Valori ignoti:** enum di stato → eccezione, enum codificati → `null` + WARN (§5) |
 | F1-5 | **`orphanRemoval` disattivato** sulle voci (§7.3) |
@@ -324,24 +324,28 @@ applicare in lettura e scrittura, altrimenti si eredita quello della JVM — che
 esattamente il motivo per cui il legacy forza `-Duser.timezone=Europe/Rome` nella
 pipeline.
 
-**Decisione:** `OffsetDateTime`; le colonne contengono l'ora `Europe/Rome`, il fuso del
-legacy. Il fuso non è configurabile dalla libreria.
+**Decisione:** `OffsetDateTime`, con il fuso preso da una property
+dell'applicazione, non dalla JVM.
+
+```yaml
+govpay:
+  pendenze:
+    fuso-orario: Europe/Rome   # default della libreria
+```
 
 Realizzazione, due pezzi:
 
-1. **Lato Hibernate** — `DatabaseTimezoneAutoConfiguration` di `govpay-common` imposta
-   `hibernate.jdbc.time_zone=Europe/Rome` e
-   `hibernate.timezone.default_storage=NORMALIZE` (vedi
-   [Date sul database](https://github.com/link-it/govpay-common/blob/3.11.x/README.md#date-sul-database)). Il solo `jdbc.time_zone` non basta: PostgreSQL, MySQL
-   e HSQLDB ricevono l'ora UTC. La libreria non configura Hibernate, così la proprietà ha
-   un solo responsabile.
-2. **Lato applicativo** — un bean `Clock` sul fuso `DateTimePatterns.DEFAULT_TIME_ZONE`,
-   esposto dalla libreria, sostituibile dall'applicazione e usato da ogni punto che genera
-   un istante (`data_creazione`, `data_ora_ultimo_aggiornamento` all'insert, calcolo delle
-   date di avvisatura, `statoApplicativo`). Nessun `new Date()`, nessun
-   `OffsetDateTime.now()` senza argomenti: i test iniettano un `Clock.fixed`.
-
-La JVM dell'applicazione ha fuso `Europe/Rome`, come nel legacy.
+1. **Lato Hibernate** — un `HibernatePropertiesCustomizer` contribuito
+   dall'autoconfigurazione imposta `hibernate.jdbc.time_zone` al fuso configurato,
+   così la conversione JDBC ↔ `OffsetDateTime` è deterministica e indipendente dalla
+   JVM. Se il consumatore ha già impostato
+   `spring.jpa.properties.hibernate.jdbc.time_zone`, il suo valore vince (nessun
+   override silenzioso).
+2. **Lato applicativo** — un bean `Clock` (`Clock.system(zoneId)`) esposto dalla
+   libreria e usato da ogni punto che genera un istante (`data_creazione`,
+   `data_ora_ultimo_aggiornamento` all'insert, calcolo delle date di avvisatura,
+   `statoApplicativo`). Nessun `new Date()`, nessun `OffsetDateTime.now()` senza
+   argomenti: i test iniettano un `Clock.fixed`.
 
 Nota per F2/F5: le query dei batch confrontano date con "adesso"
 (`data_notifica_avviso <= now`); anche quel `now` viene dal `Clock`, non dal database,
@@ -589,9 +593,9 @@ F2/F3 al posto della coppia di stringhe sciolte.
   `Versamento`/`SingoloVersamento` su tabelle `versamenti`/`singoli_versamenti`.
 - **Nessun istante generato in linea:** mai `new Date()`, `Instant.now()` o
   `OffsetDateTime.now()` senza argomento. L'istante viene sempre dal `Clock` iniettato
-  (§7.1), così i test sono deterministici.
+  (§7.1), così il fuso è quello configurato e i test sono deterministici.
 - `PendenzeProperties` (`@ConfigurationProperties("govpay.pendenze")`) è l'unico punto
-  di configurazione della libreria.
+  di configurazione della libreria; in F1 contiene solo `fuso-orario`.
 
 ## 12. Test di F1
 
@@ -644,7 +648,7 @@ annotate in testa al file. È anche la scelta già fatta da `govpay-console-api`
 | `ProprietaPendenzaCodecTest` | round-trip; **verifica del nome `dataScandenzaAvviso`** nel JSON prodotto; deserializzazione di un JSON di esempio prodotto dal legacy |
 | `StatoPendenzaApplicativoTest` | tutte le mappature dirette; `NON_ESEGUITO` + scadenza passata → `SCADUTA`; `NON_ESEGUITO` + scadenza futura → `NON_PAGATA`; scadenza `null` → `NON_PAGATA`; scadenza uguale al riferimento (caso limite: quale verso?) |
 | `EnumConverterTest` | `F`/`G`; `0`,`1`,`2`,`6`,`7`,`8`,`9`; `01`; valore ignoto → `null` + WARN; stato ignoto → eccezione (F1-4) |
-| `DateSulDatabaseTest` (F1-2) | su HSQLDB, una data senza orario espressa come mezzanotte italiana resta lo stesso giorno nella colonna e in rilettura, anche d'estate e nei giorni del cambio dell'ora |
+| `FusoOrarioTest` (F1-2) | scrittura e rilettura di un istante con `Clock.fixed` e `fuso-orario=Europe/Rome`: il valore riletto coincide; ripetizione con la JVM su `UTC` per dimostrare che il risultato **non** dipende dal fuso della JVM; verifica che una `hibernate.jdbc.time_zone` già impostata dal consumatore non venga sovrascritta |
 | `AnnoTributarioTest` (F1-3) | `"2026"` → `Optional.of(2026)`; `"XX"` → `Optional.empty()` + WARN; `null` → `Optional.empty()`; la colonna riletta è identica a quella scritta (nessuna normalizzazione) |
 | `VociNonCancellabiliTest` (F1-5) | rimuovendo una voce dalla collezione e facendo flush, la riga **resta** in `singoli_versamenti` (assenza di `orphanRemoval`); cancellando la pendenza le voci vengono cancellate (`CascadeType.REMOVE`) |
 
@@ -705,7 +709,7 @@ quell'errore non sarebbe emerso.
 |---|---|---|
 | `VersamentoMappingTest` | 9 | tutte le colonne, colonna troncata AppIO, flag tri-stato, soli campi obbligatori, unicità della chiave logica, anno tributario (F1-3), `data_ora_ultimo_aggiornamento` conservata (§8), hash stabile alla persistenza (§11), voci non cancellabili (F1-5) |
 | `IstantiPersistitiTest` | 2 | istante conservato nel giro in banca dati e ora locale del fuso configurato scritta in colonna (F1-2) |
-| `PendenzeAutoConfigurationTest` | 3 | orologio sul fuso `Europe/Rome`, orologio dell'applicazione che lo sostituisce, nessun customizer di Hibernate nella libreria |
+| `PendenzeAutoConfigurationTest` | 4 | fuso di default, orologio sul fuso configurato, customizer, non-sovrascrittura della configurazione del consumatore |
 | `ImportoConverterTest` | 11 | round-trip, rifiuto degli importi fuori scala in scrittura, zeri non significativi accettati, `normalizza` che arrotonda `HALF_UP`, regressione su `new BigDecimal(double)`, somma voci confrontabile col totale |
 | `ConverterCodificatiTest` | 10 | `incasso`, `debitore_tipo`, `tipo_contabilita` (comprese le codifiche non assegnate `3`,`4`,`5`), `tipo_bollo` |
 | `CausaleCodecTest` | 14 | round-trip dei tre formati, sintesi, causale legacy in chiaro, causali in chiaro che cominciano per `01`/`02`/`03`, base64 malformato, lunghezza della colonna, formato prodotto dalla 3.x |

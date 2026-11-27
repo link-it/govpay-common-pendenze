@@ -267,7 +267,7 @@ del genere.
 `govpay-common` (`DatabaseTimezoneAutoConfiguration`), perché riguarda tutti i
 componenti che condividono il database. La libreria non ha più un proprio
 customizer né la property `govpay.pendenze.fuso-orario`; il bean `Clock` usa
-`DateTimePatterns.DEFAULT_TIME_ZONE` (§7.1 di `f1-modello-e-entita.md`).
+`DateTimePatterns.DEFAULT_TIME_ZONE`.
 
 **Per `GeneratoreIuv`**: `govpay-common.utils.IuvUtils` ha oggi solo funzioni di
 **verifica** (`isIuvInterno`, `isNumeric` — per capire se uno IUV già esistente
